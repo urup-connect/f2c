@@ -10,6 +10,13 @@ they are declared: ``is_active`` mirrors ``status`` because Django's auth stack
 filters on it in SQL, and ``email_hash`` outlives ``email`` so a returning
 member can be recognised after erasure. Neither is written by hand.
 
+``role`` says what the account *is* -- admin, cultivator or member -- where
+``status`` says whether it may sign in. Exactly one role per account, enforced
+by a check constraint, and ``save`` mirrors it into a Django group of the same
+name. The role itself and the catalogue of what each one may do live in
+``accounts.roles``, which is also where the reasoning behind a column rather
+than a group membership is set out.
+
 ``soft_delete`` is the POPIA erasure route and the reason this app is not purely
 declarative: erasing a member has to revoke their credentials, which belong to
 ``authn``. It reaches them through the reverse relations that app declares
@@ -18,7 +25,7 @@ rather than importing it, so the dependency stays one-directional.
 import uuid
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
-from django.contrib.auth.models import PermissionsMixin
+from django.contrib.auth.models import Group, PermissionsMixin
 from django.contrib.sessions.models import Session
 from django.db import models, transaction
 from django.db.models.functions import Lower
@@ -33,6 +40,14 @@ from app.common.validators import (
     validate_sa_id_number,
     validate_sa_mobile_number,
 )
+
+from .roles import ROLE_GROUP_NAMES, UserRole
+
+# Re-exported so that ``from app.accounts.models import UserRole`` reads the
+# same way as ``UserStatus`` beside it. ``accounts.roles`` is the canonical
+# home: the role and the catalogue of what each one may do belong together, and
+# a status has no such catalogue.
+__all__ = ['User', 'UserManager', 'UserRole', 'UserStatus']
 
 
 class UserStatus(models.TextChoices):
@@ -84,6 +99,7 @@ class UserManager(BaseUserManager):
 
     def create_user(self, email=None, password=None, **extra):
         extra.setdefault('status', UserStatus.PENDING)
+        extra.setdefault('role', UserRole.MEMBER)
         extra.setdefault('is_staff', False)
         extra.setdefault('is_superuser', False)
         return self._create(email, password, **extra)
@@ -92,10 +108,27 @@ class UserManager(BaseUserManager):
         extra['is_staff'] = True
         extra['is_superuser'] = True
         extra.setdefault('status', UserStatus.ACTIVE)
+        # A default, not a derivation. `role` and `is_staff` are independent by
+        # decision -- see `UserRole` -- so nothing here forces one from the
+        # other, and `create_superuser(role=...)` overrides this. But the
+        # account that bootstraps a deployment is the club's administrator, and
+        # leaving it at the column default would have the admin list describe
+        # the founder as an ordinary member.
+        extra.setdefault('role', UserRole.ADMIN)
         return self._create(email, password, **extra)
 
     def active(self):
         return self.filter(status=UserStatus.ACTIVE)
+
+    def with_role(self, role):
+        """Accounts holding this role, whatever their status.
+
+        Deliberately not filtered to active accounts: "who are our
+        cultivators" and "who can sign in today" are different questions, and a
+        suspended cultivator is still a cultivator. Chain
+        ``.filter(status=UserStatus.ACTIVE)`` when the second is what is meant.
+        """
+        return self.filter(role=role)
 
     def active_by_email(self, email):
         """The one live account for an address, as a queryset.
@@ -257,6 +290,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=UserStatus.PENDING,
         db_index=True,
     )
+    # What the account is, where `status` is whether it may sign in. Exactly one
+    # value, held by every account including staff, and checked in SQL by the
+    # constraint in Meta.
+    #
+    # The default is Member because that is where a completed registration
+    # leaves everybody, and because it is the safest value to land on: it grants
+    # nothing over anybody else's records. A role is granted by hand from there.
+    # `save()` mirrors it into a Django group -- see `sync_role_group` -- and
+    # `accounts.roles` holds the catalogue of what each role may do.
+    role = models.CharField(
+        max_length=16,
+        choices=UserRole.choices,
+        default=UserRole.MEMBER,
+        db_index=True,
+        help_text=(
+            'What this account is. Separate from staff status, which opens the '
+            'Django admin and is granted independently.'
+        ),
+    )
     # A denormalised copy of `status == ACTIVE`, and the reason for the check
     # constraint below. Django's auth stack does not merely read `is_active`,
     # it filters on it in SQL -- admin login, ModelBackend and password reset
@@ -299,6 +351,21 @@ class User(AbstractBaseUser, PermissionsMixin):
                 name='user_is_active_matches_status',
                 violation_error_message=(
                     'is_active is derived from status and cannot be set directly.'
+                ),
+            ),
+            # One role per account, and it has to be one this application
+            # recognises. `choices` is a form-level rule that a queryset
+            # `.update()`, a data migration or raw SQL walks straight past, and
+            # the failure mode without this is quiet: `permissions_for` returns
+            # an empty set for a role it does not know, so an account would
+            # simply stop being able to do anything, with nothing to explain
+            # why. Adding a role means a migration, which is the right cost --
+            # roles are a schema-level fact about the club, not runtime data.
+            models.CheckConstraint(
+                condition=models.Q(role__in=UserRole.values),
+                name='user_role_is_known',
+                violation_error_message=(
+                    'That is not a role this platform recognises.'
                 ),
             ),
             # One nickname, one member -- compared case-insensitively, because
@@ -410,6 +477,95 @@ class User(AbstractBaseUser, PermissionsMixin):
         return digits
 
     # ------------------------------------------------------------------
+    # Role
+    # ------------------------------------------------------------------
+
+    #: The role as it stands in the database, so ``save`` can tell whether it
+    #: changed and skip the group write when it did not. ``None`` on an unsaved
+    #: instance, which is what makes the first save always sync.
+    _role_in_db = None
+
+    @classmethod
+    def from_db(cls, db, field_names, values, *args, **kwargs):
+        """Remember the stored role, so ``save`` can spot a change.
+
+        Guarded on ``field_names`` because a ``.only()`` or ``.defer()``
+        queryset need not have loaded the column, and reading it here would
+        turn every deferred fetch into a second query.
+
+        ``*args, **kwargs`` are passed straight through and deliberately not
+        named: Django adds arguments to this hook between releases -- 6.1 passes
+        ``fetch_mode`` -- and a signature that lists them breaks every queryset
+        on upgrade. Nothing here needs them.
+        """
+        instance = super().from_db(db, field_names, values, *args, **kwargs)
+        if 'role' in field_names:
+            instance._role_in_db = instance.role
+        return instance
+
+    @property
+    def is_club_admin(self):
+        """Holds the Admin role. Says nothing about Django admin access.
+
+        ``is_staff`` is the flag that opens ``/admin/``, and the two are
+        independent by decision -- see ``roles.UserRole``. Named
+        ``is_club_admin`` rather than ``is_admin`` precisely so that the two
+        cannot be misread for each other at a call site.
+        """
+        return self.role == UserRole.ADMIN
+
+    @property
+    def is_cultivator(self):
+        return self.role == UserRole.CULTIVATOR
+
+    @property
+    def is_member(self):
+        return self.role == UserRole.MEMBER
+
+    def set_role(self, role):
+        """Move this account to another role, and sync its group.
+
+        The reason to use this rather than assigning ``role`` and saving: it
+        refuses a value the platform does not recognise here, with a
+        ``ValueError`` naming the field, instead of leaving the database check
+        constraint to refuse it as an ``IntegrityError`` naming an index.
+
+        Live sessions are left alone, unlike ``deactivate``. A session carries
+        no cached permissions -- every request resolves the role afresh through
+        ``accounts.backends`` -- so a role change takes effect on the next
+        request without signing anybody out. What can lag is a page already
+        rendered in a member's browser, which is a refresh rather than a
+        privilege.
+        """
+        if role not in UserRole.values:
+            raise ValueError(f'{role!r} is not a role this platform recognises.')
+        self.role = role
+        self.save(update_fields=['role', 'updated_at'])
+        return self
+
+    def sync_role_group(self):
+        """Put this account in the Django group matching its role, and no other.
+
+        Only the three role groups are touched. Any other group a member of
+        staff has put the account in is left standing, because those are
+        somebody's deliberate act and this is bookkeeping.
+
+        Nothing reads the group to decide a platform action --
+        ``accounts.roles`` explains why it exists at all -- so a group that has
+        drifted grants nothing. ``get_or_create`` rather than ``get`` for the
+        same reason: a missing group is a row somebody deleted, not a reason to
+        fail a save.
+        """
+        wanted = ROLE_GROUP_NAMES[self.role]
+        group, _ = Group.objects.get_or_create(name=wanted)
+        stale = Group.objects.filter(
+            name__in=set(ROLE_GROUP_NAMES.values()) - {wanted}
+        )
+        self.groups.remove(*stale)
+        self.groups.add(group)
+        return group
+
+    # ------------------------------------------------------------------
     # Persistence and lifecycle
     # ------------------------------------------------------------------
 
@@ -442,7 +598,21 @@ class User(AbstractBaseUser, PermissionsMixin):
             if 'email' in update_fields:
                 update_fields.add('email_hash')
 
+        # Whether this write is one the role column travels in. A partial save
+        # that does not name `role` cannot change it, so mirroring the group
+        # afterwards would sync to a value that was never stored.
+        role_written = update_fields is None or 'role' in update_fields
+
         super().save(*args, update_fields=update_fields, **kwargs)
+
+        # After the row exists, because the group is a many-to-many and an
+        # unsaved instance has no primary key to join on. Only when the value
+        # actually moved: this is two or three extra queries, and every ordinary
+        # save -- a status change, a login timestamp -- would otherwise pay them
+        # to write the group it already has.
+        if role_written and self._role_in_db != self.role:
+            self.sync_role_group()
+            self._role_in_db = self.role
 
     @transaction.atomic
     def soft_delete(self):
@@ -459,6 +629,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         Credentials go too. A passkey or a live session against an erased
         account is both a way back in and personal data in its own right, so
         neither is left behind.
+
+        ``role`` deliberately stays, and so does the group mirroring it. A role
+        is a fact about the collective's own structure rather than about the
+        person -- that this cultivator grew what the batch records say it grew
+        -- and it confers nothing here: ``roles.permissions_for`` refuses an
+        inactive account before it ever looks at the role, and this method
+        leaves the account Inactive.
 
         Reversible only in the sense that the row can be reactivated; the
         erased fields are gone.

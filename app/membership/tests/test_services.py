@@ -23,7 +23,8 @@ from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 
-from app.accounts.models import User, UserStatus
+from app.accounts.models import User, UserRole, UserStatus
+from app.accounts.roles import MEMBER_ACTIONS, permissions_for
 from app.common import crypto
 from app.documents import services as document_services
 from app.documents.models import DocumentConsent
@@ -39,12 +40,49 @@ from .support import (
 )
 
 
+def permissions_once_active(user):
+    """What this account will hold when a payment activates it.
+
+    ``permissions_for`` refuses an inactive account before it looks at the
+    role, and a registration deliberately leaves one inactive -- so asking it
+    directly answers "nothing" whatever role was granted, and would prove
+    nothing about which one was. Flipped in memory only; nothing is saved.
+    """
+    user.status = UserStatus.ACTIVE
+    user.is_active = True
+    return permissions_for(user)
+
+
 class RegisterMemberTests(RegistrationTestCase):
     def test_a_registration_lands_at_pending_payment(self):
         result = services.register_member(**self.submission())
 
         self.assertTrue(result.created)
         self.assertEqual(result.user.status, UserStatus.PENDING_PAYMENT)
+
+    def test_a_registration_makes_a_member_and_only_a_member(self):
+        """The one role sign-up can grant.
+
+        Asserted against the role *and* against what it carries, because the
+        second is the part that matters: a form that could hand out cultivation
+        or administrative authority would be a way to claim it.
+        """
+        result = services.register_member(**self.submission())
+
+        self.assertEqual(result.user.role, UserRole.MEMBER)
+        self.assertEqual(
+            permissions_once_active(result.user), frozenset(MEMBER_ACTIONS)
+        )
+
+    def test_a_registered_member_holds_nothing_until_payment(self):
+        """PENDING_PAYMENT is not Active, so the role confers nothing yet.
+
+        The role is on the row from the moment of registration; the authority
+        arrives with the status change a payment will make.
+        """
+        result = services.register_member(**self.submission())
+
+        self.assertEqual(permissions_for(result.user), frozenset())
 
     def test_a_registered_member_cannot_sign_in(self):
         """The requirement, checked where Django actually enforces it."""

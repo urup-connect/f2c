@@ -9,6 +9,8 @@ from uuid import UUID
 
 from ninja import Schema
 
+from .roles import permissions_for
+
 
 class UserOut(Schema):
     """The signed-in member, as the frontend sees them.
@@ -18,6 +20,16 @@ class UserOut(Schema):
     in, so the frontend will not meet one here, but the contract has to admit
     the shape. ``id_number`` is absent on purpose: it is encrypted at rest and
     has no business crossing the wire to a browser.
+
+    ``permissions`` is sent alongside ``role`` rather than left for the frontend
+    to derive from it. Two reasons. A frontend that maps roles to abilities
+    itself is a second copy of ``accounts.roles`` that will drift from the one
+    the API enforces, and the drift shows up as navigation offering a member
+    something the API then refuses. And an endpoint of its own for the same
+    answer would be a second round trip on every page that renders a menu.
+
+    It is for rendering, never for deciding. Every endpoint checks the
+    permission itself; a list in a browser is a hint about what to draw.
     """
 
     id: UUID
@@ -34,4 +46,20 @@ class UserOut(Schema):
     # Null until someone has checked the date against a document.
     date_of_birth_verified_at: datetime | None
     status: str
+    # What the account is: admin, cultivator or member. Independent of
+    # `is_staff`, which opens the Django admin and nothing else.
+    role: str
+    # Every `platform.*` action this account holds, sorted. Empty for an
+    # inactive account, and the whole catalogue for a superuser.
+    permissions: list[str]
     is_staff: bool
+
+    @staticmethod
+    def resolve_permissions(obj):
+        """Sorted, so the payload is stable between requests.
+
+        ``permissions_for`` is pure dictionary lookup and issues no query, which
+        is what lets this resolver run inside the async views in ``authn.api``
+        -- a synchronous ORM call there raises ``SynchronousOnlyOperation``.
+        """
+        return sorted(permissions_for(obj))

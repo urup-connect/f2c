@@ -160,6 +160,7 @@ class UserCreationForm(ContactClashMixin, IdNumberMixin, BaseUserCreationForm):
         model = User
         fields = (
             'email', 'first_name', 'last_name', 'nickname', 'mobile', 'status',
+            'role',
         )
 
 

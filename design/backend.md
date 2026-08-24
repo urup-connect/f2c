@@ -46,9 +46,10 @@ every model; each feature owns its own models, admin, schemas and router.
 | App | Owns | Depends on |
 | --- | --- | --- |
 | `common` | Field encryption, RSA ID checks. No models, no endpoints | — |
-| `accounts` | The member record and the admin over it | `common` |
+| `accounts` | The member record, the roles over it, and the admin | `common` |
 | `authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
 | `documents` | Club documents, revisions, agreements | `accounts` |
+| `membership` | Turning a sign-up submission into a member. No models | `accounts`, `documents` |
 | `cultivatorscollective` | Settings, URLs, and the API root | all of them |
 
 The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
@@ -176,6 +177,33 @@ Members without an RSA ID are expected. Nothing in the model requires these vali
 foreign document is stored as given — a passport has no checksum to test, so there is nothing to
 check.
 
+### 3.5 Roles are a column, and permissions are a dictionary
+
+`role` is one of Admin, Cultivator or Member. Exactly one per account, defaulting to Member, held to
+the three known values by a check constraint.
+
+A Django group was the obvious alternative and was rejected as the source of truth: a group is
+runtime data, an account can belong to none or to all three, and no constraint can express "exactly
+one". The groups exist anyway, mirrored from the column by `save()`, so that the model permissions
+the strain and plant apps will bring can be attached to a role in one place — but nothing reads them
+to decide anything today.
+
+What each role may do is a dictionary in `accounts/roles.py`, not `auth.Permission` rows. Almost
+every action is against a model that does not exist yet, and a permission row needs a content type,
+which needs a model. `accounts/backends.py` registers a second authentication backend that resolves
+the dictionary, so `user.has_perm('platform.purchase_plants')` works today and one call still covers
+both kinds of permission. It authenticates nobody: `ModelBackend` stays the only backend that can
+open a session.
+
+Three couplings matter and each is deliberate. **Role is not status** — an inactive account holds
+nothing whatever its role, which is what makes suspension and erasure safe without either knowing
+about permissions. **Role is not `is_staff`** — the two are independent by decision, and the cost of
+that (privilege granted in two places) is on the register. **The resolution issues no query**,
+because `UserOut` serialises the permission list inside async views.
+
+`design/features/roles-and-permissions.md` is the full record: the catalogue, the rejected
+alternatives, and what the roles govern that is not built.
+
 ## 5. Erasure
 
 `user.soft_delete()` is the POPIA erasure route, exposed in the admin as **Erase selected accounts**
@@ -201,6 +229,10 @@ personal data is gone.
 
 `user.deactivate()` is the reversible half: it blocks sign-in and cuts live sessions but erases
 nothing.
+
+`role` deliberately survives erasure too, along with the group mirroring it. A role is a fact about
+the collective's own structure rather than about the person, and it confers nothing on an account
+erasure has left Inactive.
 
 `flush_sessions()` is what makes either of those real. Changing `status` does not touch the session
 store, so without it an already signed-in browser keeps working until its cookie expires. Sessions
@@ -240,7 +272,10 @@ cannot tell an incomplete list from a complete one, so the endpoint has to.
 Each feature declares its own schemas — `accounts.schemas`, `authn.schemas`, `documents.schemas` —
 written explicitly rather than generated from models, so a model change cannot silently alter the
 payload the frontend depends on. `accounts.schemas.UserOut` omits `id_number` entirely: it is
-encrypted at rest and has no business crossing the wire to a browser. `common.schemas` holds only
+encrypted at rest and has no business crossing the wire to a browser. It carries `role` and the
+`permissions` the role holds, sent together so the frontend never maps one to the other — a second
+copy of the catalogue in a browser bundle would drift from the one the API enforces. Both are for
+rendering navigation; every endpoint checks the permission itself. `common.schemas` holds only
 the acknowledgement envelope every feature returns.
 
 WebAuthn options and credentials cross as opaque dicts. They are defined by a W3C serialisation that
@@ -300,10 +335,19 @@ so they can revoke one a member has lost, and to confirm a code was issued when 
 never arrived — but nothing there should be editable by hand, and the code hashes are never
 displayed at all.
 
-The user model is editable with three restrictions:
+The user model is editable with four restrictions:
 
 **`is_active` is not a form field.** It is derived from `status`, and a form field would let it
 drift.
+
+**Group membership is not a form field either.** It mirrors `role`, so the same argument applies —
+and there is a mechanical reason too: the admin's `save_m2m()` runs after the model save, so an
+editable groups widget would overwrite the mirror with whatever was rendered before the role
+changed. `role` itself *is* editable, and the admin is the only place a cultivator or an
+administrator is appointed. What the chosen role permits is displayed beside it, read from
+`accounts/roles.py` so the admin cannot describe authority the application does not grant. There are
+deliberately no bulk role actions: activate, suspend and erase are batch operations, and handing out
+authority over other members' records is not.
 
 **The identity number is write-only.** Staff need to *set* it and to confirm *which* one is on file,
 not to read it back. Rendering a member's identity number into an admin page puts it in the browser
@@ -343,7 +387,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 333 |
+| Tests | 530 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
 
 | Module | Covers |
@@ -352,6 +396,9 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `common/tests/test_validators.py` | Check digit, embedded date, length |
 | `accounts/tests/test_models.py` | Status/`is_active` coupling, the encrypted ID number, erasure, display names |
 | `accounts/tests/test_admin_forms.py` | Setting, replacing and clearing an encrypted field staff cannot read |
+| `accounts/tests/test_roles.py` | The catalogue's own shape, the check constraint, `has_perm` through both backends, the group mirror |
+| `membership/tests/test_services.py` | The registration write: duplicates, the age rule, the role and status it lands on |
+| `membership/tests/test_api.py` | The endpoints sign-up posts to, and what they refuse |
 | `authn/tests/test_api.py` | Every endpoint: enumeration resistance, CSRF, passkey and code paths |
 | `authn/tests/test_otp.py` | Code generation, hashing at rest, expiry, attempt burn, superseding |
 | `authn/tests/test_webauthn.py` | Challenge expiry, single use, ceremony key separation, option contents |
@@ -394,8 +441,15 @@ guards it.
 ## 11. What is not built
 
 There is no membership record, no payment status, no cultivation or distribution record. The API is
-authentication and a health check. `accounts.User` is the only substantive model, alongside the
-three tables in `authn` supporting authentication.
+authentication, the club documents, registration and a health check. `accounts.User` is the only
+substantive model, alongside the three tables in `authn` supporting authentication and the three in
+`documents`.
+
+Roles are the newest instance of the same gap, and the sharpest. The three roles, the action
+catalogue and the enforcement path are built and tested; almost nothing they govern exists. No
+endpoint checks a `platform.*` permission, because no endpoint performs an action the catalogue
+names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. See
+`design/features/roles-and-permissions.md` section 12, which lists this properly.
 
 Production deployment is deliberately out of scope. When a target is chosen it needs:
 
@@ -417,4 +471,7 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 3 | Codes are printed to the console. No email provider is configured, so no member can sign in on a deployed environment. | Open — blocks production |
 | 4 | `flush_sessions()` decodes every live session to find one member's. Linear in session count. | Accepted at current scale |
 | 5 | `login/start` reveals which addresses have a passkey, because credential IDs must reach the browser for the authenticator to match against. Inherent to identifier-first passkey flows; closing it means moving to a usernameless flow over discoverable credentials. | Accepted |
-| 6 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Open — fix before initialising the repository |
+| 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted |
+| 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3 |
+| 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage |
+| 9 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Open — fix before initialising the repository |

@@ -1,17 +1,24 @@
 """The admin view over the member record.
 
-Editable, with three deliberate restrictions. ``is_active`` cannot be set
-directly because it is derived from ``status``. The ID number is write-only,
-masked to its last four digits, because rendering a member's identity number
-into an admin page puts it in the browser cache and the proxy logs for no
-operational gain. And erasing a member is an explicit action rather than a side
-effect of the delete button.
+Editable, with four deliberate restrictions. ``is_active`` cannot be set
+directly because it is derived from ``status``. Group membership cannot either,
+because it is derived from ``role``. The ID number is write-only, masked to its
+last four digits, because rendering a member's identity number into an admin
+page puts it in the browser cache and the proxy logs for no operational gain.
+And erasing a member is an explicit action rather than a side effect of the
+delete button.
+
+``role`` is an ordinary editable field, and it is the one place a cultivator or
+an administrator is appointed. What the chosen role permits is shown beside it,
+read from ``accounts.roles`` rather than restated here, so the admin cannot
+describe a role the application does not implement.
 
 The authentication tables have their own admin in ``authn.admin``, where they
 are read-only.
 """
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.utils.html import format_html, format_html_join
 from django.utils.translation import ngettext
 
 from app.common import crypto
@@ -19,6 +26,7 @@ from app.common.validators import normalise_id_number
 
 from .forms import UserChangeForm, UserCreationForm
 from .models import User, UserStatus
+from .roles import ROLE_PERMISSIONS, describe
 
 
 @admin.register(User)
@@ -27,10 +35,14 @@ class UserAdmin(BaseUserAdmin):
     add_form = UserCreationForm
 
     list_display = (
-        'email', 'display_name', 'status', 'id_number_masked',
+        'email', 'display_name', 'role', 'status', 'id_number_masked',
         'date_of_birth_verified_at', 'is_staff', 'created_at',
     )
-    list_filter = ('status', 'is_staff', 'is_superuser', 'groups')
+    # `role` first: "show me the cultivators" is the question this list is asked
+    # most often once there is more than one. `groups` stays, even though it now
+    # mirrors the role, because a group added by hand for some other purpose is
+    # the one thing filtering on role would not surface.
+    list_filter = ('role', 'status', 'is_staff', 'is_superuser', 'groups')
     # Not id_number: it is encrypted with a random nonce per row, so no SQL
     # LIKE can reach it. get_search_results() below handles it separately.
     search_fields = ('email', 'first_name', 'last_name', 'nickname', 'mobile')
@@ -38,9 +50,13 @@ class UserAdmin(BaseUserAdmin):
     date_hierarchy = 'created_at'
 
     readonly_fields = (
-        'id', 'is_active', 'id_number_masked', 'email_hash', 'id_number_hash',
-        'last_login', 'created_at', 'updated_at', 'deleted_at',
+        'id', 'is_active', 'role_permissions', 'groups', 'id_number_masked',
+        'email_hash', 'id_number_hash', 'last_login', 'created_at',
+        'updated_at', 'deleted_at',
     )
+    # `groups` is read-only above, so it needs no picker. Leaving it in
+    # filter_horizontal would only render a widget nobody can use.
+    filter_horizontal = ('user_permissions',)
 
     fieldsets = (
         (None, {'fields': ('id', 'email', 'password')}),
@@ -52,15 +68,27 @@ class UserAdmin(BaseUserAdmin):
             ),
         }),
         ('Access', {
-            'fields': ('status', 'is_active', 'is_staff', 'is_superuser'),
+            'fields': (
+                'role', 'role_permissions', 'status', 'is_active',
+                'is_staff', 'is_superuser',
+            ),
             'description': (
-                'Only an Active account can sign in. is_active is derived from '
-                'status and cannot be edited.'
+                'Only an Active account can sign in, and is_active is derived '
+                'from status and cannot be edited. Role and staff status are '
+                'independent: Role decides what the account may do on the '
+                'platform, and Staff status opens this admin site. Granting '
+                'one does not grant the other.'
             ),
         }),
         ('Permissions', {
             'classes': ('collapse',),
             'fields': ('groups', 'user_permissions'),
+            'description': (
+                'Group membership mirrors the Role above and is maintained '
+                'automatically, so it cannot be edited here. To change what a '
+                'whole role may do, edit the group itself under '
+                'Authentication and Authorisation.'
+            ),
         }),
         ('Record', {
             'classes': ('collapse',),
@@ -76,13 +104,54 @@ class UserAdmin(BaseUserAdmin):
             'classes': ('wide',),
             'fields': (
                 'email', 'password1', 'password2',
-                'first_name', 'last_name', 'nickname', 'mobile', 'status',
-                'id_number',
+                'first_name', 'last_name', 'nickname', 'mobile',
+                'role', 'status', 'id_number',
             ),
         }),
     )
 
     actions = ('activate_accounts', 'suspend_accounts', 'erase_accounts')
+
+    @admin.display(description='What this role may do')
+    def role_permissions(self, obj):
+        """The catalogue entries the saved role carries, read from the source.
+
+        Rendered from ``accounts.roles`` rather than written out here, so this
+        panel cannot describe authority the application does not actually grant.
+        It reflects the role **as saved**: a role changed in the form above
+        appears here after the save, not before, because the catalogue is keyed
+        on what is stored.
+
+        A superuser is called out rather than listed. Django grants a superuser
+        every permission before any backend is asked, so printing the role's set
+        beside an account that is not bound by it would be a lie of omission.
+        """
+        if obj is None or obj.pk is None:
+            return 'Saved once the account is created.'
+        if obj.is_superuser:
+            return format_html(
+                '<em>{}</em>',
+                'Superuser: every action on the platform, whatever the role '
+                'says.',
+            )
+        if not obj.is_active:
+            return format_html(
+                '<em>{}</em>',
+                'None: this account is not Active, so it holds no permissions '
+                'at all. The role applies again once it is reactivated.',
+            )
+        codenames = sorted(ROLE_PERMISSIONS.get(obj.role, ()))
+        if not codenames:
+            return 'None.'
+        return format_html(
+            '<ul style="margin:0;padding-left:1.2em">{}</ul>',
+            format_html_join(
+                '',
+                '<li>{}<br><small style="color:var(--body-quiet-color)">{}'
+                '</small></li>',
+                ((codename, describe(codename)) for codename in codenames),
+            ),
+        )
 
     @admin.display(description='ID number', ordering=None)
     def id_number_masked(self, obj):

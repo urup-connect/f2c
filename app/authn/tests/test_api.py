@@ -30,7 +30,8 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from app.authn import webauthn as wa
-from app.accounts.models import User, UserStatus
+from app.accounts.models import User, UserRole, UserStatus
+from app.accounts.roles import ROLE_PERMISSIONS
 from app.authn.models import EmailOtp, PasskeyCredential, PasskeyUserHandle
 from app.authn.tests.test_otp import code_from_last_email
 
@@ -370,6 +371,26 @@ class OtpVerifyTests(ApiTestCase):
         self.assertEqual(payload['display_name'], 'Bean')
         self.assertEqual(payload['status'], UserStatus.ACTIVE)
         self.assertFalse(payload['is_staff'])
+
+    def test_the_role_and_what_it_permits_are_returned(self):
+        """The frontend renders navigation from this rather than from the role.
+
+        A frontend that mapped roles to abilities itself would be a second copy
+        of ``accounts.roles``, and the drift would show up as a menu offering
+        something the API then refuses.
+
+        Serialising this at all is the part that could break silently: the
+        resolver runs inside an ``async`` view, so a permission lookup that
+        reached the database would raise ``SynchronousOnlyOperation`` on every
+        sign-in rather than in a test of ``roles`` itself.
+        """
+        payload = self.body(self.verify(self.code))
+
+        self.assertEqual(payload['role'], UserRole.MEMBER)
+        self.assertEqual(
+            payload['permissions'], sorted(ROLE_PERMISSIONS[UserRole.MEMBER])
+        )
+        self.assertNotIn('platform.cancel_membership', payload['permissions'])
 
     def test_the_identity_number_never_crosses_the_wire(self):
         """It is encrypted at rest and has no business in a browser."""

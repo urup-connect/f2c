@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from app.accounts.models import User, UserStatus
+from app.accounts.models import User, UserRole, UserStatus
 from app.common.validators import (
     MINIMUM_MEMBER_AGE_YEARS,
     is_at_least,
@@ -65,6 +65,20 @@ from app.documents.models import DocumentConsent
 #: at the call site: this is the one fact this app currently owns, and the
 #: payment gateway will change it in one place.
 REGISTERED_STATUS = UserStatus.PENDING_PAYMENT
+
+#: What a registration makes somebody. Sign-up is the only route to this role,
+#: and it is the only role sign-up can grant: a cultivator or an administrator
+#: is appointed by hand in the admin afterwards, because both carry authority
+#: over records that are not the new account's own and neither can be claimed on
+#: a form.
+#:
+#: Written here as well as being the column default on ``User``, and the
+#: repetition is deliberate. The default protects rows this app never touches --
+#: a fixture, a data migration, ``createsuperuser`` -- while this states the
+#: outcome of *registration*, which is a decision this app owns and could
+#: change. A reader asking "what does a member get when they join?" should find
+#: the answer in the app that joins them.
+REGISTERED_ROLE = UserRole.MEMBER
 
 
 class NicknameTaken(Exception):
@@ -188,7 +202,8 @@ def register_member(
     consents,
     today=None,
 ):
-    """Create a member at ``PENDING_PAYMENT``, with their agreements.
+    """Create a member at ``PENDING_PAYMENT``, in the Member role, with their
+    agreements.
 
     ``consents`` is a list of ``{'document': slug, 'version': label}``, one per
     document required at sign-up.
@@ -260,6 +275,7 @@ def register_member(
         email=email,
         mobile=mobile,
         status=REGISTERED_STATUS,
+        role=REGISTERED_ROLE,
     )
     # Encrypts the number and writes its blind index in one step, which is the
     # only way this column may be written.

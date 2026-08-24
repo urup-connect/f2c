@@ -24,7 +24,7 @@ from datetime import date
 from django.test import TestCase
 
 from app.accounts.forms import UserChangeForm, UserCreationForm
-from app.accounts.models import User, UserStatus
+from app.accounts.models import User, UserRole, UserStatus
 from app.common.tests import VALID_SA_ID
 
 # Same date of birth, a different person: differs in the sequence digits.
@@ -39,6 +39,7 @@ class CreationFormTests(TestCase):
             'first_name': 'Craig',
             'last_name': 'Mabaso',
             'nickname': 'Bean',
+            'role': UserRole.MEMBER,
             'status': UserStatus.PENDING,
             'password1': PASSWORD,
             'password2': PASSWORD,
@@ -140,6 +141,7 @@ class ChangeFormTests(TestCase):
             'first_name': 'Craig',
             'last_name': '',
             'nickname': '',
+            'role': UserRole.MEMBER,
             'status': UserStatus.ACTIVE,
             'date_of_birth': '1980-01-01',
         }
@@ -297,6 +299,7 @@ class ContactClashTests(TestCase):
             'last_name': '',
             'nickname': '',
             'mobile': '',
+            'role': UserRole.MEMBER,
             'status': UserStatus.PENDING,
             'date_of_birth': '',
             'is_staff': '',
@@ -417,6 +420,7 @@ class ContactClashTests(TestCase):
                 'last_name': 'Mabaso',
                 'nickname': 'Grower3',
                 'mobile': '082 123 4567',
+                'role': UserRole.MEMBER,
                 'status': UserStatus.PENDING,
                 'password1': PASSWORD,
                 'password2': PASSWORD,
@@ -434,6 +438,7 @@ class ContactClashTests(TestCase):
                 'last_name': 'Mabaso',
                 'nickname': 'grower',
                 'mobile': '083 555 1234',
+                'role': UserRole.MEMBER,
                 'status': UserStatus.PENDING,
                 'password1': PASSWORD,
                 'password2': PASSWORD,

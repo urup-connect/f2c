@@ -27,9 +27,10 @@ only module that knows about all of them. Adding a feature means adding one `add
 
 | App | Owns |
 | --- | --- |
-| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`) and the admin over it |
+| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the three roles, and the admin over both |
 | `authn/` | Passkeys, emailed codes, sessions, rate limits — how a member proves who they are |
 | `documents/` | Club documents, their revisions, and the agreements members give |
+| `membership/` | Turning a sign-up submission into a member. Owns no models |
 | `common/` | Field encryption, RSA ID checks. No models, no endpoints |
 | `cultivatorscollective/` | Settings, URLs, and the API root the features mount on |
 
@@ -41,6 +42,8 @@ Dependencies run one way: `authn` and `documents` depend on `accounts`, `account
 | --- | --- |
 | The API root and router mounting | `cultivatorscollective/api.py` |
 | The member model | `accounts/models.py` (`User`) |
+| Roles and what each may do | `accounts/roles.py` |
+| Resolving a `platform.*` permission | `accounts/backends.py` |
 | Sign-in endpoints | `authn/api.py` |
 | Passkey ceremonies | `authn/webauthn.py` |
 | Emailed sign-in codes | `authn/otp.py` |
@@ -112,7 +115,7 @@ responses, or long-lived connections must be tested through Uvicorn.
 
 ## Tests
 
-Backend, 333 tests:
+Backend, 530 tests:
 
 ```
 .venv\Scripts\python.exe manage.py test
@@ -122,13 +125,14 @@ Each app tests what it owns, and `manage.py test <app>` runs just that app:
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `common/tests/` | 12 | Encryption round-trips, the blind index, RSA ID checks |
-| `accounts/tests/` | 59 | The member record, and the admin form over the encrypted ID number |
-| `authn/tests/` | 137 | The sign-in endpoints, both credential services, the rate limits |
-| `documents/tests/` | 113 | Documents, revisions, agreements, storage, the publish command |
+| `common/tests/` | 41 | Encryption round-trips, the blind index, RSA ID checks |
+| `accounts/tests/` | 141 | The member record, roles and permissions, and the admin form over the encrypted ID number |
+| `authn/tests/` | 138 | The sign-in endpoints, both credential services, the rate limits |
+| `documents/tests/` | 115 | Documents, revisions, agreements, storage, the publish command |
+| `membership/tests/` | 83 | The registration write and the endpoints in front of it |
 | `cultivatorscollective/tests/` | 12 | The brand skin over the Django admin |
 
-Frontend, 859 tests:
+Frontend, 949 tests:
 
 ```
 cd frontend
@@ -149,6 +153,7 @@ Start with [design/README.md](design/README.md).
 | --- | --- |
 | `design/frontend.md` | Rendering model, routes, module layers, configuration, testing |
 | `design/backend.md` | The member record, encryption, API surface, admin, testing |
+| `design/features/roles-and-permissions.md` | The three roles, the action catalogue, and where each is enforced |
 | `design/features/authentication.md` | Passkeys, emailed codes, sessions, rate limits |
 | `design/features/sign-up.md` | Age gate, member details, club document agreements |
 | `design/features/landing.md` | The public landing page and its copy governance |
@@ -156,9 +161,10 @@ Start with [design/README.md](design/README.md).
 
 Each document ends in a numbered risk table, and each has a *What is not built* section. Two things
 worth reading before planning work: the authenticated frontend is written but not routed
-(`design/frontend.md` section 9), and sign-up stores nothing -- the consent ledger exists and is
-tested, but there is no member row to write an agreement against
-(`design/features/sign-up.md` section 6).
+(`design/frontend.md` section 9), and roles are built ahead of everything they govern -- the three
+roles, the action catalogue and the enforcement path all work, while plants, strains, orders, swaps
+and the cultivator organisation do not exist
+(`design/features/roles-and-permissions.md` section 12).
 
 ## Authentication
 
@@ -251,6 +257,32 @@ because Django's auth stack filters on it in SQL and a Python property would
 break every queryset. `save()` derives it, and a database check constraint
 rejects any write that changes one without the other -- including
 `.update()` and raw SQL.
+
+### Roles, and what each one may do
+
+Every account holds exactly one role -- Admin, Cultivator or Member -- in a column with a check
+constraint. Registration makes a Member; the other two are appointed in the Django admin, because
+both carry authority over records that are not the account's own.
+
+A Django group was the obvious alternative and was rejected as the source of truth: a group is
+runtime data, an account can belong to none or to all three, and no constraint can say "exactly
+one". The groups exist anyway, mirrored from the column, so the model permissions the plant and
+strain apps will bring can be attached to a role in one place.
+
+What each role may do is a dictionary in `accounts/roles.py` rather than `auth.Permission` rows,
+because almost every action is against a model that does not exist yet and a permission row needs a
+content type, which needs a model. A second authentication backend resolves it, so
+`user.has_perm('platform.purchase_plants')` works today and one call still covers both kinds of
+permission. It authenticates nobody.
+
+Two separations are worth knowing. **Role is not status:** an inactive account holds nothing
+whatever its role, so suspension and erasure needed no knowledge of roles to stay safe. **Role is
+not `is_staff`:** `is_staff` opens the Django admin, `role` opens the platform's administrative
+actions, and neither derives from the other -- the cost being two places to grant privilege, which
+the admin states rather than hides.
+
+The catalogue, the rejected alternatives and the long list of what roles govern that is not yet
+built are in [design/features/roles-and-permissions.md](design/features/roles-and-permissions.md).
 
 ### The ID number is encrypted, and still searchable
 

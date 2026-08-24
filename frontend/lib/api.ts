@@ -60,6 +60,25 @@ export type User = {
     | "active"
     | "suspended"
     | "inactive";
+  /**
+   * What the account is, as opposed to whether it may sign in. Registration
+   * makes everybody a `member`; the other two are appointed in the Django
+   * admin. Independent of `is_staff`, which opens the Django admin and nothing
+   * else.
+   */
+  role: "admin" | "cultivator" | "member";
+  /**
+   * Every `platform.*` action this account holds, sorted. Sent alongside
+   * `role` so that nothing here has to map one to the other -- that map lives
+   * in `accounts/roles.py`, and a copy of it in this bundle would drift from
+   * the one the API enforces, showing up as a menu offering something the API
+   * then refuses.
+   *
+   * For rendering, never for deciding. Empty for an account that is not
+   * active, and the whole catalogue for a superuser. Every endpoint checks the
+   * permission itself; this is a hint about what to draw.
+   */
+  permissions: string[];
   is_staff: boolean;
 };
 

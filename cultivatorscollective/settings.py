@@ -185,6 +185,23 @@ DATABASES = {
 # set from the first migration rather than deferred.
 AUTH_USER_MODEL = 'accounts.User'
 
+# Two backends, one of which authenticates nobody.
+#
+# ModelBackend is the only one that can open a session, and every session is
+# attributed to it -- the passkey and emailed-code paths in `authn/api.py` name
+# it explicitly for that reason. RoleBackend answers `has_perm` for the
+# `platform.*` action catalogue in `accounts/roles.py` and returns None from
+# `authenticate`, so ordering it second is what keeps the two concerns apart:
+# credentials above, authority below.
+#
+# The point of resolving platform actions through a backend rather than a
+# bespoke helper is that one call -- `user.has_perm(...)` -- covers both kinds
+# of permission, so a view never has to know which kind it named.
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'app.accounts.backends.RoleBackend',
+]
+
 
 # Field-level encryption
 # See common/crypto.py for what each of these protects and why they are separate
