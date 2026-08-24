@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/*
+  Cultivators Collective brand tokens.
+  Derived from the 2026 brand guidelines deck.
+  See design/features/brand-design-system.md — change the doc and the tests with these values.
+*/
+
+/*
+  The brand has no dark palette yet, so the dark variant is scoped to an opt-in `.dark` class
+  instead of the OS preference. Without this, `dark:` utilities would fire from
+  prefers-color-scheme and render an unreviewed colour scheme.
+  See design/features/brand-design-system.md risk 6.
+*/
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Palette — the printed swatches from the guidelines deck */
+  --color-forest-green: #1F3B2D;
+  --color-forest-green-deep: #0F1C13;
+  --color-olive-green: #7BA05D;
+  --color-sage-green: #C7D9B0;
+  --color-cream-warm: #F9F1E8;
+  --color-cream-cool: #F2F4ED;
+  --color-bark: #422B1C;
+  --color-bark-light: #725C4E;
+  --color-ink: #000000;
+  --color-white: #FFFFFF;
+
+  /*
+    Not from the guidelines deck. The deck supplies no error colour and the age gate needs one,
+    so this is a placeholder: a muted brick red picked to sit with Bark rather than a stock alarm
+    red. AA and AAA on all three light grounds; not verified on either green, so light grounds
+    only. Screens reach it through --color-error and never name it, which makes replacing it a
+    one-hex change when the brand supplies the real thing.
+    See design/features/brand-design-system.md risk 7.
+  */
+  --color-clay-red: #8E2F2A;
+
+  /* Semantic aliases — prefer these in screens, so intent survives a palette change */
+  --color-background: var(--color-cream-warm);
+  --color-foreground: var(--color-bark);
+  --color-muted-foreground: var(--color-bark-light);
+  --color-surface: var(--color-white);
+  --color-surface-muted: var(--color-cream-cool);
+  --color-primary: var(--color-forest-green);
+  --color-primary-foreground: var(--color-cream-warm);
+  --color-accent: var(--color-olive-green);
+  --color-border: var(--color-sage-green);
+  --color-error: var(--color-clay-red);
+
+  /*
+    Typography. The families come from next/font in the root layout; the generic tail is
+    appended here because next/font's own value stops at its metric-matched fallback.
+  */
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-playfair-display), ui-serif, Georgia, serif;
+
+  /* Display type is set tight in the deck; small uppercase labels are set loose */
+  --tracking-display: -0.02em;
+  --tracking-label: 0.12em;
+
+  /* Shape — from the app mockup: generously rounded cards, fully rounded pills */
+  --radius-card: 1rem;
+  --radius-control: 0.75rem;
+  --radius-pill: 9999px;
+}
+
+@layer base {
+  /*
+    next/font sets these two on <html> through a generated class; nothing else declares them.
+    Declaring them here keeps every reference resolvable for static analysis and leaves a
+    usable stack if a webfont fails to load. next/font still wins: its rule is unlayered and
+    class-specific, both of which outrank an element selector inside a layer.
+  */
+  html {
+    --font-dm-sans: ui-sans-serif, system-ui, sans-serif;
+    --font-playfair-display: ui-serif, Georgia, serif;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  /*
+    Headings carry the display face by default. Tracking is only tightened from the point
+    where the deck tightens it, so small headings keep their default spacing.
+  */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: var(--tracking-display);
+  }
+
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+  }
+}

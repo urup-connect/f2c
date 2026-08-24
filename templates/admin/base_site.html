@@ -1,0 +1,40 @@
+{% extends "admin/base.html" %}
+{% load i18n static %}
+
+{#
+    Cultivators Collective branding for the admin.
+
+    This replaces django/contrib/admin/templates/admin/base_site.html. Everything the
+    upstream file declares has to be declared here too, because a block this template
+    leaves out falls back to base.html rather than to the upstream base_site.html --
+    and base.html defines `title` as empty. Hence the copied title block below.
+
+    Three changes from upstream:
+      1. `extrastyle` pulls in cc_admin/css/brand.css, which sits after base.css in the
+         cascade and redefines the admin's colour, type and shape variables.
+      2. `dark-mode-vars` is emptied. It normally loads dark_mode.css and theme.js; the
+         brand has no dark palette, so the admin stays light rather than rendering an
+         unreviewed scheme. brand.css hides the now-inert theme toggle.
+      3. `branding` renders the badge next to the site header and drops the toggle that
+         upstream shows to anonymous users.
+#}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block dark-mode-vars %}{% endblock %}
+
+{% block extrastyle %}
+  <link rel="stylesheet" href="{% static 'cc_admin/css/brand.css' %}" {% csp_nonce_attr %}>
+{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+  <a href="{% url 'admin:index' %}">
+    {# Decorative: the site header text beside it already names the site. #}
+    <img src="{% static 'cc_admin/img/logo-badge-on-green.png' %}" alt="" class="cc-logo" width="34" height="34">
+    <span>{{ site_header|default:_('Django administration') }}</span>
+  </a>
+</div>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

@@ -1,0 +1,21 @@
+# Backend dependencies. Mirrors [project.dependencies] in pyproject.toml.
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+django>=6.1,<7.0
+uvicorn[standard]>=0.52,<1.0
+python-dotenv>=1.1,<2.0
+django-ninja>=1.4,<2.0
+django-cors-headers>=4.7,<5.0
+# Passkey (WebAuthn) ceremony generation and verification.
+webauthn>=2.5,<3.0
+# AES-256-GCM for the encrypted ID-number column (api/crypto.py). Pulled in
+# by webauthn as well, but named here because we import it directly.
+cryptography>=45.0
+# Azure Blob Storage backend for the club document PDFs, so an admin upload lands
+# in the container the CDN fronts. The extra pulls azure-storage-blob. Only
+# imported once DJANGO_DOCUMENT_STORAGE_CONTAINER is set; without it the
+# documents fall back to MEDIA_ROOT and none of these is touched.
+django-storages[azure]>=1.14,<2.0
+# Managed-identity credentials, so App Service needs no account key in its
+# application settings. Imported only when no key, SAS token or connection
+# string is configured -- see documents/storage.py.
+azure-identity>=1.19
