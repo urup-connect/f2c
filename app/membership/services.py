@@ -8,9 +8,13 @@ other way would make the two mutually dependent -- the same reason
 ``User.soft_delete`` reaches ``authn`` through reverse relations instead of
 importing it. So the one function that needs both lives above both.
 
-It is also where the payment gateway lands. A registration ends at
-``PENDING_PAYMENT``; what moves an account from there to Active is a payment,
-and a payment is this app's business rather than the account model's.
+A registration ends at ``PENDING_PAYMENT``, and what moves an account from there
+to Active is a payment. That used to be described here as this app's future
+business; it is now ``app.payments``, which owns the price, the Payfast mandate
+and the notification that activates an account. This app opens the subscription
+in the same transaction as the member and then knows nothing more about it --
+which is why the only payment concept in this module is a checkout token being
+handed back to the caller.
 
 Four rules run through it.
 
@@ -60,10 +64,12 @@ from app.common.validators import (
 )
 from app.documents import services as document_services
 from app.documents.models import DocumentConsent
+from app.payments import services as payment_services
 
 #: Where a registration leaves a new member. Named here rather than written out
-#: at the call site: this is the one fact this app currently owns, and the
-#: payment gateway will change it in one place.
+#: at the call site, so the one status this app decides is stated once. It is
+#: ``app.payments`` that moves an account off it, and it does so through
+#: ``User.activate`` rather than by writing this column.
 REGISTERED_STATUS = UserStatus.PENDING_PAYMENT
 
 #: What a registration makes somebody. Sign-up is the only route to this role,
@@ -119,10 +125,18 @@ class Registration:
     an address or an identity number already on file. That is a deliberate
     no-op rather than a failure, and the caller must answer it exactly as it
     answers a success -- see the module docstring.
+
+    ``checkout_token`` is how the member reaches Payfast, and it is present only
+    on a registration that wrote a row. A duplicate gets ``None``, and the
+    caller must not let that difference show: the neutral answer is the
+    confirmation screen both cases already shared, and the outstanding payment
+    link is emailed instead. See ``payments.services.email_outstanding_checkout``
+    on why that is the one channel a duplicate may use.
     """
 
     user: User | None
     created: bool
+    checkout_token: str | None = None
 
 
 def _resolve_consents(submitted):
@@ -263,6 +277,21 @@ def register_member(
         or User.objects.by_mobile(mobile).exists()
     )
     if already_registered:
+        # Nothing is written, and the caller answers this exactly as it answers a
+        # success. The one thing that does happen is invisible from here: if the
+        # address on this submission belongs to a live account with a payment
+        # still outstanding, the link to finish it is emailed. That is the only
+        # channel a duplicate may use, because it reaches the mailbox rather than
+        # the person who filled in the form -- so whoever submitted learns
+        # nothing, and the member whose address it is gets a way to finish.
+        #
+        # Matched on the address alone. A submission that duplicates an identity
+        # number or a mobile while naming a *different* address gets no email:
+        # sending one would tell the typed address about somebody else's
+        # membership.
+        existing = payment_services.outstanding_for_email(email)
+        if existing is not None:
+            payment_services.email_outstanding_checkout(existing)
         return Registration(user=None, created=False)
 
     if User.objects.nickname_is_taken(nickname):
@@ -298,4 +327,13 @@ def register_member(
     document_services.record_consents(
         user, versions, source=DocumentConsent.Source.SIGNUP
     )
-    return Registration(user=user, created=True)
+
+    # In the same transaction as the member and their agreements, and that is
+    # the point. A member at Pending payment with no subscription has no way to
+    # leave that status, and a subscription with no member is a mandate against
+    # nobody -- so either all three exist or none of them do.
+    subscription = payment_services.open_subscription(user)
+
+    return Registration(
+        user=user, created=True, checkout_token=subscription.checkout_token
+    )

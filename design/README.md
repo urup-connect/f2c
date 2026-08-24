@@ -13,6 +13,7 @@ is deliberately unbuilt, it is recorded as unbuilt rather than omitted.
 | [features/roles-and-permissions.md](features/roles-and-permissions.md) | The three roles, the action catalogue, and where each is enforced |
 | [features/authentication.md](features/authentication.md) | Passkeys, emailed sign-in codes, sessions, rate limits |
 | [features/sign-up.md](features/sign-up.md) | The age gate, the details a joining member gives, the club document agreements |
+| [features/payments.md](features/payments.md) | The membership subscription, the Payfast integration, and what a payment does to an account |
 | [features/landing.md](features/landing.md) | The public landing page, its copy governance and its indexing rules |
 | [features/brand.md](features/brand.md) | Colour, typography, logo artwork, photography and the design tokens behind them |
 
@@ -65,7 +66,7 @@ against a set of files that are otherwise accurate and well annotated.
 | `features/club-document-agreements-at-sign-up.md` | [features/sign-up.md](features/sign-up.md) §5 |
 | `features/passkey-auth-with-email-otp.md` | [features/authentication.md](features/authentication.md) |
 | `features/data-layer-foundation.md` | [backend.md](backend.md) §4, [frontend.md](frontend.md) §6 |
-| `features/membership-payment-status.md` | Not built. See [features/landing.md](features/landing.md) §5 and [backend.md](backend.md) §11 |
+| `features/membership-payment-status.md` | Partly built. See [features/payments.md](features/payments.md); the member-facing status screen is still unbuilt, §9 there |
 
 The section and criterion numbers in those citations do not carry across. They referred to numbered
 acceptance criteria in the earlier documents, and this set does not restate them.

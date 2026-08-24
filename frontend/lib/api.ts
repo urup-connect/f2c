@@ -59,14 +59,25 @@ export type User = {
     | "pending_payment"
     | "active"
     | "suspended"
-    | "inactive";
+    | "inactive"
+    /**
+     * A sharing member: an identity a cultivator registered to hold stock in
+     * the swap zone. Never signs in -- it has no email address, and a check
+     * constraint keeps the role out of `active` -- so this value cannot reach a
+     * signed-in session. The contract admits it because the type describes the
+     * column, not only what a browser will see.
+     */
+    | "sharing";
   /**
    * What the account is, as opposed to whether it may sign in. Registration
-   * makes everybody a `member`; the other two are appointed in the Django
-   * admin. Independent of `is_staff`, which opens the Django admin and nothing
-   * else.
+   * makes everybody a `member`; `admin` and `cultivator` are appointed in the
+   * Django admin, and `sharing_member` is registered by a cultivator.
+   * Independent of `is_staff`, which opens the Django admin and nothing else.
+   *
+   * A `sharing_member` never signs in and holds no permissions, so it will not
+   * appear on a session -- see `status`.
    */
-  role: "admin" | "cultivator" | "member";
+  role: "admin" | "cultivator" | "member" | "sharing_member";
   /**
    * Every `platform.*` action this account holds, sorted. Sent alongside
    * `role` so that nothing here has to map one to the other -- that map lives

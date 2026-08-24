@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { AGE_PASS_COOKIE, readAgePass } from '@/lib/age-gate-cookie'
+import { CHECKOUT_COOKIE, checkoutCookieOptions } from '@/lib/checkout-cookie'
 import { fetchClubDocumentRevisions } from '@/lib/club-documents-api'
 import { newErrorReference } from '@/lib/error-reference'
 import {
@@ -11,6 +12,7 @@ import {
   validateMemberDetails,
 } from '@/lib/member-details'
 import { registerMember } from '@/lib/registration-api'
+import { SITE_CONFIG } from '@/lib/site'
 
 /**
  * Decides the member details, and registers the member.
@@ -35,13 +37,21 @@ import { registerMember } from '@/lib/registration-api'
  * check constraint holds the two together, so there is no way for a registration to produce an
  * account that can log in.
  *
+ * **The accepted path now also hands the member to Payfast.** A registration that wrote a row comes
+ * back with a checkout token, and this sets it in an `httpOnly` cookie and redirects to `/pay`.
+ * See the note above that redirect for what travels where, and why the token is not in the URL.
+ *
  * Two things this deliberately does not decide.
  *
- * It does not tell a visitor that their address or identity number is already on file. Django
- * answers a duplicate exactly as it answers a new registration, writing nothing, because the
- * alternative turns this form into a way to ask whether a named person is a member here. A taken
- * *nickname* is refused out loud, because a nickname is a claim against other members and there is
- * nothing to disclose in saying one is spoken for.
+ * It does not say *whether* an address or identity number is already on file. Django still answers
+ * a duplicate with the same status code, the same status and the same sentence, writing nothing —
+ * only without a checkout token, because there is nothing to pay for. So a duplicate lands on the
+ * confirmation screen rather than at Payfast, and whoever submitted learns that the address may be
+ * on file and nothing further. That is a narrowing of a rule this file used to state absolutely,
+ * taken knowingly when the redirect was chosen over emailing every member their link; the cost is
+ * recorded in design/features/payments.md section 4 and risk 1. A taken *nickname* is still refused
+ * out loud, because a nickname is a claim against other members and there is nothing to disclose in
+ * saying one is spoken for.
  *
  * It does not distinguish an unreachable API from a club document with no published revision.
  * Either way nothing was written, there is nothing the visitor can do, and `/signup?unavailable=1`
@@ -107,6 +117,31 @@ export const submitMemberDetails = async (formData: FormData) => {
     console.error(`[register] ${reference}: ${registration.reason}`)
 
     redirect(`/signup?unavailable=1&ref=${reference}`)
+  }
+
+  /*
+   * Accepted, and now one of two hand-offs.
+   *
+   * **A token means a member was written**, and they go to Payfast. The token travels in an
+   * `httpOnly` cookie rather than in the redirect, because a redirect carries only a URL and a URL
+   * is written to every access log between here and the member — Criterion 40 again, applied to a
+   * value this application minted rather than to one the member typed. See `lib/checkout-cookie.ts`.
+   *
+   * **No token means the submission named somebody already on file.** Nothing was written, and this
+   * is the path that keeps that from being disclosed outright: the member lands on the same
+   * confirmation screen sign-up has always used, and Django emails the outstanding payment link to
+   * the address instead — which reaches the mailbox rather than whoever filled in the form.
+   *
+   * The two screens are not identical, and that is the known cost of redirecting straight to
+   * payment: somebody submitting another person's address learns that it may already be on file.
+   * They learn nothing else — no name, no status, no amount, no confirmation. The alternative was
+   * emailing every member their link and sending nobody to Payfast directly, which was weighed and
+   * not taken. See design/features/payments.md section 4 and risk 1.
+   */
+  if (registration.checkoutToken) {
+    store.set(CHECKOUT_COOKIE, registration.checkoutToken, checkoutCookieOptions(SITE_CONFIG))
+
+    redirect('/pay')
   }
 
   redirect('/signup?submitted=1')

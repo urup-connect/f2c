@@ -31,6 +31,15 @@ export type RegistrationAccepted = {
   /** Where the account now sits. `pending_payment` until a payment lands. */
   readonly status: string
   readonly detail: string
+  /**
+   * The bearer token that reaches Payfast, or `null`.
+   *
+   * Null means the submission named an address, identity number or mobile already on file: Django
+   * wrote nothing, so there is no subscription to pay for. That is the one field in which a
+   * duplicate and a new registration differ, and the difference is deliberate — see
+   * `RegistrationOut` in membership/schemas.py and design/features/payments.md section 4.
+   */
+  readonly checkout_token?: unknown
 }
 
 /** What Django answers a refusal with. Mirrors `RegistrationRefusedOut`. */
@@ -41,7 +50,16 @@ export type RegistrationRefusedBody = {
 }
 
 export type RegistrationOutcome =
-  | { readonly status: 'accepted'; readonly memberStatus: string }
+  | {
+      readonly status: 'accepted'
+      readonly memberStatus: string
+      /**
+       * Where to send the member next. A token means Payfast; `null` means the neutral
+       * confirmation screen, which is what a duplicate submission gets and what the emailed
+       * fallback link then leads back from.
+       */
+      readonly checkoutToken: string | null
+    }
   /** Refusals to render against specific fields, exactly as the validator's are. */
   | { readonly status: 'refused'; readonly refusals: readonly MemberDetailsFieldRefusal[] }
   /**

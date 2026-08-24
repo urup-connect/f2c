@@ -13,6 +13,14 @@ an administrator is appointed. What the chosen role permits is shown beside it,
 read from ``accounts.roles`` rather than restated here, so the admin cannot
 describe a role the application does not implement.
 
+The **Sharing member** panel holds the columns only that role uses: the
+cultivator who registered them, and the consent attestation that makes holding
+their identity number lawful. It is editable, because until there is an endpoint
+this admin is the only interface staff have -- but
+``accounts.services.register_sharing_member`` is the route that validates the
+identity number, the age rule and the nickname, and the panel says so. The
+database refuses an incomplete sharing member either way.
+
 The authentication tables have their own admin in ``authn.admin``, where they
 are read-only.
 """
@@ -42,7 +50,13 @@ class UserAdmin(BaseUserAdmin):
     # most often once there is more than one. `groups` stays, even though it now
     # mirrors the role, because a group added by hand for some other purpose is
     # the one thing filtering on role would not surface.
-    list_filter = ('role', 'status', 'is_staff', 'is_superuser', 'groups')
+    # `RelatedOnlyFieldListFilter` lists the cultivators who have actually
+    # registered somebody, rather than every account in the table.
+    list_filter = (
+        'role', 'status',
+        ('registered_by', admin.RelatedOnlyFieldListFilter),
+        'is_staff', 'is_superuser', 'groups',
+    )
     # Not id_number: it is encrypted with a random nonce per row, so no SQL
     # LIKE can reach it. get_search_results() below handles it separately.
     search_fields = ('email', 'first_name', 'last_name', 'nickname', 'mobile')
@@ -57,6 +71,10 @@ class UserAdmin(BaseUserAdmin):
     # `groups` is read-only above, so it needs no picker. Leaving it in
     # filter_horizontal would only render a widget nobody can use.
     filter_horizontal = ('user_permissions',)
+    # Both point back at User, so a plain select would render every account on
+    # the platform into the page. `search_fields` above is what makes these
+    # searchable.
+    autocomplete_fields = ('registered_by', 'sharing_consent_attested_by')
 
     fieldsets = (
         (None, {'fields': ('id', 'email', 'password')}),
@@ -78,6 +96,24 @@ class UserAdmin(BaseUserAdmin):
                 'independent: Role decides what the account may do on the '
                 'platform, and Staff status opens this admin site. Granting '
                 'one does not grant the other.'
+            ),
+        }),
+        ('Sharing member', {
+            'classes': ('collapse',),
+            'fields': (
+                'registered_by', 'sharing_consent_attested_by',
+                'sharing_consent_attested_at', 'sharing_consent_version',
+            ),
+            'description': (
+                'Only for accounts in the Sharing member role, and required '
+                'for all of them: the database refuses a sharing member with '
+                'no cultivator, no attestation or no nickname. The '
+                'attestation is the club’s lawful basis under POPIA for '
+                'holding this person’s name and identity number — they '
+                'registered no form themselves — so it should record a '
+                'confirmation actually given, by whoever gave it. Prefer '
+                'accounts.services.register_sharing_member, which validates '
+                'the identity number and the age rule as well.'
             ),
         }),
         ('Permissions', {
@@ -209,10 +245,17 @@ class UserAdmin(BaseUserAdmin):
                 messages.SUCCESS,
             )
         if refused:
+            # Two reasons reach here, and `activate()` raises the same
+            # exception for both: an erased account has no personal data left
+            # to come back to, and a sharing member has nothing to activate
+            # because it never signs in. Named together rather than counted
+            # separately -- the action's job is to report what it skipped, and
+            # the individual reason is on each record.
             self.message_user(
                 request,
-                f'{refused} erased account(s) were skipped: their personal data '
-                'is gone and they cannot be reactivated.',
+                f'{refused} account(s) were skipped: an erased account cannot '
+                'be reactivated, and a sharing member holds stock without '
+                'ever signing in.',
                 messages.WARNING,
             )
 

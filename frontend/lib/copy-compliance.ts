@@ -9,10 +9,18 @@
  *
  * Two exemptions exist, both narrow and both stated where they are taken. The age check is exempt
  * from `ELIGIBILITY_CLAIM`, being the only surface that says anything about who may join — see
- * design/features/age-gate-before-sign-up.md section 6.3. The payment screen, when it is built,
- * will be exempt from `CURRENCY` and `RETAIL_VOICE`, because it has to name an amount and ask to be
- * paid — see design/features/membership-payment-status.md section 6.7. Nothing is exempt from
- * `CLINICAL_CLAIM`, and a third exemption is the point at which these rules stop meaning anything.
+ * design/features/age-gate-before-sign-up.md section 6.3. The payment screens are exempt from
+ * `CURRENCY`, because they have to name an amount — see design/features/payments.md section 5.
+ *
+ * A third exemption was reserved here for the payment screens and **is not taken**. They were
+ * expected to need `RETAIL_VOICE` as well, on the reasoning that a screen asking to be paid cannot
+ * avoid a shop's vocabulary. It turned out they can: "subscription", "payment" and "Payfast" say
+ * it without any of these words, so `payment-content.test.ts` holds that corpus to this rule rather
+ * than exempting it. The reservation is left recorded because the reasoning that produced it is
+ * worth having next to the outcome that disproved it.
+ *
+ * Nothing is exempt from `CLINICAL_CLAIM`, and a further exemption is the point at which these
+ * rules stop meaning anything.
  */
 
 /** No medical, therapeutic or dosage claim. Cannabis copy attracts these; none is defensible. */

@@ -41,7 +41,7 @@ from app.common.validators import (
     validate_sa_mobile_number,
 )
 
-from .roles import ROLE_GROUP_NAMES, UserRole
+from .roles import ROLE_GROUP_NAMES, SHARING_CONSENT_VERSION, UserRole
 
 # Re-exported so that ``from app.accounts.models import UserRole`` reads the
 # same way as ``UserStatus`` beside it. ``accounts.roles`` is the canonical
@@ -68,6 +68,15 @@ class UserStatus(models.TextChoices):
     ``User``. A ``Membership`` model with a subscription period and a gateway
     reference arrives with the payment gateway; until there is a payment to
     record, a second table would hold one fact that this field already holds.
+
+    ``SHARING`` is the one value that is not a stage in a lifecycle. It is where
+    a sharing member sits permanently: an identity a cultivator registered to
+    hold stock, with no email address to authenticate and nothing to wait for.
+    Reusing ``PENDING`` would have been free and would have read as a promise
+    the account never keeps -- "pending verification" describes something that
+    resolves, and this never does. A second check constraint keeps the sharing
+    member role out of ``ACTIVE`` altogether, so "never signs in" is a fact
+    about the database rather than a convention.
     """
 
     PENDING = 'pending', 'Pending verification'
@@ -75,6 +84,7 @@ class UserStatus(models.TextChoices):
     ACTIVE = 'active', 'Active'
     SUSPENDED = 'suspended', 'Suspended'
     INACTIVE = 'inactive', 'Inactive'
+    SHARING = 'sharing', 'Sharing member (no sign-in)'
 
 
 class UserManager(BaseUserManager):
@@ -321,6 +331,60 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text='Grants access to the Django admin site.',
     )
 
+    # The cultivator who registered this sharing member, and null for everybody
+    # else. A sharing member exists because a cultivator put them on the
+    # register and gave them stock, so a record with no cultivator is orphaned
+    # stock -- which the `sharing_member_is_complete` constraint below refuses.
+    #
+    # PROTECT rather than CASCADE or SET_NULL. Cascading would delete people
+    # because their cultivator was deleted; nulling would lose the one fact this
+    # column exists to hold. Protecting means a cultivator who has registered
+    # sharing members cannot be hard-deleted, and the routine answer -- erasure,
+    # which keeps the row -- is unaffected. The same reasoning as
+    # `documents.DocumentConsent.version`.
+    #
+    # `limit_choices_to` shapes the admin dropdown only; it is not the rule.
+    # `accounts.services.register_sharing_member` authorises on the permission,
+    # which a superuser also holds without wearing the Cultivator role.
+    registered_by = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='sharing_members',
+        limit_choices_to={'role': UserRole.CULTIVATOR},
+        help_text='The cultivator who registered this sharing member.',
+    )
+
+    # The POPIA lawful basis for holding a sharing member's name and identity
+    # number. A sharing member never saw a form, so they cannot have ticked a
+    # box: the cultivator attests instead, and these three columns record who
+    # swore it, when, and under which wording. See `accounts.roles` for the
+    # wording itself and for why this is called an attestation rather than a
+    # consent.
+    #
+    # Not a table of its own. A sharing member has exactly one attestation, made
+    # at registration, so a second table would hold one row per record to carry
+    # one fact these columns already carry -- the same argument `UserStatus`
+    # makes against a membership table.
+    sharing_consent_attested_by = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='sharing_consents_attested',
+        help_text=(
+            'Who confirmed that this sharing member consented and was given '
+            'the collection notice.'
+        ),
+    )
+    sharing_consent_attested_at = models.DateTimeField(null=True, blank=True)
+    # The wording in force when the attestation was made, so a later revision
+    # cannot silently reinterpret the ones already given.
+    sharing_consent_version = models.CharField(
+        max_length=32, blank=True, default=SHARING_CONSENT_VERSION
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     # Distinguishes an account that was erased from one merely deactivated.
@@ -366,6 +430,60 @@ class User(AbstractBaseUser, PermissionsMixin):
                 name='user_role_is_known',
                 violation_error_message=(
                     'That is not a role this platform recognises.'
+                ),
+            ),
+            # A sharing member never signs in, stated where it cannot be
+            # forgotten. They hold no email address, so there is nothing to
+            # authenticate today -- but "there is nothing to authenticate" is a
+            # property of the data, and somebody adding an address later, in the
+            # admin or in a fixture, would silently turn a stock-holding
+            # identity into a sign-in-capable account. This says it in SQL
+            # instead. Suspended and Inactive stay reachable on purpose: a
+            # sharing member registered in error has to be stoppable, and
+            # erasure has to be able to finish.
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(role=UserRole.SHARING_MEMBER)
+                    | ~models.Q(status=UserStatus.ACTIVE)
+                ),
+                name='sharing_member_never_signs_in',
+                violation_error_message=(
+                    'A sharing member holds stock and never signs in, so the '
+                    'account cannot be Active.'
+                ),
+            ),
+            # What a sharing member record has to have to mean anything: the
+            # cultivator who put them on the register, the attestation that
+            # makes holding their identity number lawful, and a nickname,
+            # because the swap zone shows a nickname and a blank one would put
+            # unnamed stock in front of members.
+            #
+            # One constraint rather than three: the three are one idea -- an
+            # incomplete sharing member -- and `services.register_sharing_member`
+            # refuses each of them individually first, with a message naming the
+            # field. This is the backstop for a write that never went near the
+            # service, in the same way the mobile and nickname indexes back the
+            # admin form's checks.
+            #
+            # Erased records are exempt. `soft_delete` blanks the nickname by
+            # design, so without the exemption erasing a sharing member -- the
+            # POPIA route, the one thing that must always work -- would be
+            # refused by the database.
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(role=UserRole.SHARING_MEMBER)
+                    | models.Q(deleted_at__isnull=False)
+                    | (
+                        models.Q(registered_by__isnull=False)
+                        & models.Q(sharing_consent_attested_by__isnull=False)
+                        & models.Q(sharing_consent_attested_at__isnull=False)
+                        & ~models.Q(nickname='')
+                    )
+                ),
+                name='sharing_member_is_complete',
+                violation_error_message=(
+                    'A sharing member needs the cultivator who registered '
+                    'them, a recorded consent attestation, and a nickname.'
                 ),
             ),
             # One nickname, one member -- compared case-insensitively, because
@@ -522,6 +640,16 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_member(self):
         return self.role == UserRole.MEMBER
 
+    @property
+    def is_sharing_member(self):
+        """Holds stock in the swap zone and never signs in.
+
+        Not a kind of member, despite the name the club uses: they pay no
+        subscription, agree to no documents themselves, and hold no permissions.
+        ``is_member`` is deliberately false for them.
+        """
+        return self.role == UserRole.SHARING_MEMBER
+
     def set_role(self, role):
         """Move this account to another role, and sync its group.
 
@@ -637,6 +765,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         inactive account before it ever looks at the role, and this method
         leaves the account Inactive.
 
+        For a sharing member, ``registered_by`` and the three
+        ``sharing_consent_*`` columns stay too. They identify the *cultivator*
+        who registered them and attested to their consent, which is that
+        cultivator's act rather than this person's personal data, and it is what
+        lets the club show it had a lawful basis for having held the record at
+        all. The same argument as ``email_hash`` surviving, and the reason the
+        ``sharing_member_is_complete`` constraint exempts erased rows: the
+        nickname it requires is one of the things this method clears.
+
         Reversible only in the sense that the row can be reactivated; the
         erased fields are gone.
         """
@@ -703,6 +840,15 @@ class User(AbstractBaseUser, PermissionsMixin):
             raise ValueError(
                 'This account was erased and cannot be reactivated; its personal '
                 'data is gone. Create a new account instead.'
+            )
+        if self.role == UserRole.SHARING_MEMBER:
+            # Refused here as well as by `sharing_member_never_signs_in`, so a
+            # bulk action in the admin says something useful instead of failing
+            # the whole transaction on an index name.
+            raise ValueError(
+                'A sharing member holds stock and never signs in, so there is '
+                'nothing to activate. Change the role first if this person is '
+                'joining as a member.'
             )
         self.status = UserStatus.ACTIVE
         self.save(update_fields=['status', 'updated_at'])

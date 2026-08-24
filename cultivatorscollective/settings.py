@@ -19,6 +19,7 @@ from django.core.exceptions import ImproperlyConfigured
 # no setting, so it does not need the app registry that this file is loaded to
 # build. See its module docstring for why the reader lives there and not here.
 from app.documents.storage import documents_storage_config
+from app.payments.gateway import payfast_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -128,6 +129,7 @@ INSTALLED_APPS = [
     'app.authn',
     'app.documents',
     'app.membership',
+    'app.payments',
 ]
 
 MIDDLEWARE = [
@@ -393,4 +395,27 @@ NINJA_DEFAULT_THROTTLE_RATES = {
     # Looser than `register`: a member tries a few names in one sitting, and
     # each one is a request. See membership/throttles.py.
     'nickname_availability': '30/m',
+    # Reading a checkout. Generous, because it is read again every time a
+    # member returns to an abandoned Payfast page, and the control that
+    # actually bounds token guessing is the 32 bytes of entropy in the
+    # token. See payments/throttles.py -- and note that the Payfast
+    # notification endpoint is deliberately not listed here at all.
+    'checkout': '30/m',
 }
+
+
+# Payments: Payfast
+
+# Read once at startup by a pure function of the environment, the same shape as
+# STORAGES['documents'] above -- so every refusal it can raise is testable
+# without a merchant account. With DEBUG on and nothing configured it returns
+# Payfast's published sandbox merchant, so a fresh clone works; with DEBUG off
+# every variable is required and startup fails without them, because a payment
+# integration that silently falls back to a sandbox is one that takes a
+# member's money into an account nobody is watching.
+#
+# One thing configuration cannot fix locally: Payfast delivers notifications
+# server-to-server and cannot reach a localhost notify_url, so the step that
+# activates a membership never fires on a developer's machine. The
+# `payfast_notify` management command stands in for it.
+PAYFAST = payfast_config(os.environ, debug=DEBUG)

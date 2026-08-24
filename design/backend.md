@@ -49,7 +49,8 @@ every model; each feature owns its own models, admin, schemas and router.
 | `accounts` | The member record, the roles over it, and the admin | `common` |
 | `authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
 | `documents` | Club documents, revisions, agreements | `accounts` |
-| `membership` | Turning a sign-up submission into a member. No models | `accounts`, `documents` |
+| `membership` | Turning a sign-up submission into a member. No models | `accounts`, `documents`, `payments` |
+| `payments` | The membership subscription, the Payfast integration, and what a payment does to an account | `accounts` |
 | `cultivatorscollective` | Settings, URLs, and the API root | all of them |
 
 The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
@@ -68,6 +69,12 @@ does not own, or an erased account keeps a way back in. It reaches them through 
 relations `authn` declares — `passkeys`, `email_otps`, `passkey_handle` — rather than importing the
 app, so the two never become mutually dependent. Those three names are a contract, and
 `accounts/tests/test_models.py` asserts all three tables end up empty.
+
+`payments` is the newest app and the clearest case for the split. It depends on `accounts` alone —
+it activates an account and knows nothing about club documents or sign-up — and `membership` depends
+on it, calling `open_subscription` inside the transaction that writes the member. The direction is
+what stops the money knowing about the form: `payments` has no idea a registration exists, which is
+why the same subscription machinery will serve an order or a swap fee without being reopened.
 
 `common` holds only what at least two features need and none should own. Encryption is there
 because an identity number will not be the last thing this project encrypts; the ID validators
@@ -93,11 +100,14 @@ member's sign-in codes.
 
 ### 3.1 Status is the source of truth, not a boolean
 
-`status` is one of Pending, Active, Suspended, Inactive. Exactly one value grants access.
+`status` is one of Pending, Pending payment, Active, Suspended, Inactive, Sharing. Exactly one
+value grants access.
 
-Keeping four states rather than a boolean matters because "not yet approved", "in trouble" and
-"erased on request" are different situations with different operational answers, and a single
-`is_active` flag cannot tell them apart.
+Keeping six states rather than a boolean matters because "not yet approved", "not yet paid", "in
+trouble", "erased on request" and "holds stock and never signs in" are different situations with
+different operational answers, and a single `is_active` flag cannot tell them apart. Sharing is the
+one value that is not a stage in a lifecycle: it is where a sharing member sits permanently, and
+`design/features/roles-and-permissions.md` section 3.2 says why reusing Pending was rejected.
 
 But `is_active` still exists, as a denormalised copy of `status == 'active'`. That is not
 redundancy by accident:
@@ -179,11 +189,11 @@ check.
 
 ### 3.5 Roles are a column, and permissions are a dictionary
 
-`role` is one of Admin, Cultivator or Member. Exactly one per account, defaulting to Member, held to
-the three known values by a check constraint.
+`role` is one of Admin, Cultivator, Member or Sharing member. Exactly one per account, defaulting to
+Member, held to the four known values by a check constraint.
 
 A Django group was the obvious alternative and was rejected as the source of truth: a group is
-runtime data, an account can belong to none or to all three, and no constraint can express "exactly
+runtime data, an account can belong to none or to all four, and no constraint can express "exactly
 one". The groups exist anyway, mirrored from the column by `save()`, so that the model permissions
 the strain and plant apps will bring can be attached to a role in one place — but nothing reads them
 to decide anything today.
@@ -200,6 +210,41 @@ nothing whatever its role, which is what makes suspension and erasure safe witho
 about permissions. **Role is not `is_staff`** — the two are independent by decision, and the cost of
 that (privilege granted in two places) is on the register. **The resolution issues no query**,
 because `UserOut` serialises the permission list inside async views.
+
+### 3.6 The sharing member
+
+A **sharing member** is an identity a cultivator registers so that it can hold four flowering plants
+and put them in the swap zone — a new club's zone is otherwise empty. They give a name, an identity
+number and a nickname, hold no email address, and never sign in.
+
+They are a `User` row all the same, which is the decision worth defending. A separate model would
+have meant a second nickname namespace (two people wearing one name in the swap zone is
+impersonation, not a collision), a second encrypted identity column, a second erasure route, and two
+kinds of owner for every plant, swap and certificate. As a row here they also inherit the club's "one
+account per identity document" rule.
+
+Three mechanisms carry the weight:
+
+- `UserStatus.SHARING`, plus a check constraint (`sharing_member_never_signs_in`) refusing the role in
+  the Active status. Having no email address already makes them unauthenticatable, but that is a
+  property of the *data* — the constraint is what stops somebody typing an address into the admin from
+  silently turning stock into an account.
+- A **consent attestation**: a cultivator captures a third party's identity number, so POPIA needs a
+  lawful basis the person never gave on a form. `sharing_consent_attested_by`, `_at` and `_version`
+  record who swore what and when. It is called an attestation rather than a consent because it is
+  weaker evidence than a member's own tick, and naming it accurately is what stops the two being
+  confused later.
+- `sharing_member_is_complete`, a check constraint requiring the registering cultivator, the
+  attestation and a nickname — with erased rows exempt, because `soft_delete` blanks the nickname and
+  the POPIA erasure route must never be the thing the database refuses.
+
+`accounts/services.py` is the write. It authorises on the permission rather than the role, refuses a
+submission with no attestation before validating any field, applies the same eighteen-year rule as
+sign-up, and refuses a duplicate identity number in words that name no record — a leak it reduces
+rather than closes, and one the design document records as a risk.
+
+`registered_by` is `PROTECT`, so a cultivator who has registered sharing members cannot be
+hard-deleted. Deleting a grower must not delete people; the routine answer, erasure, keeps the row.
 
 `design/features/roles-and-permissions.md` is the full record: the catalogue, the rejected
 alternatives, and what the roles govern that is not built.
@@ -260,6 +305,8 @@ that cannot opt out with `auth=None`.
 | `GET /api/auth/passkeys` | Yes | List the member's passkeys |
 | `DELETE /api/auth/passkeys/{id}` | Yes | Revoke one |
 | `GET /api/documents/current` | No | Every club document at the revision in force, or 503 |
+| `GET /api/payments/checkout/{token}` | No | The signed Payfast field set for a subscription awaiting payment |
+| `POST /api/payments/payfast/notify` | No | Payfast's server-to-server notification. The only thing that activates a membership |
 | `GET /api/documents/outstanding` | Yes | Revisions this member has yet to agree to |
 | `POST /api/documents/accept` | Yes | Record agreement to the revisions the member was shown |
 
@@ -349,6 +396,13 @@ administrator is appointed. What the chosen role permits is displayed beside it,
 deliberately no bulk role actions: activate, suspend and erase are batch operations, and handing out
 authority over other members' records is not.
 
+**The Sharing member panel is editable, and points at the service.** It holds `registered_by` and
+the attestation columns. Until there is an endpoint the admin is the only interface staff have, so a
+read-only panel would make sharing members uncreatable — but
+`accounts.services.register_sharing_member` is the route that validates the identity number, the age
+rule and the nickname, and the panel says so. The database refuses an incomplete sharing member
+either way.
+
 **The identity number is write-only.** Staff need to *set* it and to confirm *which* one is on file,
 not to read it back. Rendering a member's identity number into an admin page puts it in the browser
 cache, the proxy logs and anyone's shoulder view for no operational gain. The list shows the last
@@ -387,7 +441,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 530 |
+| Tests | 794 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
 
 | Module | Covers |
@@ -397,8 +451,15 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `accounts/tests/test_models.py` | Status/`is_active` coupling, the encrypted ID number, erasure, display names |
 | `accounts/tests/test_admin_forms.py` | Setting, replacing and clearing an encrypted field staff cannot read |
 | `accounts/tests/test_roles.py` | The catalogue's own shape, the check constraint, `has_perm` through both backends, the group mirror |
+| `accounts/tests/test_sharing_members.py` | Registering one, the attestation without which nothing is written, the constraints that stop them signing in, the vague refusal, erasure |
 | `membership/tests/test_services.py` | The registration write: duplicates, the age rule, the role and status it lands on |
 | `membership/tests/test_api.py` | The endpoints sign-up posts to, and what they refuse |
+| `payments/tests/test_gateway.py` | The Payfast protocol: the signature, its two orderings, the PHP-compatible encoding, every configuration refusal |
+| `payments/tests/test_services.py` | What a payment does to a membership: activation, idempotency, renewals, cancellation, lapsing |
+| `payments/tests/test_api.py` | The two endpoints, and the status codes Payfast decides redelivery from |
+| `payments/tests/test_models.py` | The partial unique index on a live subscription, the paid-up check constraint, both against raw updates |
+| `payments/tests/test_commands.py` | Lapsing and its dry run; the development notification command, and that it refuses to run in production |
+| `payments/tests/test_admin.py` | That nothing in the payments admin is editable, asserted through a real POST |
 | `authn/tests/test_api.py` | Every endpoint: enumeration resistance, CSRF, passkey and code paths |
 | `authn/tests/test_otp.py` | Code generation, hashing at rest, expiry, attempt burn, superseding |
 | `authn/tests/test_webauthn.py` | Challenge expiry, single use, ceremony key separation, option contents |
@@ -440,16 +501,23 @@ guards it.
 
 ## 11. What is not built
 
-There is no membership record, no payment status, no cultivation or distribution record. The API is
-authentication, the club documents, registration and a health check. `accounts.User` is the only
-substantive model, alongside the three tables in `authn` supporting authentication and the three in
-`documents`.
+There is no cultivation or distribution record. The API is authentication, the club documents,
+registration, payments and a health check. `accounts.User` is the substantive model, alongside the
+three tables in `authn` supporting authentication, the three in `documents`, and the two in
+`payments`.
+
+**Payment status is now recorded**, which this section used to list as absent. What is still missing
+around it is narrower and is set out in `design/features/payments.md` section 9: nothing schedules
+the command that withdraws access from an unpaid membership, no member-facing screen shows a
+subscription or offers cancellation, and no email is sent when a membership activates or lapses.
 
 Roles are the newest instance of the same gap, and the sharpest. The three roles, the action
 catalogue and the enforcement path are built and tested; almost nothing they govern exists. No
 endpoint checks a `platform.*` permission, because no endpoint performs an action the catalogue
-names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. See
-`design/features/roles-and-permissions.md` section 12, which lists this properly.
+names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. A
+sharing member can be registered and holds no plants, because there is no plant model and so no swap
+zone for them to seed — which is the entire purpose of the role. See
+`design/features/roles-and-permissions.md` section 13, which lists this properly.
 
 Production deployment is deliberately out of scope. When a target is chosen it needs:
 
@@ -458,7 +526,9 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | Process manager fronting Uvicorn | Gunicorn with `UvicornWorker` on Linux |
 | A real database | SQLite today; the UUIDv7 choice anticipates PostgreSQL |
 | Static file handling | `STATIC_ROOT` plus WhiteNoise or a CDN |
-| A real email provider | `MAILERS` uses the console backend; codes are printed to the terminal |
+| A real email provider | `MAILERS` uses the console backend; sign-in codes and the payment link are printed to the terminal and reach nobody |
+| A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet |
+| Something that runs `manage.py lapse_memberships` | A daily cron or an App Service WebJob. Until it exists, an unpaid membership keeps its access indefinitely |
 | A shared cache backend | Without it the rate limits are per worker, not per deployment |
 | `manage.py check --deploy` | The Django deployment checklist |
 
@@ -474,4 +544,7 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted |
 | 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3 |
 | 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage |
-| 9 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Open — fix before initialising the repository |
+| 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator |
+| 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. | Open — wants legal review of the wording, and a decision on notifying sharing members directly |
+| 11 | A cultivator creates `User` rows. It is the only non-administrator route to an account, and it captures a third party's identity number. | Accepted — authorised on a permission, and every record carries who attested |
+| 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Open — fix before initialising the repository |

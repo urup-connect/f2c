@@ -1,0 +1,16 @@
+Hi {{ name }},
+
+Your details are with the club. One step is left: your membership subscription
+of R{{ amount }} has not been paid yet, so your account cannot sign in.
+
+Complete it here:
+
+    {{ url }}
+
+The link is valid for 24 hours. If it has expired by the time you open it, ask
+the club for a new one.
+
+If you did not apply to join Cultivators Collective, you can ignore this email.
+Nothing has been charged and nobody can use the link without this mailbox.
+
+-- Cultivators Collective

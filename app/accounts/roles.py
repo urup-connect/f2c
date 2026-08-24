@@ -1,11 +1,11 @@
-"""The three roles, and the catalogue of what each one may do.
+"""The four roles, the catalogue of what each may do, and what it takes to hold one.
 
 The role itself lives on ``User.role`` -- one column, one value, enforced by a
 check constraint. The catalogue of actions each role carries lives here, in a
 dictionary, and that split is the whole design of this module.
 
 **Why the role is a column and not a Django group.** A group is runtime data. A
-member of staff can delete one, an account can belong to none or to all three,
+member of staff can delete one, an account can belong to none or to all four,
 and no database constraint can say "exactly one". Roles are not runtime data:
 they are a fact about the membership, they change only when this file changes,
 and the club's rule is one role per account. A column with choices and a check
@@ -46,6 +46,16 @@ than four flowering plants" are rules about what the platform does, not
 permissions anybody holds or lacks; they belong to the swap and profile
 services when those are built. A permission that everybody holds and nobody
 can be refused is not a permission.
+
+**One role holds nothing, on purpose.** A sharing member is an identity that
+holds stock, not somebody who signs in, so ``ROLE_PERMISSIONS`` gives them an
+empty set. That is a real entry rather than a missing one, and the catalogue
+tests name it as the single permitted exception -- otherwise the next role that
+accidentally holds nothing would look like this one.
+
+The last section holds the sharing-member consent wording. It is here rather
+than beside the service that records it because ``User`` needs the version label
+as a field default, and this module is the one ``models`` already imports.
 """
 from django.db import models
 
@@ -64,7 +74,7 @@ class UserRole(models.TextChoices):
 
     Exactly one per account. ``MEMBER`` is where a completed registration
     leaves everybody -- see ``membership.services.REGISTERED_ROLE`` -- and the
-    other two are granted by hand.
+    other three are granted by hand or by a cultivator.
 
     ``ADMIN`` is the club administrator, and it is deliberately **not**
     ``is_staff``. Neither derives from the other: ``is_staff`` opens the Django
@@ -74,20 +84,40 @@ class UserRole(models.TextChoices):
     keeping them apart is recorded in
     ``design/features/roles-and-permissions.md`` -- there are two places to
     grant privilege, and they can disagree.
+
+    ``SHARING_MEMBER`` is the odd one, and worth reading twice. It is an
+    identity that **holds stock and never signs in**: registered by a
+    cultivator with a name, an identity number and a nickname, given flowering
+    plants, and present in the swap zone so that members joining a new club
+    have something to swap against. It has no email address, so there is
+    nothing to authenticate; it sits at ``UserStatus.SHARING``, which a
+    constraint keeps out of Active; and it holds no permissions at all.
+
+    It is a ``User`` row all the same, and that is the load-bearing decision. A
+    separate model would have meant a second nickname namespace (two people
+    could wear one name in the swap zone, which is impersonation), a second
+    encrypted identity-number column, a second erasure route for POPIA, and two
+    kinds of owner for every plant, swap and ownership certificate. Being a row
+    here instead means the club's "one account per identity document" rule
+    reaches sharing members for free -- with a cost recorded as a risk in the
+    design document, because a refused registration tells the cultivator that
+    the identity number is already on file.
     """
 
     ADMIN = 'admin', 'Admin'
     CULTIVATOR = 'cultivator', 'Cultivator'
     MEMBER = 'member', 'Member'
+    SHARING_MEMBER = 'sharing_member', 'Sharing member'
 
 
 #: The Django group mirroring each role. Written out rather than derived from
-#: the labels above, because a group name is data in a table: migration 0004
-#: created these three rows and renaming a label must not orphan them.
+#: the labels above, because a group name is data in a table: migrations 0004
+#: and 0005 created these rows and renaming a label must not orphan them.
 ROLE_GROUP_NAMES = {
     UserRole.ADMIN: 'Admins',
     UserRole.CULTIVATOR: 'Cultivators',
     UserRole.MEMBER: 'Members',
+    UserRole.SHARING_MEMBER: 'Sharing members',
 }
 
 
@@ -146,9 +176,16 @@ CULTIVATOR_ACTIONS = {
         "Create, read, update and delete the cultivator's own strain "
         'listings: image, description, available finished product types and '
         'price.',
+    'platform.register_sharing_member':
+        'Register a sharing member from a name, an identity number and a '
+        'nickname, attesting that they consented and were given the '
+        'collection notice.',
     'platform.manage_sharing_members':
-        'Create, read, update and delete sharing members, and manage their '
-        'stock.',
+        'Read, update and withdraw the sharing members this cultivator '
+        'registered.',
+    'platform.allocate_sharing_member_stock':
+        'Allocate flowering plants to a sharing member, up to the '
+        'four-plant holding limit, putting them in the swap zone.',
     'platform.change_plant_status':
         'Move a plant between preflowering, in bloom, harvested, processed '
         'and shipped.',
@@ -188,10 +225,26 @@ MEMBER_ACTIONS = {
         'Raise a support request.',
 }
 
-#: Every action the platform recognises, in one mapping. Built from the three
-#: groups above rather than written a fourth time, so an action cannot be
-#: granted below without being described here.
-PLATFORM_ACTIONS = {**ADMIN_ACTIONS, **CULTIVATOR_ACTIONS, **MEMBER_ACTIONS}
+#: A sharing member holds nothing, so there is no fourth group of actions. The
+#: name exists so that the symmetry of the catalogue is not a lie: three groups
+#: and four roles reads like an omission, and this says it is not one.
+#:
+#: They never sign in -- no email address, and a constraint keeps the role out
+#: of Active -- so any action granted here would be unreachable. What happens to
+#: their plants is the swap zone's business, and their record is managed by the
+#: cultivator who registered them, through ``platform.manage_sharing_members``
+#: above.
+SHARING_MEMBER_ACTIONS = {}
+
+#: Every action the platform recognises, in one mapping. Built from the groups
+#: above rather than written again, so an action cannot be granted below without
+#: being described here.
+PLATFORM_ACTIONS = {
+    **ADMIN_ACTIONS,
+    **CULTIVATOR_ACTIONS,
+    **MEMBER_ACTIONS,
+    **SHARING_MEMBER_ACTIONS,
+}
 
 
 #: What each role may do. One role per account, so anything a cultivator or an
@@ -220,7 +273,15 @@ ROLE_PERMISSIONS = {
         'platform.submit_support_request',
     }),
     UserRole.MEMBER: frozenset(MEMBER_ACTIONS),
+    # Deliberately empty, and deliberately present. See
+    # `SHARING_MEMBER_ACTIONS`: this role is an identity, not an actor.
+    UserRole.SHARING_MEMBER: frozenset(),
 }
+
+#: The one role allowed to hold nothing. Named so that the catalogue test can
+#: assert every *other* role is non-empty: without it, the next role that
+#: accidentally ended up empty would look deliberate.
+ROLES_WITHOUT_PERMISSIONS = frozenset({UserRole.SHARING_MEMBER})
 
 
 def permissions_for(user):
@@ -253,6 +314,39 @@ def permissions_for(user):
     if user.is_superuser:
         return frozenset(PLATFORM_ACTIONS)
     return ROLE_PERMISSIONS.get(getattr(user, 'role', ''), frozenset())
+
+
+# ----------------------------------------------------------------------
+# The sharing-member attestation
+# ----------------------------------------------------------------------
+# A sharing member does not register themselves. A cultivator captures their
+# name and their identity number, and POPIA needs a lawful basis for holding
+# both -- which a person who never saw a form cannot have given by ticking a
+# box.
+#
+# So the cultivator attests, and the attestation is recorded on the record:
+# `sharing_consent_attested_by`, `sharing_consent_attested_at` and
+# `sharing_consent_version` on `User`, required by a check constraint. That is
+# deliberately weaker evidence than a member's own tick in `documents`, and
+# calling it an attestation rather than a consent is the point -- it says who
+# swore what, and when, rather than pretending the sharing member agreed here.
+
+#: The label recorded against an attestation, so a later revision of the
+#: wording below does not silently reinterpret the ones already made. Bumped
+#: whenever `SHARING_CONSENT_ATTESTATION` changes in substance; existing records
+#: keep the version they were made under.
+SHARING_CONSENT_VERSION = '1'
+
+#: What a cultivator is confirming. Written out here so that the form, the
+#: admin and the service all quote one wording rather than three paraphrases of
+#: it -- and so that a change to it is a reviewable diff against a version
+#: number.
+SHARING_CONSENT_ATTESTATION = (
+    'I confirm that this person has agreed to be registered as a sharing '
+    'member of the club, that they were told what personal information is '
+    'being collected and why, and that they consented to the club holding '
+    'their name and identity number for that purpose.'
+)
 
 
 def describe(codename):

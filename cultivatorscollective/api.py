@@ -16,6 +16,7 @@ from app.authn.api import router as authn_router
 from django.conf import settings
 from app.documents.api import router as documents_router
 from app.membership.api import router as membership_router
+from app.payments.api import router as payments_router
 from ninja import NinjaAPI, Schema
 from ninja.security import django_auth
 
@@ -35,6 +36,10 @@ api.add_router('/documents', documents_router)
 # Joining. /members/register is unauthenticated for the same reason: there is
 # no account until it returns.
 api.add_router('/members', membership_router)
+# Membership subscriptions. Both endpoints are unauthenticated and neither
+# could be otherwise: a member cannot sign in until their membership is paid
+# for, and Payfast has no session to present when it notifies.
+api.add_router('/payments', payments_router)
 
 
 class HealthOut(Schema):

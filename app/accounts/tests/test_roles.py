@@ -24,7 +24,7 @@ allowed to be best-effort rather than constrained in SQL.
 from django.contrib import admin as django_admin
 from django.contrib.auth.models import AnonymousUser, Group
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 
 from app.accounts import roles
 from app.accounts.backends import RoleBackend
@@ -36,6 +36,8 @@ from app.accounts.roles import (
     PLATFORM_ACTIONS,
     ROLE_GROUP_NAMES,
     ROLE_PERMISSIONS,
+    ROLES_WITHOUT_PERMISSIONS,
+    SHARING_MEMBER_ACTIONS,
 )
 
 PASSWORD = 'Str0ng-Passphrase!'
@@ -64,10 +66,21 @@ class CatalogueTests(TestCase):
                     self.assertIn(codename, PLATFORM_ACTIONS)
                     self.assertTrue(roles.describe(codename))
 
-    def test_every_role_holds_something(self):
+    def test_every_role_holds_something_except_the_one_that_may_not(self):
+        """A role holding nothing is normally a silent lockout.
+
+        The sharing member is the one deliberate exception -- an identity that
+        holds stock and never signs in -- and it is named in
+        ``ROLES_WITHOUT_PERMISSIONS`` rather than special-cased here, so the
+        next role that accidentally ends up empty fails this instead of looking
+        intentional.
+        """
         for role in UserRole:
             with self.subTest(role=role):
-                self.assertTrue(ROLE_PERMISSIONS[role])
+                if role in ROLES_WITHOUT_PERMISSIONS:
+                    self.assertFalse(ROLE_PERMISSIONS[role])
+                else:
+                    self.assertTrue(ROLE_PERMISSIONS[role])
 
     def test_every_role_has_an_entry(self):
         """A role with no entry resolves to nothing, which is a silent lockout."""
@@ -86,12 +99,33 @@ class CatalogueTests(TestCase):
                 )
                 self.assertEqual(codename.count('.'), 1)
 
-    def test_the_three_groups_do_not_overlap(self):
+    def test_the_groups_do_not_overlap(self):
         """Each action is described once, in the group that owns it."""
         self.assertEqual(
             len(PLATFORM_ACTIONS),
-            len(ADMIN_ACTIONS) + len(CULTIVATOR_ACTIONS) + len(MEMBER_ACTIONS),
+            len(ADMIN_ACTIONS)
+            + len(CULTIVATOR_ACTIONS)
+            + len(MEMBER_ACTIONS)
+            + len(SHARING_MEMBER_ACTIONS),
         )
+
+    def test_registering_a_sharing_member_is_a_cultivators_action(self):
+        """And nobody else's, including the club administrator's.
+
+        An administrator who needs to fix a sharing-member record does it in the
+        Django admin, which `is_staff` opens. Putting the action in the Admin
+        role as well would make the club's own administrators a second route to
+        creating accounts through the API.
+        """
+        for codename in (
+            'platform.register_sharing_member',
+            'platform.manage_sharing_members',
+            'platform.allocate_sharing_member_stock',
+        ):
+            with self.subTest(codename=codename):
+                self.assertIn(codename, ROLE_PERMISSIONS[UserRole.CULTIVATOR])
+                self.assertNotIn(codename, ROLE_PERMISSIONS[UserRole.ADMIN])
+                self.assertNotIn(codename, ROLE_PERMISSIONS[UserRole.MEMBER])
 
     def test_no_administrative_action_reaches_the_other_roles(self):
         """The negative half, and the one that matters.
@@ -508,12 +542,19 @@ class AdminPageTests(TestCase):
     def member_form(self):
         """The change form as the registered admin builds it.
 
-        Taken from ``site._registry`` rather than instantiated here, so this
-        exercises the admin that is actually deployed rather than a second one
-        configured by the test.
+        Taken from ``site.get_model_admin`` rather than instantiated here, so
+        this exercises the admin that is actually deployed rather than a second
+        one configured by the test.
+
+        A real request, carrying the signed-in staff member: the admin asks
+        ``request.user`` whether to offer an add-another button beside a related
+        field, so a ``None`` request stopped working the moment ``User`` gained a
+        foreign key to itself.
         """
+        request = RequestFactory().get(f'/admin/accounts/user/{self.member.pk}/change/')
+        request.user = self.staff
         model_admin = django_admin.site.get_model_admin(User)
-        return model_admin.get_form(None, self.member, change=True)
+        return model_admin.get_form(request, self.member, change=True)
 
     def test_groups_cannot_be_edited_from_the_member_page(self):
         """Or the mirror would be overwritten on every save. See the docstring."""

@@ -15,11 +15,13 @@ import json
 from datetime import date
 
 from django.conf import settings
+from django.core import mail
 from django.core.cache import cache
 from django.test import Client
 
 from app.accounts.models import User, UserStatus
 from app.membership.throttles import RegisterThrottle
+from app.payments.models import Subscription
 
 from .support import ADULT_ID, SECOND_ADULT_ID, RegistrationTestCase, sa_id_for
 
@@ -65,10 +67,42 @@ class AcceptedTests(RegisterEndpointTests):
         self.assertFalse(member.is_active)
 
     def test_the_response_carries_nothing_the_member_typed(self):
-        """A server action redirects after this; a redirect is only a URL."""
+        """A server action redirects after this; a redirect is only a URL.
+
+        ``checkout_token`` is the third field and it is not something the member
+        typed: it is 32 bytes of entropy naming a subscription, generated here.
+        The assertion is on the exact key set rather than on the absence of the
+        six submitted values, because a field added later without a decision
+        behind it should fail this test rather than slip through.
+        """
         response = self.register()
 
-        self.assertEqual(set(self.body(response)), {'status', 'detail'})
+        self.assertEqual(
+            set(self.body(response)), {'status', 'detail', 'checkout_token'}
+        )
+
+    def test_it_hands_back_a_checkout_token_for_the_subscription_it_opened(self):
+        """The token is the only way a new member reaches Payfast."""
+        response = self.register()
+
+        member = User.objects.get(email='thandiwe@example.com')
+        subscription = member.subscriptions.get()
+
+        self.assertEqual(
+            self.body(response)['checkout_token'], subscription.checkout_token
+        )
+
+    def test_the_checkout_token_is_not_the_subscription_id(self):
+        """The id goes to Payfast; the token goes in a URL. Keeping them apart
+        is what lets one be expired without touching the other."""
+        response = self.register()
+        subscription = User.objects.get(
+            email='thandiwe@example.com'
+        ).subscriptions.get()
+
+        self.assertNotIn(
+            str(subscription.pk), self.body(response)['checkout_token']
+        )
 
     def test_the_response_never_carries_the_identity_number(self):
         response = self.register()
@@ -82,7 +116,52 @@ class AcceptedTests(RegisterEndpointTests):
 
 
 class DuplicateTests(RegisterEndpointTests):
-    def test_a_registered_address_gets_the_same_answer_as_a_new_one(self):
+    """What a submission naming somebody already on file is told.
+
+    **This class encodes a rule that has been deliberately narrowed.** It used
+    to assert that a duplicate and a new registration are answered *identically*,
+    so that the form could not be used to ask whether a named person is a member
+    of a cannabis club. Adding the Payfast redirect broke that: a new member is
+    sent to a payment page and a duplicate cannot be, because there is no
+    subscription to pay for.
+
+    What is asserted now is the narrowest thing that is still true, and it is
+    worth being precise about because the difference is the disclosure:
+
+    * every field except ``checkout_token`` is byte-identical,
+    * the token is ``null`` -- not a decoy, not a token for the existing
+      member's subscription, which would let a stranger pay for one,
+    * nothing is written, and
+    * the status code is the same.
+
+    So what leaks is one bit -- "this address may already be on file" -- to
+    whoever submitted the form. It is not confirmed, no name, status, join date
+    or outstanding amount comes back, and the link to finish an outstanding
+    payment goes to the mailbox instead. That trade was taken knowingly; see
+    ``design/features/payments.md`` section 4 and risk 1, and
+    ``design/features/sign-up.md``.
+    """
+
+    def duplicate_of(self, first_body, response):
+        """Assert ``response`` is the duplicate answer to ``first_body``.
+
+        One helper rather than the same three assertions in five tests, so the
+        rule is stated once and every duplicate key is held to all of it.
+        """
+        body = self.body(response)
+
+        self.assertEqual(response.status_code, 200)
+        # The disclosure, and its exact size: one field, and it is empty.
+        self.assertIsNone(body['checkout_token'])
+        # Everything else is identical. `first_body` carries a real token, so it
+        # is compared with that key removed from both sides.
+        self.assertEqual(
+            {k: v for k, v in body.items() if k != 'checkout_token'},
+            {k: v for k, v in first_body.items() if k != 'checkout_token'},
+        )
+        return body
+
+    def test_a_registered_address_gets_the_same_answer_apart_from_the_token(self):
         """Otherwise the form is a way to ask whether a named person is a member."""
         first = self.register()
         second = self.register(
@@ -90,7 +169,7 @@ class DuplicateTests(RegisterEndpointTests):
         )
 
         self.assertEqual(first.status_code, second.status_code)
-        self.assertEqual(self.body(first), self.body(second))
+        self.duplicate_of(self.body(first), second)
 
     def test_a_registered_address_creates_no_second_member(self):
         self.register()
@@ -100,13 +179,23 @@ class DuplicateTests(RegisterEndpointTests):
 
         self.assertEqual(User.objects.count(), 1)
 
+    def test_a_registered_address_opens_no_second_subscription(self):
+        """A duplicate writes nothing at all, and a second live mandate against
+        one account is the thing Payfast would bill twice."""
+        self.register()
+        self.register(
+            nickname='Grower2', id_number=SECOND_ADULT_ID, mobile='083 555 1234'
+        )
+
+        self.assertEqual(Subscription.objects.count(), 1)
+
     def test_a_registered_identity_number_gets_the_same_answer(self):
         first = self.register()
         second = self.register(
             nickname='Grower2', email='other@example.com', mobile='083 555 1234'
         )
 
-        self.assertEqual(self.body(first), self.body(second))
+        self.duplicate_of(self.body(first), second)
         self.assertEqual(User.objects.count(), 1)
 
     def test_a_registered_mobile_number_gets_the_same_answer(self):
@@ -115,14 +204,17 @@ class DuplicateTests(RegisterEndpointTests):
             nickname='Grower2', email='other@example.com', id_number=SECOND_ADULT_ID
         )
 
-        self.assertEqual(self.body(first), self.body(second))
+        self.duplicate_of(self.body(first), second)
         self.assertEqual(User.objects.count(), 1)
 
     def test_every_duplicate_key_answers_identically(self):
         """Address, identity document, handset: one answer, so none is a lookup.
 
-        The point is the *sameness*. If any key answered differently, the form
-        would become a way to ask which of the three a given value matched.
+        The point is still the *sameness* -- across the three keys. If any of
+        them answered differently from the others, the form would become a way
+        to ask which of the three a given value matched, which is a sharper
+        question than "is this address on file" and is the one this test has
+        always been about.
         """
         accepted = self.body(self.register())
 
@@ -133,16 +225,54 @@ class DuplicateTests(RegisterEndpointTests):
             'mobile': '083 555 1234',
         }
 
+        answers = []
         for key in ('email', 'id_number', 'mobile'):
             with self.subTest(key=key):
                 overrides = {k: v for k, v in fresh.items() if k != key}
 
-                response = self.register(**overrides)
+                answers.append(self.duplicate_of(accepted, self.register(**overrides)))
 
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(self.body(response), accepted)
-
+        # And identical to each other, not merely each identical to the rule.
+        self.assertEqual(answers[1:], answers[:-1])
         self.assertEqual(User.objects.count(), 1)
+
+    def test_a_duplicate_address_is_emailed_the_outstanding_payment_link(self):
+        """The one channel a duplicate may use: it reaches the mailbox, not the
+        person who filled in the form."""
+        self.register()
+        subscription = Subscription.objects.get()
+        mail.outbox.clear()
+
+        # The send is deferred to commit -- see
+        # `payments.services.email_outstanding_checkout` on why -- and a
+        # TestCase never commits, so without this the callback is captured and
+        # dropped and the assertion below reads as "no email was sent".
+        with self.captureOnCommitCallbacks(execute=True):
+            self.register(
+                nickname='Grower2',
+                id_number=SECOND_ADULT_ID,
+                mobile='083 555 1234',
+            )
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['thandiwe@example.com'])
+        self.assertIn(subscription.checkout_token, mail.outbox[0].body)
+
+    def test_a_duplicate_identity_number_under_another_address_is_emailed_nothing(self):
+        """Sending here would tell the typed address about somebody else's
+        membership. The duplicate is answered; no mail moves."""
+        self.register()
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.register(
+                nickname='Grower2',
+                email='other@example.com',
+                mobile='083 555 1234',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mail.outbox, [])
 
 
 class RefusalTests(RegisterEndpointTests):

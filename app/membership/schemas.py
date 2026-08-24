@@ -57,10 +57,27 @@ class RegistrationOut(Schema):
     frontend reads it rather than assuming it, so the day a gateway makes
     registration complete in one step, the confirmation screen follows without
     a second change.
+
+    ``checkout_token`` is how the member reaches Payfast, and **it is null on a
+    submission that named an address already on file.** That is the one place
+    where this response is not identical for a new member and a duplicate, and
+    it is a decision taken with its cost understood: whoever submitted the form
+    can tell the two apart by whether they were sent to a payment page. What
+    they learn is bounded to "this address may already be on file" -- the
+    duplicate path says nothing else, writes nothing, and the link to finish an
+    outstanding payment is emailed rather than returned. See
+    ``design/features/payments.md`` section 4 and its risk table, and
+    ``design/features/sign-up.md`` on the rule this partially reverses.
+
+    The token is a bearer credential: 32 bytes of entropy, valid for a day, and
+    spent the moment the subscription is paid. It names a subscription and
+    nothing about who holds it, which is what makes it safe to put in a URL at
+    all.
     """
 
     status: str
     detail: str
+    checkout_token: str | None = None
 
 
 class RegistrationRefusedOut(Schema):

@@ -14,7 +14,19 @@ owns it. The account cannot sign in: Django derives `is_active` from `status`, a
 holds the two together in SQL, and every sign-in route resolves an address through
 `User.objects.active_by_email`. There is no path by which registering produces an account that can
 log in. What moves an account from Pending payment to Active is a payment, and **the payment gateway
-is not built** — so nothing currently makes a member active except a member of staff in the admin.
+is now built** — `app/payments` opens a subscription in the same transaction as the member, hands
+them to Payfast, and activates the account when Payfast's server-to-server notification arrives. A
+member of staff in the admin remains the route for somebody who paid another way. See
+[payments.md](payments.md).
+
+**That reverses part of one rule stated below, and the reversal is deliberate.** A duplicate
+submission — an address, identity number or mobile already on file — used to be answered *identically*
+to a new registration, so the form could not be used to ask whether a named person is a member here.
+A new member is now redirected to Payfast and a duplicate cannot be, because there is no subscription
+to pay for. Everything else about the answer is still identical, nothing is still written, and the
+outstanding payment link is emailed to the address rather than returned. What that discloses, what it
+does not, and the alternative that was declined are in [payments.md](payments.md) section 4 and its
+risk 1. Risks 11, 15 and 16 below record the change.
 
 The club documents live in Django. Their files, versions and wording are published by staff in the
 admin and read at render time, and the consent ledger that records who agreed to which revision is
@@ -555,11 +567,12 @@ is what turns "it broke" into something support can trace.
 | 8 | The sentence a member ticks is no longer covered by the plain-language compliance checks: it comes from the API, and staff own it in the admin. | Accepted — see section 5, *What was given up* |
 | 9 | Nothing verifies that the PDF at a revision's address still hashes to the digest recorded for it. The digest is stored and compared per agreement, and the admin flags a mismatch, but no job re-fetches the file to check. | Open — needs a periodic check |
 | 10 | A document published in the admin with an id the frontend does not know is silently not shown. Django only refuses when a `required_at_signup` document has no revision, so a fourth document is invisible rather than blocking. | Accepted — deliberate, so a publish cannot take sign-up down |
-| 11 | A registered member sits at Pending payment with nothing that can move them to Active: **the payment gateway is not built**. Until it is, only a member of staff in the admin can activate an account, and a member who registers can never sign in on their own. | Open — by decision, next piece of work |
+| 11 | A registered member sits at Pending payment with nothing that can move them to Active: **the payment gateway is not built**. Until it is, only a member of staff in the admin can activate an account, and a member who registers can never sign in on their own. | **Closed.** `app/payments` activates an account on a Payfast notification — see [payments.md](payments.md). Two gaps remain, recorded there rather than here: nothing schedules the lapsing command (its risk 2) and no real email provider exists, so the emailed payment link reaches nobody (its risk 3) |
 | 12 | The registration endpoint is unauthenticated and has no CSRF check. It cannot have a useful one: the caller is a Next.js server action, so there is no browser cookie to forge with and a token would be one this application issues to itself. A per-IP rate limit of 5/minute is the control instead, and it is the only thing bounding bulk creation of member rows. | Accepted — see `membership/throttles.py` |
 | 13 | Four validation rules now exist twice, in TypeScript and in Python — names, email, mobile, nickname — joining the identity number at risk 5. Each pair is correct in both places for different reasons, but they must be read together, and a change to one is easy to make in isolation. | Open — documented rather than unified |
 | 14 | The mobile number is a unique identity key, so a member with no phone of their own cannot give a partner's or a parent's. Because duplicates are never disclosed, they are refused with a confirmation screen and never learn why. There is no route for staff to make an exception short of editing the other account. | Accepted, by decision — the club's rule is one handset, one member |
-| 15 | The frontend has no refusal code for a duplicate, by design, so a visitor whose address, identity number or handset is already held sees the same confirmation screen as a new member. Support has no way to tell the two apart from the member's description alone. | Accepted — the alternative discloses membership |
+| 15 | The frontend has no refusal code for a duplicate, by design, so a visitor whose address, identity number or handset is already held sees the same confirmation screen as a new member. Support has no way to tell the two apart from the member's description alone. | Accepted — the alternative discloses membership. Still true of the *screen a duplicate lands on*, and it is now the screen a new member does **not** land on: see risk 16 |
+| 16 | A new registration is redirected to Payfast and a duplicate is not, so whoever submitted the form can tell that an address may already be on file. This narrows risk 15 and reverses part of the non-disclosure rule in section 6. | Accepted, and bounded — one response field differs, nothing is confirmed, and the three duplicate keys still answer identically to each other. Recorded in full in [payments.md](payments.md) section 4 and its risk 1, where the declined alternative is also set out |
 | 16 | `POST /api/members/nickname/availability` is an unauthenticated endpoint that answers one question about other members' records. The disclosure is bounded by what the answer contains — one boolean about a name the caller had to type — and by a 30/minute per-IP limit. A harvester with several addresses can still enumerate whether specific nicknames are taken. | Accepted — the same disclosure `register` already makes, and see section 7.1 |
 | 17 | The nickname check fails open: a member who submits while it is failing is refused by `register` instead, and that refusal arrives as a redirect, which loses every value they typed. So a failing check turns a taken nickname from an inline message into a re-typed form. | Accepted — the alternative traps a member in a form over a transient fault |
 | 18 | The error reference is only as useful as the log it points at. Nothing yet ships those `console.error` lines anywhere retained, and there is no support runbook that says how to look one up. Until there is, a member quoting a reference cannot be helped by it. | Open — needs log retention and a runbook |

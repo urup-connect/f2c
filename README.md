@@ -27,22 +27,26 @@ only module that knows about all of them. Adding a feature means adding one `add
 
 | App | Owns |
 | --- | --- |
-| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the three roles, and the admin over both |
+| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the four roles, registering a sharing member, and the admin over all of it |
 | `authn/` | Passkeys, emailed codes, sessions, rate limits — how a member proves who they are |
 | `documents/` | Club documents, their revisions, and the agreements members give |
 | `membership/` | Turning a sign-up submission into a member. Owns no models |
 | `common/` | Field encryption, RSA ID checks. No models, no endpoints |
 | `cultivatorscollective/` | Settings, URLs, and the API root the features mount on |
 
-Dependencies run one way: `authn` and `documents` depend on `accounts`, `accounts` depends on
-`common`, and nothing depends back. The one place that direction is bent is
-`User.soft_delete`, which revokes credentials it does not own — see the comment there.
+Dependencies run one way: `authn`, `documents` and `payments` depend on `accounts`, `membership`
+depends on all three, `accounts` depends on `common`, and nothing depends back. The one place that
+direction is bent is `User.soft_delete`, which revokes credentials it does not own — see the comment
+there.
 
 | Concern | Lives in |
 | --- | --- |
 | The API root and router mounting | `cultivatorscollective/api.py` |
 | The member model | `accounts/models.py` (`User`) |
 | Roles and what each may do | `accounts/roles.py` |
+| Registering a sharing member | `accounts/services.py` |
+| What a membership costs, and what a payment does to an account | `payments/services.py` |
+| The Payfast protocol: signature, checkout, notification checks | `payments/gateway.py` |
 | Resolving a `platform.*` permission | `accounts/backends.py` |
 | Sign-in endpoints | `authn/api.py` |
 | Passkey ceremonies | `authn/webauthn.py` |
@@ -115,7 +119,7 @@ responses, or long-lived connections must be tested through Uvicorn.
 
 ## Tests
 
-Backend, 530 tests:
+Backend, 794 tests:
 
 ```
 .venv\Scripts\python.exe manage.py test
@@ -126,13 +130,14 @@ Each app tests what it owns, and `manage.py test <app>` runs just that app:
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `common/tests/` | 41 | Encryption round-trips, the blind index, RSA ID checks |
-| `accounts/tests/` | 141 | The member record, roles and permissions, and the admin form over the encrypted ID number |
+| `accounts/tests/` | 181 | The member record, roles and permissions, and the admin form over the encrypted ID number |
 | `authn/tests/` | 138 | The sign-in endpoints, both credential services, the rate limits |
 | `documents/tests/` | 115 | Documents, revisions, agreements, storage, the publish command |
-| `membership/tests/` | 83 | The registration write and the endpoints in front of it |
+| `membership/tests/` | 88 | The registration write and the endpoints in front of it |
+| `payments/tests/` | 219 | The Payfast signature and configuration, what a payment does to a membership, both endpoints, the constraints, the two commands, the read-only admin |
 | `cultivatorscollective/tests/` | 12 | The brand skin over the Django admin |
 
-Frontend, 949 tests:
+Frontend, 1018 tests:
 
 ```
 cd frontend
@@ -156,6 +161,7 @@ Start with [design/README.md](design/README.md).
 | `design/features/roles-and-permissions.md` | The three roles, the action catalogue, and where each is enforced |
 | `design/features/authentication.md` | Passkeys, emailed codes, sessions, rate limits |
 | `design/features/sign-up.md` | Age gate, member details, club document agreements |
+| `design/features/payments.md` | The membership subscription, Payfast, and what a payment does to an account |
 | `design/features/landing.md` | The public landing page and its copy governance |
 | `design/features/brand.md` | Colour, typography, artwork and the design tokens |
 
@@ -251,8 +257,11 @@ lower-cased email address.
 
 ### Status, not a boolean
 
-`status` is the source of truth: Pending, Active, Suspended, Inactive. Only
-Active signs in. `is_active` is a denormalised copy of `status == 'active'`,
+`status` is the source of truth: Pending, Pending payment, Active, Suspended,
+Inactive, Sharing. Only Active signs in. Sharing is the one value that is not a
+stage in a lifecycle -- it is where a sharing member sits permanently, holding
+stock without ever signing in. `is_active` is a denormalised copy of
+`status == 'active'`,
 because Django's auth stack filters on it in SQL and a Python property would
 break every queryset. `save()` derives it, and a database check constraint
 rejects any write that changes one without the other -- including
@@ -260,12 +269,19 @@ rejects any write that changes one without the other -- including
 
 ### Roles, and what each one may do
 
-Every account holds exactly one role -- Admin, Cultivator or Member -- in a column with a check
-constraint. Registration makes a Member; the other two are appointed in the Django admin, because
-both carry authority over records that are not the account's own.
+Every account holds exactly one role -- Admin, Cultivator, Member or Sharing member -- in a column
+with a check constraint. Registration makes a Member; Admin and Cultivator are appointed in the
+Django admin, because both carry authority over records that are not the account's own. A **sharing
+member** is registered by a cultivator: a name, an identity number and a nickname, four flowering
+plants, and no way to sign in -- an identity that seeds the swap zone so a new club's zone is not
+empty. It holds no permissions at all, a check constraint keeps the role out of Active, and a second
+one refuses a record with no registering cultivator, no consent attestation or no nickname. The
+attestation is the club's POPIA basis for holding a third party's identity number, and it is called
+an attestation rather than a consent because a cultivator's word is weaker evidence than the person's
+own tick.
 
 A Django group was the obvious alternative and was rejected as the source of truth: a group is
-runtime data, an account can belong to none or to all three, and no constraint can say "exactly
+runtime data, an account can belong to none or to all four, and no constraint can say "exactly
 one". The groups exist anyway, mirrored from the column, so the model permissions the plant and
 strain apps will bring can be attached to a role in one place.
 
@@ -350,11 +366,86 @@ documents every variable.
 | `DJANGO_DOCUMENT_STORAGE_SAS_TOKEN` | No | Used when no account key is set. Needs container write permission, and expires. |
 | `DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING` | No | Account and key together. Overrides `DJANGO_DOCUMENT_STORAGE_ACCOUNT`. |
 | `DJANGO_DOCUMENT_STORAGE_LOCATION` | No | Blob-name prefix inside the container. Normally blank. |
+| `DJANGO_PAYFAST_MERCHANT_ID` | When `DEBUG=False` | From the Payfast dashboard. Falls back to Payfast's published sandbox merchant under `DEBUG`. |
+| `DJANGO_PAYFAST_MERCHANT_KEY` | When `DEBUG=False` | Secret. Application settings, not source control. |
+| `DJANGO_PAYFAST_PASSPHRASE` | When `DEBUG=False` | Set the same value on the Payfast account. Payfast refuses subscriptions from a merchant without one. |
+| `DJANGO_PAYFAST_SANDBOX` | No | Defaults to the sandbox in **every** environment. Live is reached only by setting this false. |
+| `DJANGO_PAYFAST_RETURN_URL` | When `DEBUG=False` | Frontend page a paid member returns to. Https outside local development. |
+| `DJANGO_PAYFAST_CANCEL_URL` | When `DEBUG=False` | Frontend page a member who cancelled returns to. |
+| `DJANGO_PAYFAST_NOTIFY_URL` | When `DEBUG=False` | Django's own public address for Payfast's server-to-server notification. Must be reachable from the internet. |
+| `DJANGO_MEMBERSHIP_CHECKOUT_URL` | When `DEBUG=False` | Frontend page a checkout token is paid from, without the token. The emailed link is this plus the token. |
+| `DJANGO_PAYFAST_BEHIND_PROXY` | No | Read `X-Forwarded-For` for the notification source check. Only where the edge **overwrites** that header. |
+| `DJANGO_MEMBERSHIP_SUBSCRIPTION_AMOUNT` | When `DEBUG=False` | Rands and cents. Applies to new subscriptions only; 0 is refused. |
+| `DJANGO_MEMBERSHIP_SUBSCRIPTION_FREQUENCY` | No | `monthly`, `quarterly`, `biannual` or `annual`. Defaults to monthly. |
+| `DJANGO_MEMBERSHIP_SUBSCRIPTION_CYCLES` | No | Billings to take, or 0 for until the member cancels. |
+| `DJANGO_MEMBERSHIP_SUBSCRIPTION_ITEM_NAME` | No | What the member sees on the Payfast page and their statement. |
+| `DJANGO_MEMBERSHIP_SUBSCRIPTION_DESCRIPTION` | No | Longer description on the Payfast receipt. |
 
 Frontend variables live in `frontend/.env.local`, documented in
 `frontend/.env.example`. `CDN_BASE_URL` is still required there but is no longer
 read by anything: Django owns the club document addresses now, because it owns
 their versions.
+
+## Payments
+
+A member registered through sign-up sits at **Pending payment** and cannot sign
+in. What moves them to Active is a Payfast payment, and `app/payments` owns it.
+
+Registration opens a `Subscription` in the same transaction that writes the
+member, and hands back a checkout token. The frontend turns that into a form POST
+to Payfast; Payfast bills the mandate on its own schedule; and Payfast's
+**server-to-server notification** to `POST /api/payments/payfast/notify` is what
+records the payment and activates the account.
+
+**The member's return from Payfast activates nothing.** That is a browser
+redirect -- theirs to replay, bookmark or forge -- so `/signup/paid` reads nothing
+and says the payment is being confirmed rather than that the membership is
+active. Getting these two the wrong way round is the classic payment-integration
+hole.
+
+A notification has to pass four independent checks before it changes anything:
+the source address resolves to one of Payfast's notification hosts, the merchant
+id is ours, the signature verifies, and Payfast confirms it sent it. The reason a
+notification was refused is logged and never returned -- naming the failed check
+tells an attacker which one to fix. Applying one twice is a no-op, because
+Payfast retries and a unique index on its payment id makes the second delivery
+idempotent.
+
+The arrangement is a **recurring subscription**. Payfast holds the mandate; this
+application runs no billing job. The price and cycle are copied onto each
+subscription when it is opened, so changing the configured amount changes what
+new members are asked for and nothing about what existing ones agreed to.
+
+A cancellation does **not** switch a member off -- they keep the period they paid
+for. Access is withdrawn by `manage.py lapse_memberships`, which compares
+`paid_until` against today, and **nothing schedules it yet**:
+
+```
+.venv\Scripts\python.exe manage.py lapse_memberships --dry-run
+.venv\Scripts\python.exe manage.py lapse_memberships
+```
+
+### Payments in development
+
+Payfast cannot reach a localhost `notify_url`, so the one step that activates a
+membership never fires on a developer's machine. This stands in for it, signing a
+real payload and running it through the real verification:
+
+```
+.venv\Scripts\python.exe manage.py payfast_notify --email someone@example.com
+.venv\Scripts\python.exe manage.py payfast_notify --email someone@example.com --status CANCELLED
+```
+
+It refuses to run with `DEBUG=False`. In a deployed environment the honest route
+for somebody who paid another way is **Activate selected accounts** in the member
+admin, which records an account change and claims no payment.
+
+With no merchant configured and `DEBUG=True`, Payfast's own published sandbox
+merchant is used, so the whole flow works on a fresh clone.
+
+The full design -- including the sign-up non-disclosure rule this feature
+narrows, and why -- is in
+[design/features/payments.md](design/features/payments.md).
 
 ## Club documents
 
@@ -427,6 +518,22 @@ The club documents add one: an Azure Blob Storage container behind the CDN, and
 the `DJANGO_DOCUMENT_STORAGE_*` variables above. Without it the PDFs are written
 to `MEDIA_ROOT` and served by runserver, which is fine locally and is not a
 deployment.
+
+Payments add three. A **Payfast merchant** and the `DJANGO_PAYFAST_*` variables
+above -- Django refuses to start without them once `DEBUG` is off, because a
+payment integration that silently falls back to a sandbox is one that takes a
+member's money into an account nobody is watching. A **publicly reachable
+`notify_url`**, because Payfast's notification is server-to-server and it is the
+only thing that activates a membership; nothing on localhost can receive one, and
+`manage.py payfast_notify` stands in for it in development. And **something that
+runs `manage.py lapse_memberships`** on a schedule -- a daily cron or an App
+Service WebJob. Until that exists an unpaid or cancelled membership keeps its
+access indefinitely, which is the largest gap in the feature and is recorded as
+risk 2 in `design/features/payments.md`.
+
+The real email provider matters twice over now: the payment link emailed to a
+member whose address is already on file is the whole fallback for a duplicate
+registration, and with the console backend it reaches nobody.
 
 The frontend adds two requirements. Serve both halves under one registrable
 domain (`app.example.co.za` and `api.example.co.za`) so the `SameSite=Lax`

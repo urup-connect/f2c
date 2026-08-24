@@ -2,6 +2,7 @@ import 'server-only'
 
 import { apiBaseUrl } from './api'
 import type { MemberDetails } from './member-details'
+import { readCheckoutToken } from './checkout'
 import { PENDING_PAYMENT, readRegistrationRefusals } from './registration'
 import type { RegistrationOutcome } from './registration'
 
@@ -63,8 +64,21 @@ export const registerMember = async (details: MemberDetails): Promise<Registrati
   const payload = body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : {}
 
   if (response.ok) {
+    /*
+     * The token is read strictly rather than trusted. A value that is not a well-formed token
+     * becomes `null`, which sends the member to the neutral confirmation screen instead of to a
+     * payment page built on a value nobody can use — and `null` is a legitimate answer here in any
+     * case, being what a duplicate submission gets. So a malformed one degrades into the path that
+     * already exists rather than into a failure.
+     */
     return payload.status === PENDING_PAYMENT
-      ? { status: 'accepted', memberStatus: PENDING_PAYMENT }
+      ? {
+          status: 'accepted',
+          memberStatus: PENDING_PAYMENT,
+          checkoutToken: readCheckoutToken(
+            typeof payload.checkout_token === 'string' ? payload.checkout_token : null,
+          ),
+        }
       : {
           status: 'unusable',
           reason: 'Registration returned a status this application does not recognise.',

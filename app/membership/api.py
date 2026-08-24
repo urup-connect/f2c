@@ -1,8 +1,13 @@
 """The endpoint sign-up writes through, and the one it asks a question of.
 
 ``POST /api/members/register`` takes the six details and three agreements the
-sign-up form collects, and leaves a member at ``Pending payment``. It is
-unauthenticated because there is no account until it returns.
+sign-up form collects, and leaves a member at ``Pending payment`` with a
+subscription opened against them. It is unauthenticated because there is no
+account until it returns.
+
+What actually takes the money is ``app.payments``, and nothing in this module
+knows how. All that crosses back is a checkout token -- an opaque handle the
+caller turns into a Payfast redirect through ``GET /api/payments/checkout``.
 
 What comes back is deliberately thin. A success is a status and a sentence, and
 it is the *same* success whether a row was written or the submission named an
@@ -62,8 +67,10 @@ ACCEPTED_DETAIL = (
 def register(request, payload: RegisterIn):
     """Register a member, leaving them at ``Pending payment``.
 
-    * **200** -- accepted. Also the answer to a submission naming an address or
-      an identity number already on file, which writes nothing.
+    * **200** -- accepted, carrying the ``checkout_token`` that sends the member
+      to Payfast. Also the answer to a submission naming an address or an
+      identity number already on file, which writes nothing and carries no
+      token -- see ``RegistrationOut`` on the disclosure that costs.
     * **409** -- the nickname is taken, or a club document moved on while the
       form was open. Both name what to fix.
     * **422** -- a field is not acceptable, or the submission does not match the
@@ -78,7 +85,7 @@ def register(request, payload: RegisterIn):
     ]
 
     try:
-        services.register_member(
+        registration = services.register_member(
             first_name=payload.first_name,
             last_name=payload.last_name,
             nickname=payload.nickname,
@@ -105,7 +112,15 @@ def register(request, payload: RegisterIn):
         # for whoever is calling the endpoint directly.
         return 422, {'detail': ' '.join(error.messages)}
 
-    return 200, {'status': services.REGISTERED_STATUS, 'detail': ACCEPTED_DETAIL}
+    return 200, {
+        'status': services.REGISTERED_STATUS,
+        'detail': ACCEPTED_DETAIL,
+        # Null for a duplicate submission, which writes nothing. That is the one
+        # asymmetry in this response and it is documented in `RegistrationOut`;
+        # the caller sends a member with a token to Payfast and everyone else to
+        # the confirmation screen.
+        'checkout_token': registration.checkout_token,
+    }
 
 
 @router.post(

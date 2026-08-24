@@ -46,8 +46,12 @@ class UserOut(Schema):
     # Null until someone has checked the date against a document.
     date_of_birth_verified_at: datetime | None
     status: str
-    # What the account is: admin, cultivator or member. Independent of
-    # `is_staff`, which opens the Django admin and nothing else.
+    # What the account is: admin, cultivator, member or sharing member.
+    # Independent of `is_staff`, which opens the Django admin and nothing else.
+    #
+    # A sharing member cannot reach this schema -- they hold no email address
+    # and a constraint keeps the role out of Active, so no session can belong to
+    # one -- but the field reports the column rather than a subset of it.
     role: str
     # Every `platform.*` action this account holds, sorted. Empty for an
     # inactive account, and the whole catalogue for a superuser.
