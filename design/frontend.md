@@ -77,6 +77,7 @@ colocated as `<Name>.test.tsx`. `components/README.md` records the rule.
 | `/age-check` | Server | The eighteen-year gate in front of joining. |
 | `/signup` | Server | The details a joining member gives. Age-gated. |
 | `/login` | Server | Placeholder. See section 9. |
+| `/api/nickname/availability` | Route Handler | The sign-up form's nickname check, proxied to Django. See `sign-up.md` section 7. |
 | `/robots.txt` | Dynamic | Read at request time, not build time. |
 | `/sitemap.xml` | Dynamic | Read at request time, not build time. |
 
@@ -87,6 +88,14 @@ layout.
 
 `/join` needs no `robots` treatment of its own. `robots.txt` disallows everything but `/`, and the
 route returns a redirect rather than a page.
+
+`/api/nickname/availability` is the only route the browser calls with JavaScript, and the only one
+that is not a page. It exists so that the one live check on the sign-up form goes through this
+origin rather than straight to Django: the API's address stays out of the client bundle, the wording
+of a failure is decided in one place, and the *cause* of a failure is logged server-side instead of
+appearing in the browser's network panel. Nothing but the sign-up form calls it, and adding a second
+such route should be argued for the same way — see `sign-up.md` section 7.1 on why the nickname is
+the only field that may be asked about at all.
 
 The `(auth)` layout owns the landmark and the centring and nothing else. It does not own the card:
 sign-up needed a wider one, and a child cannot exceed its parent's maximum width, so each page

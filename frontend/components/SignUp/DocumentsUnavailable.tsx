@@ -1,6 +1,18 @@
 import Link from 'next/link'
 import { MEMBER_DETAILS_COPY } from '@/lib/member-details-content'
 
+type DocumentsUnavailableProps = {
+  /**
+   * The handle on the log line that says what actually failed, when there is one.
+   *
+   * Present when a submission could not be written — the fault was ours and somebody may want to
+   * report it. Absent when the club documents simply could not be read on the way in: that screen
+   * is rendered before anything was attempted on the member's behalf, and a reference with nothing
+   * behind it is worse than none.
+   */
+  reference?: string
+}
+
 /**
  * Shown instead of the form when joining cannot proceed for a reason that is ours.
  *
@@ -18,9 +30,16 @@ import { MEMBER_DETAILS_COPY } from '@/lib/member-details-content'
  * A Server Component with no state and no retry button: there is nothing the member can do about
  * it, and a button that only reloads the page pretends otherwise.
  *
- * See design/features/sign-up.md sections 5 and 6.
+ * What it will now carry is a reference, when a submission was attempted and could not be written.
+ * That is the whole of what a member is given about a fault on our side: eight characters that
+ * point at a log line they cannot read, and no description of the fault. It is what makes the
+ * failure reportable without them having to describe anything about themselves to report it — the
+ * wording says so, because being asked for a code after typing an identity number into a form
+ * deserves an answer to the obvious question. See design/features/sign-up.md section 7.
+ *
+ * See also sections 5 and 6.
  */
-export const DocumentsUnavailable = () => (
+export const DocumentsUnavailable = ({ reference }: DocumentsUnavailableProps) => (
   <>
     <h1 className="font-display text-3xl tracking-display text-forest-green">
       {MEMBER_DETAILS_COPY.unavailable.heading}
@@ -31,6 +50,12 @@ export const DocumentsUnavailable = () => (
         {line}
       </p>
     ))}
+
+    {reference === undefined ? null : (
+      <p className="mt-4 font-sans text-base leading-relaxed text-muted-foreground">
+        {MEMBER_DETAILS_COPY.unavailable.reference(reference)}
+      </p>
+    )}
 
     <Link
       href="/"

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { TextField } from './TextField'
 
 /* design/features/member-details-at-sign-up.md criterion 2, and section 8. */
@@ -198,5 +198,83 @@ describe('TextField', () => {
     render(<TextField name="nickname" label="Nickname" defaultValue="GreenThumb" />)
 
     expect(screen.getByLabelText('Nickname')).toHaveValue('GreenThumb')
+  })
+  test('describes the input with a notice, without marking it invalid', () => {
+    /*
+     * A notice is not a refusal. The field is still acceptable, so nothing about it may say
+     * otherwise — an `aria-invalid` on a valid field tells a screen reader user to fix something
+     * that is not broken.
+     */
+    render(
+      <TextField name="nickname" label="Nickname" notice="We could not confirm that just now." />,
+    )
+
+    const field = screen.getByLabelText('Nickname')
+
+    expect(field).toHaveAccessibleDescription('We could not confirm that just now.')
+    expect(field).not.toHaveAttribute('aria-invalid')
+  })
+
+  test('announces a notice politely, because it arrives after the visitor has moved on', () => {
+    render(<TextField name="nickname" label="Nickname" notice="Could not confirm." />)
+
+    expect(screen.getByRole('status')).toHaveTextContent('Could not confirm.')
+  })
+
+  test('describes the input with its hint and its notice together', () => {
+    render(
+      <TextField
+        name="nickname"
+        label="Nickname"
+        hint="What other members see."
+        notice="Could not confirm."
+      />,
+    )
+
+    expect(screen.getByLabelText('Nickname')).toHaveAccessibleDescription(
+      'What other members see. Could not confirm.',
+    )
+  })
+
+  test('tells the caller what the field holds once it loses focus', async () => {
+    const onBlurValue = vi.fn()
+
+    render(<TextField name="nickname" label="Nickname" onBlurValue={onBlurValue} />)
+
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    expect(onBlurValue).toHaveBeenCalledWith('GreenThumb')
+  })
+
+  test('does not tell the caller anything while the field still has focus', async () => {
+    const onBlurValue = vi.fn()
+
+    render(<TextField name="nickname" label="Nickname" onBlurValue={onBlurValue} />)
+
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+
+    // Asking on every keystroke would ask about a dozen values the visitor never finished typing.
+    expect(onBlurValue).not.toHaveBeenCalled()
+  })
+
+  test('tells the caller the formatted value, not the raw one', async () => {
+    const onBlurValue = vi.fn()
+
+    render(
+      <TextField
+        name="mobile"
+        label="Mobile number"
+        formatOnBlur={(value) => value.replace(/\D/g, '')}
+        onBlurValue={onBlurValue}
+      />,
+    )
+
+    await userEvent.type(screen.getByLabelText('Mobile number'), '082 123 4567')
+    await userEvent.tab()
+
+    // What leaves the field is what the visitor can now see in it.
+    expect(onBlurValue).toHaveBeenCalledWith('0821234567')
+    expect(screen.getByLabelText('Mobile number')).toHaveValue('0821234567')
   })
 })

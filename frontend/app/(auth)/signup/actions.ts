@@ -4,6 +4,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { AGE_PASS_COOKIE, readAgePass } from '@/lib/age-gate-cookie'
 import { fetchClubDocumentRevisions } from '@/lib/club-documents-api'
+import { newErrorReference } from '@/lib/error-reference'
 import {
   readMemberDetailsInput,
   serialiseMemberDetailsRefusals,
@@ -46,6 +47,12 @@ import { registerMember } from '@/lib/registration-api'
  * Either way nothing was written, there is nothing the visitor can do, and `/signup?unavailable=1`
  * says so. Inventing a message per cause would only ask them to act on a fault that is ours.
  *
+ * What it does now do is make that fault reportable. A failure mints a reference, logs the cause
+ * against it server-side, and carries the reference — and only the reference — back in the query
+ * string. So the screen says something failed and gives the member eight characters to quote,
+ * while which fault it was stays in a log line they cannot read and nobody has to describe
+ * themselves to report it. See design/features/sign-up.md section 7.
+ *
  * The revisions in force are re-read here rather than trusted from the form. A document can be
  * published between the page rendering and the member submitting, and a tick beside the old wording
  * is not an agreement to the new text. `validateMemberDetails` compares the version the form
@@ -87,7 +94,20 @@ export const submitMemberDetails = async (formData: FormData) => {
     redirect(refusedUrl(serialiseMemberDetailsRefusals(registration.refusals)))
   }
 
-  if (registration.status === 'unusable') redirect('/signup?unavailable=1')
+  /*
+   * The fault was ours, and it is now reportable. A reference is minted, the reason is logged
+   * against it here — where the member cannot read it and where nothing they typed is in scope —
+   * and only the reference travels back. `registration.reason` is written by `registration-api.ts`
+   * and says which kind of failure it was; it carries no submitted value, which is why it may be
+   * logged at all. Criterion 40 still holds: the query string carries eight random characters.
+   */
+  if (registration.status === 'unusable') {
+    const reference = newErrorReference()
+
+    console.error(`[register] ${reference}: ${registration.reason}`)
+
+    redirect(`/signup?unavailable=1&ref=${reference}`)
+  }
 
   redirect('/signup?submitted=1')
 }

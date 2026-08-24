@@ -9,6 +9,7 @@ import { SubmissionOutcome } from '@/components/SignUp/SubmissionOutcome'
 import { AuthCard } from '@/components/Ui/AuthCard'
 import { AGE_PASS_COOKIE, readAgePass } from '@/lib/age-gate-cookie'
 import { fetchClubDocumentRevisions } from '@/lib/club-documents-api'
+import { readErrorReference } from '@/lib/error-reference'
 import { parseMemberDetailsRefusals } from '@/lib/member-details'
 import { MEMBER_DETAILS_COPY } from '@/lib/member-details-content'
 
@@ -54,7 +55,7 @@ export default async function SignUp({
 
   if (!pass) redirect('/age-check')
 
-  const { refused, submitted, unavailable } = await searchParams
+  const { refused, submitted, unavailable, ref } = await searchParams
 
   if (submitted === '1') {
     return (
@@ -69,11 +70,15 @@ export default async function SignUp({
    * revision in force. Nothing was written and there is nothing the visitor can do, which is the
    * same position as documents that cannot be read — so it is the same screen, before the fetch
    * below, because that fetch may be the thing that is failing.
+   *
+   * `ref` is the reference the server action minted and logged the cause against. Read strictly:
+   * anything that is not eight hex characters is dropped rather than rendered, so a hand-typed or
+   * doctored parameter cannot put text of somebody else's choosing on this screen.
    */
   if (unavailable === '1') {
     return (
       <AuthCard>
-        <DocumentsUnavailable />
+        <DocumentsUnavailable reference={readErrorReference(ref) ?? undefined} />
       </AuthCard>
     )
   }

@@ -1,4 +1,4 @@
-"""The one endpoint sign-up writes through.
+"""The endpoint sign-up writes through, and the one it asks a question of.
 
 ``POST /api/members/register`` takes the six details and three agreements the
 sign-up form collects, and leaves a member at ``Pending payment``. It is
@@ -11,8 +11,15 @@ duplicate is not disclosed. Only a nickname collision and a document that moved
 on while the form was open come back as something to correct, because those are
 the two the member can act on.
 
+``POST /api/members/nickname/availability`` is the second endpoint, and it
+answers one question while the form is still open: is this nickname free. It
+exists because a nickname is the only collision this app discloses, so it is the
+only field that can be checked ahead of the submission without the form becoming
+a way to ask whether a named person is a member here. It is a courtesy and not a
+gate -- ``/register`` asks again inside the transaction that writes.
+
 Nothing here decides anything. Every rule is in ``services`` and
-``common.validators``, so the endpoint is a translation of exceptions into
+``common.validators``, so each endpoint is a translation of exceptions into
 status codes and nothing more.
 """
 from django.core.exceptions import ValidationError
@@ -22,8 +29,15 @@ from ninja.errors import HttpError
 from app.documents import services as document_services
 
 from . import services
-from .schemas import RegisterIn, RegistrationOut, RegistrationRefusedOut
-from .throttles import RegisterThrottle
+from .schemas import (
+    NicknameAvailabilityIn,
+    NicknameAvailabilityOut,
+    NicknameRejectedOut,
+    RegisterIn,
+    RegistrationOut,
+    RegistrationRefusedOut,
+)
+from .throttles import NicknameAvailabilityThrottle, RegisterThrottle
 
 router = Router(tags=['membership'])
 
@@ -92,3 +106,35 @@ def register(request, payload: RegisterIn):
         return 422, {'detail': ' '.join(error.messages)}
 
     return 200, {'status': services.REGISTERED_STATUS, 'detail': ACCEPTED_DETAIL}
+
+
+@router.post(
+    '/nickname/availability',
+    response={200: NicknameAvailabilityOut, 422: NicknameRejectedOut},
+    auth=None,
+    throttle=[NicknameAvailabilityThrottle()],
+)
+def nickname_availability(request, payload: NicknameAvailabilityIn):
+    """Whether a nickname is free, asked while the form is still open.
+
+    * **200** -- ``{"available": true|false}``. False covers taken and reserved
+      alike; there is nothing to do about either but choose again.
+    * **422** -- the nickname is not well formed. The frontend refuses every one
+      of these before asking, so reaching this means the caller bypassed the
+      form or the two rule sets have drifted.
+    * **429** -- the per-IP limit, from ``NicknameAvailabilityThrottle``.
+
+    A POST, and the nickname travels in the body: a value in a query string is a
+    value in every access log between here and the member.
+
+    This is a courtesy, not a gate. ``/register`` asks the same question again
+    inside the transaction that writes, because a nickname free at the moment
+    the field loses focus can be taken before the form is sent -- and because an
+    answer given here is an answer the caller could have chosen not to ask for.
+    """
+    try:
+        available = services.nickname_is_available(payload.nickname)
+    except ValidationError as error:
+        return 422, {'detail': ' '.join(error.messages)}
+
+    return 200, {'available': available}

@@ -15,3 +15,21 @@ from ninja.throttling import AnonRateThrottle
 
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'
+
+
+class NicknameAvailabilityThrottle(AnonRateThrottle):
+    """The limit on ``POST /api/members/nickname/availability``.
+
+    Looser than ``register`` because it is called several times in one honest
+    sitting -- once each time the nickname field loses focus with a new value in
+    it -- and tighter than nothing because the endpoint answers a question about
+    another member's record. What it bounds is harvesting the nickname list, not
+    a member trying three names before settling on one.
+
+    It is per IP, like every other anonymous limit here, and that is its
+    weakness: a determined harvester has more than one address. The disclosure
+    is bounded by what the answer contains rather than by this -- one boolean
+    about a name the caller already had to type.
+    """
+
+    scope = 'nickname_availability'

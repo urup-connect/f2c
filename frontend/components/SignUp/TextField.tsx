@@ -8,6 +8,16 @@ type TextFieldProps = {
   hint?: string
   /** The refusal message, when this field has one. */
   error?: string
+  /**
+   * Something true about the field that is not a refusal — today, that a check the club wanted to
+   * make could not be made.
+   *
+   * Separate from `error` rather than another wording of it, because the two must not look or
+   * behave alike: a notice leaves the field valid, does not mark it `aria-invalid`, does not put a
+   * red border on it, and does not appear in the error summary. It is announced when it appears,
+   * because it arrives after the visitor has moved on and they would otherwise never learn of it.
+   */
+  notice?: string
   /** Only ever a value the server sent back, never something the visitor did not type. */
   defaultValue?: string
   autoComplete?: string
@@ -27,6 +37,14 @@ type TextFieldProps = {
    * back where it was.
    */
   filterOnInput?: (value: string) => string
+  /**
+   * Told what the field holds, once it loses focus and after `formatOnBlur` has tidied it.
+   *
+   * The moment a value is finished with, which is the only moment worth asking anyone else about
+   * it. Given the formatted value rather than the raw one, so a caller sends the API the same
+   * string the member is now looking at.
+   */
+  onBlurValue?: (value: string) => void
 }
 
 const INPUT =
@@ -54,18 +72,23 @@ export const TextField = ({
   label,
   hint,
   error,
+  notice,
   defaultValue,
   autoComplete,
   inputMode,
   maxLength,
   formatOnBlur,
   filterOnInput,
+  onBlurValue,
 }: TextFieldProps) => {
   const id = `member-${name}`
   const hintId = `${id}-hint`
   const errorId = `${id}-error`
+  const noticeId = `${id}-notice`
 
-  const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ')
+  const describedBy = [hint ? hintId : null, error ? errorId : null, notice ? noticeId : null]
+    .filter(Boolean)
+    .join(' ')
 
   /*
    * Filtering happens on input rather than by blocking a keypress, because a paste has to be
@@ -120,10 +143,17 @@ export const TextField = ({
          * The input is uncontrolled, so the DOM holds the value and both of these write to it.
          */
         onBlur={
-          formatOnBlur &&
-          ((event) => {
-            event.currentTarget.value = formatOnBlur(event.currentTarget.value)
-          })
+          formatOnBlur || onBlurValue
+            ? (event) => {
+                const input = event.currentTarget
+
+                if (formatOnBlur) input.value = formatOnBlur(input.value)
+
+                // After the formatting, never before it: what leaves this field is what the
+                // visitor can now see in it.
+                onBlurValue?.(input.value)
+              }
+            : undefined
         }
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy.length > 0 ? describedBy : undefined}
@@ -133,6 +163,17 @@ export const TextField = ({
       {error ? (
         <p id={errorId} className="font-sans text-sm font-medium text-error">
           {error}
+        </p>
+      ) : null}
+
+      {/*
+        * `role="status"` rather than `role="alert"`: it is not urgent and it interrupts nothing.
+        * The visitor has already moved to the next field by the time this appears, so it is
+        * announced politely and left on screen for them to come back to.
+        */}
+      {notice ? (
+        <p id={noticeId} role="status" className="font-sans text-sm text-muted-foreground">
+          {notice}
         </p>
       ) : null}
     </div>

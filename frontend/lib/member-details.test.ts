@@ -4,6 +4,7 @@ import {
   MEMBER_DETAILS_FIELDS,
   MEMBER_DETAILS_REFUSALS,
   isMemberDetailsRefusal,
+  mergeMemberDetailsRefusals,
   parseMemberDetailsRefusals,
   readMemberDetailsInput,
   serialiseMemberDetailsRefusals,
@@ -514,5 +515,48 @@ describe('the three club document agreements', () => {
     )
 
     expect(round).toEqual([{ field: 'agreeConstitution', reason: 'consent-required' }])
+  })
+})
+
+describe('refusals from two sources', () => {
+  /*
+   * The rules decide most of them; a question put to the API while the form was open decides one.
+   * The error summary reads as a list of what to fix, so they have to arrive as one ordered list.
+   */
+  test('are merged in the order the form shows the fields', () => {
+    const merged = mergeMemberDetailsRefusals(
+      [{ field: 'agreeAnnexures', reason: 'consent-required' }],
+      [{ field: 'nickname', reason: 'nickname-unavailable' }],
+      [{ field: 'firstName', reason: 'name-missing' }],
+    )
+
+    expect(merged.map((entry) => entry.field)).toEqual([
+      'firstName',
+      'nickname',
+      'agreeAnnexures',
+    ])
+  })
+
+  test('give a field one message, and it is the earlier argument’s', () => {
+    /*
+     * A nickname that is malformed *and* reported taken is malformed. Fixing the shape is the
+     * instruction that makes sense, and "that nickname is taken" about a value nobody could hold
+     * is untrue.
+     */
+    const merged = mergeMemberDetailsRefusals(
+      [{ field: 'nickname', reason: 'nickname-shape' }],
+      [{ field: 'nickname', reason: 'nickname-unavailable' }],
+    )
+
+    expect(merged).toEqual([{ field: 'nickname', reason: 'nickname-shape' }])
+  })
+
+  test('are nothing when neither source refused anything', () => {
+    expect(mergeMemberDetailsRefusals([], [])).toEqual([])
+  })
+
+  test('survive a source being the only one with anything to say', () => {
+    expect(mergeMemberDetailsRefusals([], [{ field: 'nickname', reason: 'nickname-unavailable' }]))
+      .toEqual([{ field: 'nickname', reason: 'nickname-unavailable' }])
   })
 })

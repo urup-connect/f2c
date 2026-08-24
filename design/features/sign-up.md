@@ -446,6 +446,101 @@ be told three things once, not one thing three times.
 A refusal redirects with **reason codes and nothing else** — no name, no address, no identity
 number.
 
+### 7.1 One field is checked against the club's records on the way out of it
+
+The nickname, and only the nickname. Leaving the field asks
+`POST /api/members/nickname/availability` whether the name is free, and the answer appears against
+the field before the member reaches the end of the form.
+
+It is the only field that may be asked about, and the reason is the reason a taken nickname is the
+one collision this product discloses at all (section 6, *Duplicates are not disclosed*): a nickname
+is a claim against other members, so saying one is spoken for reveals nothing about who holds it. An
+address, a handset or an identity number is the opposite — a live answer about any of those turns
+this form into a way to ask whether a named person is a member here, so **none of them has an
+endpoint to ask**, and `MemberDetailsForm`'s `asksTheApiOnBlur` flag exists partly so that adding one
+requires making this argument again.
+
+Four decisions inside that:
+
+- **On blur, not as it is typed.** A value being finished with is the only moment worth asking
+  anyone else about it. Asking per keystroke sends a dozen half-written names to the API and answers
+  each time about something already changed.
+- **Only when the field's own rules accept it.** A malformed nickname has a refusal of its own and
+  nothing anybody else can add. Nothing is sent, and no request is spent being told what the browser
+  already knew.
+- **Through this application, not to Django.** `/api/nickname/availability` is a route handler on the
+  site's own origin. That keeps the API's address out of the browser bundle, keeps the wording of a
+  failure in one place, and — the point — keeps the *cause* of a failure in a server log rather than
+  in the browser's network panel. The handler re-writes the answer down to one boolean rather than
+  passing Django's body through, so a field added to that response later cannot reach a browser
+  without somebody deciding it should.
+- **A POST, with the nickname in the body.** A query string is written to this application's access
+  log, the browser's history, and any cache between the two. It is the mildest value this form
+  collects and it is still not ours to scatter.
+
+Django re-reads the same rule inside the transaction that writes (`register_member` raises
+`NicknameTaken`), so **this check is a courtesy and never the protection**. A nickname free when the
+field was left can be taken before the form is sent, and the write is the only place that can refuse
+that.
+
+The per-IP limit is `30/m`, looser than `register`'s `5/m` because a member tries a few names in one
+sitting and joins once. What it bounds is harvesting the nickname list.
+
+### 7.2 A definite answer is a refusal; a check that failed is not
+
+A **taken** answer is rendered exactly like a rule's refusal — against the field, in the same
+wording, and it stops the submission at `handleSubmit` rather than costing a round trip that would
+lose everything typed. Two details:
+
+- It does not reach the error summary until the submit. The summary takes focus when it appears,
+  which is right after a submit and wrong two fields later: it would haul the caret out of whatever
+  the member is typing.
+- It is remembered as *the nickname it was about*, not as a boolean. A member who reads the refusal,
+  types something else and clicks straight through gives the browser no time to ask again; refusing
+  that submission would be refusing the wrong nickname, so it is allowed and the write decides.
+
+A **failed** check is not an answer, and is deliberately not shaped like one. The API unreachable, a
+500, a 429, a body that does not parse: nobody knows whether the nickname is free. The field is left
+unmarked and valid, a `role="status"` notice says the check could not be made, and **the submission
+is not blocked**. Failing closed here would cost somebody a membership to protect a nickname that
+`/register` re-checks anyway.
+
+### 7.3 How a fault on our side reaches the member
+
+Two failures are now reportable without anything about the member travelling: the nickname check
+(7.2) and a submission that passed every rule and could not be written (section 6).
+
+Both work the same way. The failure mints an eight-character reference (`lib/error-reference.ts`),
+the cause is logged against it **server-side** — in the route handler, or in the server action — and
+only the reference travels back: to the field as part of the notice, or to `/signup?unavailable=1&ref=…`
+in the query string. The screen says something failed, gives the member a handle on it, and says
+nothing about which fault it was.
+
+That split is the whole of it, and it holds in both directions:
+
+| Reaches the member | Stays in the log |
+| --- | --- |
+| That the check or the submission could not be completed | Which fault it was: unreachable, 5xx, 429, an unparseable body, a document with no revision |
+| An opaque reference, eight hex characters | The reference, beside the cause |
+| That the reference says nothing about them (on the screen that replaces the form) | — |
+
+- **The reference is derived from nothing.** Random, not a hash of the request, the time or the
+  value: a reference computed from anything about the member is a value in a query string that can
+  be walked backwards.
+- **The nickname is not logged**, on any path, and neither is anything else the member typed. The one
+  thing worth recording about a value — that Django refused as malformed a nickname the browser
+  accepted, meaning the two rule sets have drifted — is logged as the fact that it happened.
+- **The reference is read strictly where it is rendered.** `readErrorReference` accepts eight hex
+  characters and drops everything else, so a hand-edited `?ref=` cannot put wording of somebody's
+  choosing on the screen beside our own.
+- **No reference without a log line behind it.** The documents-unavailable screen rendered on the way
+  *in* carries none: nothing was attempted for that visitor, so there is nothing to look up. A
+  browser that cannot reach this site at all gets the notice without a reference for the same reason.
+
+What this deliberately does not do is name the cause on screen. A member who is told "the API
+answered 503" has learned nothing they can act on and something about our deployment; the reference
+is what turns "it broke" into something support can trace.
+
 ## 8. Risks
 
 | # | Risk | Status |
@@ -465,3 +560,6 @@ number.
 | 13 | Four validation rules now exist twice, in TypeScript and in Python — names, email, mobile, nickname — joining the identity number at risk 5. Each pair is correct in both places for different reasons, but they must be read together, and a change to one is easy to make in isolation. | Open — documented rather than unified |
 | 14 | The mobile number is a unique identity key, so a member with no phone of their own cannot give a partner's or a parent's. Because duplicates are never disclosed, they are refused with a confirmation screen and never learn why. There is no route for staff to make an exception short of editing the other account. | Accepted, by decision — the club's rule is one handset, one member |
 | 15 | The frontend has no refusal code for a duplicate, by design, so a visitor whose address, identity number or handset is already held sees the same confirmation screen as a new member. Support has no way to tell the two apart from the member's description alone. | Accepted — the alternative discloses membership |
+| 16 | `POST /api/members/nickname/availability` is an unauthenticated endpoint that answers one question about other members' records. The disclosure is bounded by what the answer contains — one boolean about a name the caller had to type — and by a 30/minute per-IP limit. A harvester with several addresses can still enumerate whether specific nicknames are taken. | Accepted — the same disclosure `register` already makes, and see section 7.1 |
+| 17 | The nickname check fails open: a member who submits while it is failing is refused by `register` instead, and that refusal arrives as a redirect, which loses every value they typed. So a failing check turns a taken nickname from an inline message into a re-typed form. | Accepted — the alternative traps a member in a form over a transient fault |
+| 18 | The error reference is only as useful as the log it points at. Nothing yet ships those `console.error` lines anywhere retained, and there is no support runbook that says how to look one up. Until there is, a member quoting a reference cannot be helped by it. | Open — needs log retention and a runbook |

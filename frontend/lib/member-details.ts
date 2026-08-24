@@ -290,6 +290,34 @@ export const validateMemberDetails = (
   }
 }
 
+/**
+ * Two sets of refusals as one list: in field order, one message per field.
+ *
+ * The form has two sources of them now. The rules in this module decide most, and a question put
+ * to the API while the form was open decides one — whether the nickname is already somebody's. They
+ * have to arrive at the error summary as a single ordered list, because the summary is read as a
+ * list of what to fix and a member working down it must not find the nickname above the first name.
+ *
+ * Earlier arguments win a field, so a caller puts the more specific refusal first. A nickname that
+ * is malformed *and* reported taken is malformed: fixing the shape is the instruction that makes
+ * sense, and "that nickname is taken" about a nickname nobody could hold is a lie.
+ */
+export const mergeMemberDetailsRefusals = (
+  ...sets: readonly (readonly MemberDetailsFieldRefusal[])[]
+): readonly MemberDetailsFieldRefusal[] => {
+  const byField = new Map<MemberDetailsField, MemberDetailsFieldRefusal>()
+
+  for (const refusal of sets.flat()) {
+    if (!byField.has(refusal.field)) byField.set(refusal.field, refusal)
+  }
+
+  return MEMBER_DETAILS_FIELDS.flatMap((field) => {
+    const refusal = byField.get(field)
+
+    return refusal === undefined ? [] : [refusal]
+  })
+}
+
 export const isMemberDetailsField = (value: unknown): value is MemberDetailsField =>
   typeof value === 'string' && MEMBER_DETAILS_FIELDS.some((field): boolean => field === value)
 

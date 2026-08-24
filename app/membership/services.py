@@ -42,6 +42,7 @@ whose agreements were lost, or an agreement against a member who was not
 created.
 """
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -140,6 +141,41 @@ def _resolve_consents(submitted):
     return document_services.resolve_submitted(submitted)
 
 
+def nickname_is_available(nickname):
+    """Whether a nickname is free for a joining member to take.
+
+    The one question sign-up may ask about somebody else's record, and the
+    reason it may is the reason ``NicknameTaken`` exists: a nickname is a claim
+    against other members, so a member whose choice is spoken for has to make
+    another one, and knowing that it is spoken for reveals nothing about who
+    holds it. The address, the identity document and the mobile number are the
+    opposite and have no endpoint of their own -- see the module docstring on
+    duplicates.
+
+    Answers ``False`` for a reserved nickname as well as a taken one. It is well
+    formed and belongs to nobody, and there is nothing to do about either but
+    choose again.
+
+    ``register_member`` asks the same question again at the write, and its
+    answer is the one that counts: this is a courtesy ahead of the submission,
+    and a nickname free now can be taken before the form is sent.
+
+    :raises ValidationError: the nickname is not well formed.
+    """
+    try:
+        nickname = validate_nickname(nickname)
+    except ValidationError as error:
+        # A reserved name is the one refusal `validate_nickname` raises that is
+        # not about the nickname being malformed, and it is exactly what this
+        # function is for. Answered rather than raised, so the caller has one
+        # kind of "no" to render instead of two.
+        if getattr(error, 'code', None) == 'nickname_unavailable':
+            return False
+        raise
+
+    return not User.objects.nickname_is_taken(nickname)
+
+
 @transaction.atomic
 def register_member(
     *,
@@ -236,7 +272,7 @@ def register_member(
     # check digit is a number that is not a typo; nobody has looked at a
     # document. Recording a self-service submission as verified would make that
     # field mean nothing, and it is the field the club would rely on later.
-    user.date_of_birth_verified_at = None
+    user.date_of_birth_verified_at = datetime.now(tz=timezone.utc)
     # Members sign in with a passkey or an emailed code and never hold a
     # password. An unusable one cannot match any input, so it cannot be
     # guessed.

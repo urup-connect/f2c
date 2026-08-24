@@ -76,3 +76,43 @@ class RegistrationRefusedOut(Schema):
     detail: str
     nickname_unavailable: bool = False
     superseded_documents: list[str] = []
+
+
+class NicknameAvailabilityIn(Schema):
+    """The nickname a visitor has just finished typing.
+
+    A body rather than a query parameter, and the endpoint is a POST for the
+    same reason: a nickname in a URL is a nickname in every access log, proxy
+    log and browser history between here and the member. It is the mildest
+    value this form collects and it is still not ours to scatter.
+    """
+
+    nickname: str
+
+
+class NicknameAvailabilityOut(Schema):
+    """Whether the nickname is free, and nothing else.
+
+    One boolean, deliberately. It does not say who holds a taken nickname, when
+    it was taken, or what it is close to -- and it does not echo the nickname
+    back, so a proxy caching the answer caches nothing about the person who
+    asked.
+
+    A *reserved* nickname is answered ``False`` like any other taken one. It is
+    well formed and belongs to nobody, and there is nothing for a member to do
+    about it but choose again.
+    """
+
+    available: bool
+
+
+class NicknameRejectedOut(Schema):
+    """A nickname that is not well formed.
+
+    ``detail`` is for a human and for a log. The frontend refuses every one of
+    these itself before asking, so a member who reaches this has bypassed the
+    form -- or the two rule sets have drifted, which is worth a loud log line at
+    whoever is calling.
+    """
+
+    detail: str

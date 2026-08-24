@@ -372,4 +372,8 @@ NINJA_DEFAULT_THROTTLE_RATES = {
     # membership/throttles.py -- this is the control that stands in for the
     # CSRF check an unauthenticated, server-to-server endpoint cannot have.
     'register': '5/m',
+    # The nickname check the sign-up form makes when the field loses focus.
+    # Looser than `register`: a member tries a few names in one sitting, and
+    # each one is a request. See membership/throttles.py.
+    'nickname_availability': '30/m',
 }

@@ -1,10 +1,11 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MemberDetailsForm } from './MemberDetailsForm'
 import { MEMBER_DETAILS_COPY, memberDetailsRefusalMessage } from '@/lib/member-details-content'
 import type { CalendarDate } from '@/lib/age-gate'
 import { CLUB_DOCUMENT_IDS, clubVersionField } from '@/lib/club-documents'
+import { NICKNAME_AVAILABILITY_PATH } from '@/lib/nickname-availability'
 import { clubDocumentRevisions } from '@/test-support/club-documents'
 
 /*
@@ -637,5 +638,276 @@ describe('the three club document agreements', () => {
         REVISIONS[id].version,
       )
     }
+  })
+})
+
+/*
+ * design/features/sign-up.md section 7.
+ *
+ * The nickname is the one field that asks the API a question on the way out of it, and the only one
+ * that may: it is a claim against other members, so "is this one free" is answerable out loud,
+ * while a live answer about an address, a handset or an identity number would make this form a way
+ * to ask whether a named person is a member here.
+ *
+ * Two things are being held in place. A definite answer is a refusal like any other, shown where
+ * the member is looking and enforced at the submit. A check that could not be made is not a
+ * refusal: it is said plainly, given a reference, and it blocks nothing — the write asks again, so
+ * failing open costs a courtesy rather than the protection.
+ */
+
+const answered = (body: unknown, status = 200) => ({ status, json: async () => body }) as Response
+
+/** Stubs the one call the form makes, and hands back the spy on it. */
+const availability = (body: unknown, status = 200) => {
+  const fetcher = vi.fn(async () => answered(body, status))
+
+  vi.stubGlobal('fetch', fetcher)
+
+  return fetcher
+}
+
+const TAKEN = memberDetailsRefusalMessage('nickname-unavailable', '15 March 1990')
+
+const NOTICE = MEMBER_DETAILS_COPY.checkFailed.nickname
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('leaving the nickname field', () => {
+  test('asks the club whether the nickname is free', async () => {
+    const fetcher = availability({ available: true })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+
+    const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit]
+
+    // This application's own route, so Django's address stays out of the bundle and the cause of
+    // any failure stays out of the browser's network log.
+    expect(url).toBe(NICKNAME_AVAILABILITY_PATH)
+    expect(JSON.parse(String(init.body))).toEqual({ nickname: 'GreenThumb' })
+  })
+
+  test('asks nothing while the nickname breaks its own rules', async () => {
+    const fetcher = availability({ available: true })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'ab')
+    await userEvent.tab()
+
+    /*
+     * There is nothing to ask: the value cannot be a nickname, the refusal it needs is the rule's
+     * own, and a request would spend somebody's rate limit being told what this browser knew.
+     */
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  test('asks nothing when the field is left again unchanged', async () => {
+    const fetcher = availability({ available: true })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+
+    // Tabbing back and forth through a form is normal. It is not a new question.
+    await userEvent.click(screen.getByLabelText('Nickname'))
+    await userEvent.tab()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  test('says so when the nickname is already somebody else’s', async () => {
+    availability({ available: false })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    expect(await screen.findByText(TAKEN)).toBeInTheDocument()
+    expect(screen.getByLabelText('Nickname')).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  test('does not haul the visitor back up the form to tell them', async () => {
+    availability({ available: false })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+    await screen.findByText(TAKEN)
+
+    /*
+     * The error summary takes focus when it appears, which is right after a submit and wrong while
+     * somebody is typing. The answer reaches the summary at the submit, with everything else.
+     */
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Email address')).toHaveFocus()
+  })
+
+  test('says nothing when the nickname is free', async () => {
+    availability({ available: true })
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Nickname')).not.toHaveAttribute('aria-invalid'),
+    )
+    expect(screen.queryByText(TAKEN)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
+describe('a nickname the club says is taken', () => {
+  test('stops the submission, and is listed with everything else', async () => {
+    availability({ available: false })
+
+    const action = renderForm()
+
+    await fill()
+    await screen.findByText(TAKEN)
+    await submit()
+
+    expect(action).not.toHaveBeenCalled()
+    expect(within(screen.getByRole('alert')).getByText(new RegExp(TAKEN))).toBeInTheDocument()
+  })
+
+  test('lets the submission through once a free one is given instead', async () => {
+    availability({ available: false })
+
+    const action = renderForm()
+
+    await fill()
+    await screen.findByText(TAKEN)
+
+    availability({ available: true })
+    await userEvent.clear(screen.getByLabelText('Nickname'))
+    await userEvent.type(screen.getByLabelText('Nickname'), 'Fernie')
+    await userEvent.tab()
+
+    await waitFor(() => expect(screen.queryByText(TAKEN)).not.toBeInTheDocument())
+    await submit()
+
+    expect(action).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not refuse a nickname the answer was never about', async () => {
+    availability({ available: false })
+
+    const action = renderForm()
+
+    await fill()
+    await screen.findByText(TAKEN)
+
+    /*
+     * A member who reads the refusal, types something else and clicks straight through gives the
+     * browser no time to ask again. Refusing that submission would be refusing the wrong nickname;
+     * the register call is what will decide it.
+     */
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
+    await userEvent.clear(screen.getByLabelText('Nickname'))
+    await userEvent.type(screen.getByLabelText('Nickname'), 'Fernie')
+    await submit()
+
+    expect(action).toHaveBeenCalledTimes(1)
+    expect((action.mock.calls[0][0] as FormData).get('nickname')).toBe('Fernie')
+  })
+})
+
+describe('a check the club could not make', () => {
+  test('is said plainly, with the reference the fault was logged against', async () => {
+    availability({ reference: '3f9a1c04' }, 502)
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    const notice = await screen.findByRole('status')
+
+    expect(notice).toHaveTextContent(NOTICE)
+    expect(notice).toHaveTextContent('3f9a1c04')
+  })
+
+  test('says nothing about what failed', async () => {
+    availability({ reference: '3f9a1c04' }, 502)
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    const notice = await screen.findByRole('status')
+
+    // Which fault it was is a log line. The reference is the whole of what a member is given.
+    expect(notice.textContent ?? '').not.toMatch(/API|Django|502|unreachable/i)
+  })
+
+  test('quotes no reference when the browser could not reach the site at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline')
+      }),
+    )
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+
+    const notice = await screen.findByRole('status')
+
+    // There is no line on our side to point anybody at, so none is invented.
+    expect(notice).toHaveTextContent(NOTICE)
+    expect(notice.textContent ?? '').not.toMatch(/reference/i)
+  })
+
+  test('is not a refusal: the field is not marked, and the summary does not list it', async () => {
+    availability({ reference: '3f9a1c04' }, 502)
+
+    const action = renderForm()
+
+    await fill({ 'First name': '' })
+    await screen.findByRole('status')
+    await submit()
+
+    expect(screen.getByLabelText('Nickname')).not.toHaveAttribute('aria-invalid')
+    expect(within(screen.getByRole('alert')).getAllByRole('link')).toHaveLength(1)
+    expect(action).not.toHaveBeenCalled()
+  })
+
+  test('does not stop the member submitting', async () => {
+    availability({ reference: '3f9a1c04' }, 502)
+
+    const action = renderForm()
+
+    await fill()
+    await screen.findByRole('status')
+    await submit()
+
+    /*
+     * Fail open. `/api/members/register` asks the same question inside the transaction that writes,
+     * so the protection is where it has to be — and trapping somebody in a form because a request
+     * failed would cost them the membership to protect a nickname.
+     */
+    expect(action).toHaveBeenCalledTimes(1)
+  })
+
+  test('is tried again when the visitor comes back to the field', async () => {
+    const failing = availability({ reference: '3f9a1c04' }, 502)
+
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Nickname'), 'GreenThumb')
+    await userEvent.tab()
+    await screen.findByRole('status')
+
+    // A failure is not remembered as an answer.
+    await userEvent.click(screen.getByLabelText('Nickname'))
+    await userEvent.tab()
+
+    await waitFor(() => expect(failing).toHaveBeenCalledTimes(2))
   })
 })

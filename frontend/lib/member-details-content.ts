@@ -189,6 +189,29 @@ export const MEMBER_DETAILS_COPY = {
   },
   submit: 'Continue',
   errorSummaryHeading: 'Check these details',
+  /*
+   * Shown beside the nickname when the club could not be asked whether it is free.
+   *
+   * Not a refusal, and worded so that it cannot be mistaken for one: nothing is wrong with the
+   * nickname, nobody knows whether it is spoken for, and the member may carry on regardless. It
+   * says the question is asked again on the way out, because it is — `/api/members/register`
+   * asks inside the transaction that writes, so a member who ignores this is still protected
+   * from taking a name that is not theirs.
+   *
+   * It does not repeat the nickname back, and it does not say what failed. The reference is the
+   * whole of what a member needs to report it, and it says nothing about them.
+   */
+  checkFailed: {
+    nickname:
+      'We could not confirm that nickname just now. Carry on — it is confirmed again when you '
+      + 'continue.',
+    /*
+     * A sentence of its own rather than glued to the message above, because the same reference
+     * wording appears on the screen that replaces the form and the two must read alike.
+     */
+    reference: (reference: string) =>
+      `If you tell the club about this, quote reference ${reference}.`,
+  },
   outcome: {
     heading: 'Thank you',
     body: [
@@ -211,6 +234,18 @@ export const MEMBER_DETAILS_COPY = {
       + 'something you cannot read.',
       'Nothing is wrong with your details. Please try again shortly.',
     ],
+    /*
+     * Added when the failure was a submission that could not be written, rather than documents
+     * that could not be read. Says what the reference is for and, deliberately, that it carries
+     * nothing about the person quoting it — somebody who has just typed an identity number into a
+     * form is owed that assurance before being asked to send us a code about it.
+     *
+     * The same wording as the nickname notice, plus that assurance, because this one is the
+     * screen a member is left on rather than a line beside a field they can carry on past.
+     */
+    reference: (reference: string) =>
+      `If you tell the club about this, quote reference ${reference}. It tells us which fault to `
+      + 'look at, and it says nothing about you or your details.',
   },
   back: 'Back to Cultivators Collective',
 } as const
@@ -233,6 +268,14 @@ export const memberDetailsFieldLabel = (field: MemberDetailsField): string =>
   isMemberConsentField(field)
     ? MEMBER_DETAILS_COPY.consents.agreements[field].label
     : MEMBER_DETAILS_COPY.fields[field].label
+
+/**
+ * A reference of the shape `newErrorReference` mints, for the corpus above.
+ *
+ * Invented here rather than generated: the corpus is read by tests that must not change from one
+ * run to the next, and a random value in it would make a copy check occasionally fail.
+ */
+const SAMPLE_ERROR_REFERENCE = '3f9a1c04'
 
 export const ALL_MEMBER_DETAILS_COPY: readonly string[] = [
   MEMBER_DETAILS_COPY.heading,
@@ -257,6 +300,14 @@ export const ALL_MEMBER_DETAILS_COPY: readonly string[] = [
   ...MEMBER_DETAILS_COPY.outcome.body,
   MEMBER_DETAILS_COPY.unavailable.heading,
   ...MEMBER_DETAILS_COPY.unavailable.body,
+  /*
+   * The two failure messages, rendered with a sample reference. A reference is eight hex
+   * characters, so the rendered line is what the checks have to read: `CURRENCY` looks for a
+   * letter followed by digits, and a message that formatted one carelessly would trip it.
+   */
+  MEMBER_DETAILS_COPY.checkFailed.nickname,
+  MEMBER_DETAILS_COPY.checkFailed.reference(SAMPLE_ERROR_REFERENCE),
+  MEMBER_DETAILS_COPY.unavailable.reference(SAMPLE_ERROR_REFERENCE),
   MEMBER_DETAILS_COPY.back,
   ...MEMBER_DETAILS_REFUSALS.map((reason) =>
     memberDetailsRefusalMessage(reason, formatDateOfBirth({ year: 1990, month: 3, day: 15 })),
