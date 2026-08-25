@@ -29,9 +29,18 @@
 ## Member Portal (f2c-cannabis.co.za)
 
 ### Authentication
-- [ ] Build member login page
-- [ ] Create signup/registration process
-- [ ] Implement secure authentication
+- [x] Build member login page — `/login`, passkey with emailed-code fallback
+- [ ] Create signup/registration process — form built, nothing is stored yet
+- [x] Implement secure authentication — session cookies, CSRF, roles, guarded areas
+- [ ] Configure an email provider — until then the code fallback only works locally
+
+### Member areas
+- [x] Member home (`/member`)
+- [x] Cultivator home (`/cultivator`)
+- [x] Administrator home (`/admin`)
+- [x] Passkey enrolment, listing and revocation
+- [ ] Editing profile details — no screen and no endpoint
+- [ ] Administration screens — nine destinations with no API behind them
 
 ### Notifications
 - [ ] Create notifications page

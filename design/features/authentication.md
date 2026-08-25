@@ -17,7 +17,9 @@ member.** Membership of a cannabis club is sensitive in a way that membership of
 Every endpoint that takes an email address answers an unknown address exactly as it answers a real
 one.
 
-**Status:** complete and tested on the backend. Not reachable from the browser — see section 8.
+**Status:** complete and tested, and reachable from the browser. A member signs in at `/login` and
+lands in their own area. The one thing still missing is an email provider, without which the code
+fallback does not work on a deployed environment — see section 8.
 
 ## 2. The two credentials
 
@@ -151,19 +153,46 @@ sent. Look for the message body in that output.
 Django 6.1 has no async email API, and password hashing is deliberately slow, so both run in a
 worker thread rather than on the event loop.
 
-## 8. What is not built
+## 8. Reaching it from the browser
 
-**The frontend cannot reach any of this.** `components/login-form.tsx` implements the full
-identifier-first flow — passkey with emailed-code fallback — and `components/passkey-manager.tsx`
-implements enrol, list and revoke. Neither is routed. `/login` renders a placeholder card saying
-members will sign in there once the club opens.
+`/login` renders `components/Auth/SignInForm.tsx`, which runs the identifier-first flow above:
+an address, then a passkey challenge or the code step, with a failed passkey offering the code as
+an explicit fallback rather than silently swapping the form out.
 
-There is no member area, so there is nowhere to enrol a passkey from even once sign-in works.
+A member who signs in lands on their own area — `/member`, `/cultivator` or `/admin`, chosen from
+the `role` the sign-in endpoint returns. Each of those carries a passkey card, so enrolling one is
+reachable from the moment a member first gets in with a code. See `frontend.md` section 4.
 
-Neither component has tests, unlike the rest of `components/`.
+The three components that were written but unrouted have been replaced rather than wired up as they
+stood. They predated the layered structure, used a different naming convention and had no tests:
+
+| Was | Is now |
+| --- | --- |
+| `components/login-form.tsx` | `components/Auth/SignInForm.tsx`, with the rules in `lib/sign-in.ts` and the copy in `lib/sign-in-content.ts` |
+| `components/passkey-manager.tsx` | `components/Account/PasskeyCard.tsx` and `PasskeyList.tsx`, with the rules in `lib/passkeys.ts` |
+| `components/sign-out-button.tsx` | `components/Club/SignOutButton.tsx` |
+
+All of them now have colocated tests, which closes risk 4.
+
+**A defect the rewrite found.** `passkey-manager.tsx` read `browserSupportsWebAuthn()` during
+render. That component is server-rendered before it reaches a browser, and on the server there is
+no `navigator` to ask — so the capability answered *no* for every browser alive, and the server HTML
+of a perfectly capable machine said *this browser cannot create passkeys*. The check now starts
+optimistic and an effect corrects it after mount. Optimistic rather than pessimistic because the two
+are not symmetrical: a capable browser briefly told it cannot is a member who gives up on a working
+feature, while an incapable one briefly offered the button gets a refusal it can act on.
+
+### What is still not built
 
 **No email provider is configured.** Until one is, no member can sign in on a deployed environment
-at all, because the code is printed to a server console nobody is reading.
+at all, because the code is printed to a server console nobody is reading. This is the single thing
+between the feature and a working sign-in on QA.
+
+**Nothing enrols a passkey without a code first.** By design — see section 5 — but it means the
+email provider gates passkeys too, not only the fallback.
+
+**Staff password sign-in is still unrestricted.** `POST /api/auth/login` is not offered by the
+frontend and is not limited to staff either. See risk 5.
 
 ## 9. A defect worth recording
 
@@ -193,5 +222,5 @@ unreachable from the browser too, so no manual testing would have found it eithe
 | 1 | Rate limits are per worker with the default cache, so a multi-worker deployment multiplies every limit — including the one bounding outbound email. | Open — blocks production |
 | 2 | No email provider. The only route into a new account does not work on a deployed environment. | Open — blocks production |
 | 3 | `login/start` reveals which addresses have a passkey. Inherent to identifier-first flows. | Accepted |
-| 4 | The authenticated components are untested and unrouted. Wiring them up without tests moves that debt into the member-facing product. | Open |
+| 4 | The authenticated components are untested and unrouted. Wiring them up without tests moves that debt into the member-facing product. | Closed — rewritten to the component conventions with tests, and routed. See section 8 |
 | 5 | Staff password sign-in remains at `POST /api/auth/login`. It is not offered by the frontend but it is not restricted to staff either — an Active member with a usable password could use it. Members are created with an unusable password, so this is currently unreachable rather than closed. | Open — worth an explicit `is_staff` check |

@@ -513,6 +513,28 @@ answer would be a round trip on every page that renders a menu.
 **It is for rendering, never for deciding.** Every endpoint checks the permission itself. A list in a
 browser is a hint about what to draw, and the type in `frontend/lib/api.ts` says so.
 
+### What the frontend does with it
+
+`frontend/lib/club-navigation.ts` is the whole of the frontend's use of this payload: a catalogue of
+destinations, each carrying one `platform.*` codename, filtered by the set on the session and banded
+into sections. `role` is not consulted anywhere in that module. The three home pages differ by two
+sentences of copy; everything below the greeting is this catalogue, so an administrator's screen is
+the same component rendering a different subset.
+
+The bands are drawn around **who holds what** rather than around subject matter, which was a
+correction rather than the first instinct. Filing "browse the catalogue" under plants and "reviews"
+under growing reads perfectly well until you notice that all three roles hold
+`platform.browse_catalogue` and that administrators hold `platform.respond_to_reviews` too — at
+which point a cultivator gets a band headed *Plants and orders* holding one browse link, and an
+administrator gets one headed *Growing* holding nothing they grow.
+
+A contract test in `club-navigation.test.ts` reads `app/accounts/roles.py` as text and fails on any
+codename this file does not grant. A codename that Django does not recognise grants nothing, so the
+destination would simply never appear for anybody — a defect no amount of rendering will surface.
+
+`role` is used for exactly one thing: choosing which of the three homes an account lands on. That
+lives in `frontend/lib/club-roles.ts` and maps `sharing_member` to no home at all.
+
 A sharing member cannot reach this payload — no email address, and a constraint keeps the role out of
 `active`, so no session can belong to one. The `role` and `status` unions in `frontend/lib/api.ts`
 admit both values anyway, because the type describes the column rather than the subset a browser
@@ -527,7 +549,7 @@ The roles, the catalogue and the enforcement path are built and tested. Nothing 
 | Plants, strains, batches, listings, pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue names actions with nothing to perform them against. The codenames are the requirement on the record, not working features |
 | The cultivator organisation | There is no `CultivatorProfile`, no membership or appointment table, and no primary-versus-full-versus-limited rights. `platform.appoint_cultivator_staff` is listed and cannot yet be exercised. Deferred on purpose: built against features that do not exist, its shape would be a guess |
 | Object-level rules | "A cultivator's own listings", "a member's own inventory", "the primary cultivator" — all of them need the model they are scoped to. `RoleBackend` refuses object-level questions rather than answering them wrongly |
-| Any authenticated frontend page | The member portal is not routed (`design/frontend.md` section 9), so nothing renders from `permissions` yet |
+| ~~Any authenticated frontend page~~ | **Built.** `/member`, `/cultivator` and `/admin` render from `permissions`, never from `role` — `frontend/lib/club-navigation.ts` maps each `platform.*` codename to a destination, and a contract test reads this file as text so a renamed codename cannot quietly empty a menu. Almost every destination is marked *Not built yet*, which is the rest of this table |
 | Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action, because there is no endpoint whose action is in the catalogue. The mechanism is tested directly instead |
 | The four-plant allocation, and the cap | `SHARING_MEMBER_PLANT_ALLOCATION` is `4` and is enforced nowhere, because there is no plant to count. `register_sharing_member` returns the number; it cannot create the stock |
 | A sharing member's stock in the swap zone | The whole point of the role, and entirely unbuilt. There is no swap zone |
