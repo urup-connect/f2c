@@ -19,3 +19,8 @@ django-storages[azure]>=1.14,<2.0
 # application settings. Imported only when no key, SAS token or connection
 # string is configured -- see documents/storage.py.
 azure-identity>=1.19
+# Decoding and re-encoding member avatars (accounts/avatars.py). Every uploaded
+# image is decoded and written back out by Pillow rather than stored as it
+# arrived, which is what strips EXIF and refuses a file that only claims to be
+# an image.
+pillow>=11.0

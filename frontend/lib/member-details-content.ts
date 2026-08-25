@@ -93,10 +93,18 @@ const REFUSAL_MESSAGES = {
     + 'version, then tick to agree.',
 } as const satisfies Record<MemberDetailsRefusal, string | ((dateOfBirth: string) => string)>
 
-/** The message for a refusal. `dateOfBirth` is used by the one message that names it. */
+/**
+ * The message for a refusal. `dateOfBirth` is used by the one message that names it.
+ *
+ * Optional, and defaulted to blank, so that a caller whose refusals cannot include
+ * `id-date-mismatch` need not invent a date to ask a question about a name. `lib/profile.ts` is
+ * that caller: its refusal union is a subset of this one and contains no message that names a
+ * value, which the compiler checks. Sign-up still passes the date, because sign-up can reach the
+ * message that needs it.
+ */
 export const memberDetailsRefusalMessage = (
   reason: MemberDetailsRefusal,
-  dateOfBirth: string,
+  dateOfBirth = '',
 ): string => {
   const message = REFUSAL_MESSAGES[reason]
 

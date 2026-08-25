@@ -65,8 +65,8 @@ class UserAdmin(BaseUserAdmin):
 
     readonly_fields = (
         'id', 'is_active', 'role_permissions', 'groups', 'id_number_masked',
-        'email_hash', 'id_number_hash', 'last_login', 'created_at',
-        'updated_at', 'deleted_at',
+        'email_hash', 'id_number_hash', 'avatar', 'avatar_updated_at',
+        'last_login', 'created_at', 'updated_at', 'deleted_at',
     )
     # `groups` is read-only above, so it needs no picker. Leaving it in
     # filter_horizontal would only render a widget nobody can use.
@@ -124,6 +124,19 @@ class UserAdmin(BaseUserAdmin):
                 'automatically, so it cannot be edited here. To change what a '
                 'whole role may do, edit the group itself under '
                 'Authentication and Authorisation.'
+            ),
+        }),
+        ('Photograph', {
+            'classes': ('collapse',),
+            'fields': ('avatar', 'avatar_updated_at'),
+            'description': (
+                'The member’s own photograph, which they set on their profile '
+                'screen. Read-only here: every stored avatar is a 512-pixel '
+                'square JPEG that accounts.avatars produced by decoding and '
+                're-encoding the upload, which is what strips the EXIF a phone '
+                'photograph carries — including where it was taken. A file '
+                'placed here by hand would bypass all of that. To remove one, '
+                'use the member’s profile screen or accounts.profile.'
             ),
         }),
         ('Record', {
@@ -191,16 +204,22 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.display(description='ID number', ordering=None)
     def id_number_masked(self, obj):
-        """Enough to confirm which document is on file, and no more."""
+        """Enough to confirm which document is on file, and no more.
+
+        Delegates to ``User.id_number_masked``, which is
+        ``common.validators.mask_id_number``. It was this method's own rule
+        until a member became able to see their own number on the profile
+        screen; two maskings of one field is one of them eventually showing
+        more than the other meant to.
+        """
         if not obj.has_id_number:
             return '--'
         try:
-            number = obj.id_number
+            return obj.id_number_masked
         except crypto.DecryptionError:
             # Surfaced rather than hidden: a row that will not decrypt is a
             # key or integrity problem someone has to look at.
             return 'UNREADABLE'
-        return f'{"*" * max(0, len(number) - 4)}{number[-4:]}'
 
     def get_search_results(self, request, queryset, search_term):
         """Extend the search to exact ID numbers via the blind index.

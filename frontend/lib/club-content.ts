@@ -58,21 +58,125 @@ export const CLUB_HOMES_COPY = {
 export const DETAILS_CARD = {
   heading: 'Your details',
   /**
-   * Said plainly rather than left to be inferred from a missing button. There is no screen to
-   * change these on yet, and a member who cannot find one should be told why rather than hunt.
+   * This used to say that changing these was not possible and to ask the club. Two of the four
+   * rows can now be changed on /profile, so the note is a link rather than an apology — and it
+   * still says which rows cannot, because a member who goes looking for the email address on that
+   * screen and does not find it has been sent on a wasted trip.
    */
-  note:
-    'Changing these is not yet possible here. Ask the club and an administrator will amend the ' +
-    'record.',
+  note: 'Your name and mobile number are yours to change.',
+  /** Where the note leads. The label is the link text, so it reads as a destination. */
+  editLabel: 'Edit your profile',
+  /**
+   * The two rows /profile shows and will not change, said here so the details card can point at
+   * the right screen without promising more than it delivers.
+   */
+  fixedNote:
+    'Your nickname and email address are changed by the club. Ask an administrator and they will ' +
+    'amend the record.',
   labels: {
     name: 'Name',
     nickname: 'Nickname',
     email: 'Email address',
     mobile: 'Mobile number',
-    dateOfBirth: 'Date of birth',
   },
   /** What a field says when the club holds nothing in it. */
   blank: 'Not on file',
+} as const
+
+/**
+ * The profile screen: the fields a member may change, the two they may only read, and their
+ * photograph.
+ *
+ * Grouped by what a member can do with each rather than by which column it came from, which is why
+ * the date of birth and the identity number share a card with a heading that says so. A screen
+ * that mixed the two would have a member trying to correct a field that has no input.
+ */
+export const PROFILE_COPY = {
+  title: 'Your profile',
+  heading: 'Your profile',
+  standfirst:
+    'What the club holds about you, and the parts of it you can change yourself. Everything here ' +
+    'is yours alone — no other member sees it.',
+  /** The card with the three editable fields. */
+  details: {
+    heading: 'Your details',
+    firstNameLabel: 'First name',
+    lastNameLabel: 'Last name',
+    mobileLabel: 'Mobile number',
+    mobileHint: 'A South African mobile number. The club uses it to reach you, never to sign you in.',
+    /**
+     * The two the screen shows and will not change. Shown rather than omitted because a member
+     * came here to check what the club holds, and leaving them off would send them back to their
+     * home page to read the other half of their own record.
+     */
+    fixedHeading: 'Changed by the club',
+    fixedNote:
+      'Your nickname is how other members know you, and your email address is how you sign in. ' +
+      'Ask an administrator to change either.',
+    nicknameLabel: 'Nickname',
+    emailLabel: 'Email address',
+    blank: 'Not on file',
+    save: 'Save changes',
+    saving: 'Saving…',
+    saved: 'Your details are saved.',
+    unchanged: 'Nothing has changed yet.',
+    errorSummaryHeading: 'Your details could not be saved',
+  },
+  /** The card with the two fields taken from an identity document. */
+  identity: {
+    heading: 'From your ID',
+    /**
+     * Why these two have no inputs, said rather than left to be inferred from their absence. A
+     * member who cannot see a way to correct their own date of birth should be told why.
+     */
+    standfirst:
+      'These came from the identity document you gave when you joined, so they are not yours to ' +
+      'retype here. If either is wrong, ask an administrator — they will need to see the document.',
+    dateOfBirthLabel: 'Date of birth',
+    idNumberLabel: 'Identity number',
+    /** Said beside the masked number, so the hidden digits read as deliberate. */
+    idNumberNote: 'Only the last four digits are shown. The club stores the rest encrypted.',
+    verifiedLabel: 'Checked against a document',
+    /**
+     * What the verification line says when nothing has been checked. Registration does not
+     * inspect a document, so this is the normal state and it must not read as a fault.
+     */
+    unverified: 'Not yet checked against a document.',
+    unreadable:
+      'The club holds a document number it cannot currently read. Please contact an administrator.',
+    blank: 'Not on file',
+  },
+  /** The card holding the photograph, its cropper and its buttons. */
+  photograph: {
+    heading: 'Your photograph',
+    standfirst:
+      'A picture of you, so other members recognise you. Square, and you choose which part of the ' +
+      'image is used.',
+    empty: 'No photograph yet.',
+    /** Read by a screen reader in place of the image itself. */
+    imageAlt: 'Your photograph',
+    choose: 'Choose an image',
+    replace: 'Choose a different image',
+    remove: 'Remove',
+    removing: 'Removing…',
+    upload: 'Save photograph',
+    uploading: 'Saving…',
+    cancel: 'Cancel',
+    /** The cropper. */
+    cropHeading: 'Choose what to show',
+    cropHint:
+      'Drag the image to move it, and use the slider to zoom. What sits inside the square is what ' +
+      'the club keeps.',
+    zoomLabel: 'Zoom',
+    /** Said out loud, because it is the surprising part of a crop. */
+    cropNote: 'Only the square is kept. The rest of the image is never uploaded.',
+    /** Keyboard equivalents for the drag, announced where a mouse user would not need them. */
+    keyboardHint: 'With the image focused, the arrow keys move it and plus and minus zoom.',
+    tooLarge: 'That image is too large. Choose one under 8 MB.',
+    notAnImage: 'That file is not an image. Choose a JPEG, PNG or WebP.',
+    unreadable: 'That image could not be read. It may be damaged.',
+    failed: 'Your photograph could not be saved just now. Try again.',
+  },
 } as const
 
 /** The card describing the standing of the membership itself. */
@@ -145,8 +249,16 @@ export const ALL_CLUB_COPY: readonly string[] = [
   ...Object.values(CLUB_HOMES_COPY).flatMap((home) => Object.values(home)),
   DETAILS_CARD.heading,
   DETAILS_CARD.note,
+  DETAILS_CARD.editLabel,
+  DETAILS_CARD.fixedNote,
   DETAILS_CARD.blank,
   ...Object.values(DETAILS_CARD.labels),
+  PROFILE_COPY.title,
+  PROFILE_COPY.heading,
+  PROFILE_COPY.standfirst,
+  ...Object.values(PROFILE_COPY.details),
+  ...Object.values(PROFILE_COPY.identity),
+  ...Object.values(PROFILE_COPY.photograph),
   MEMBERSHIP_CARD.heading,
   MEMBERSHIP_CARD.roleLabel,
   MEMBERSHIP_CARD.statusLabel,

@@ -40,6 +40,10 @@ const ERASED: User = {
 
 const rowFor = (user: User, key: string) => detailRows(user).find((row) => row.key === key)
 
+/*
+ * `formatIsoDate` outlives the row that used it: the profile screen formats the same date. Kept
+ * here rather than moved, because this is the module that exports it.
+ */
 describe('formatIsoDate', () => {
   test('writes a date the way a South African reader writes one', () => {
     expect(formatIsoDate('1990-03-15')).toBe('15 March 1990')
@@ -84,7 +88,6 @@ describe('detailRows', () => {
       'nickname',
       'email',
       'mobile',
-      'dateOfBirth',
     ])
   })
 
@@ -92,7 +95,20 @@ describe('detailRows', () => {
     expect(rowFor(MEMBER, 'nickname')?.value).toBe('greenfingers')
     expect(rowFor(MEMBER, 'email')?.value).toBe('thandi@example.co.za')
     expect(rowFor(MEMBER, 'mobile')?.value).toBe('+27821234567')
-    expect(rowFor(MEMBER, 'dateOfBirth')?.value).toBe('15 March 1990')
+  })
+
+  test('does not carry the date of birth, which belongs to the profile screen', () => {
+    /*
+     * It was the last row here, and the reasoning for that placement -- the one thing on the card
+     * nobody can change by asking -- is what moved it. A card whose every row a member can now go
+     * and correct should not have one row that behaves differently; the honest home for a
+     * read-only fact taken off an identity document is beside the identity number it came from.
+     *
+     * Asserted on the whole serialised row set rather than on one lookup, so a row added back
+     * under a different key fails this too.
+     */
+    expect(rowFor(MEMBER, 'dateOfBirth')).toBeUndefined()
+    expect(JSON.stringify(detailRows(MEMBER))).not.toMatch(/birth|1990/i)
   })
 
   test('says a blank field is blank rather than rendering an empty line', () => {

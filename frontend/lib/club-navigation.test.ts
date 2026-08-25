@@ -215,12 +215,41 @@ describe('sectionsFor', () => {
 })
 
 describe('navigableFor', () => {
-  test('offers nothing while nothing behind a destination is built', () => {
-    // Section 13 of the roles document: none of the models these act on exist. The
-    // header renders no nav at all rather than a row of dead links, and this test
-    // changes on the day the first screen lands.
-    expect(navigableFor(ADMIN)).toEqual([])
-    expect(navigableFor(CULTIVATOR)).toEqual([])
-    expect(navigableFor(MEMBER)).toEqual([])
+  /*
+   * This block used to assert that every role was offered nothing at all, and said it would change
+   * on the day the first screen landed. That day was the profile screen. It is the only destination
+   * with an `href`, so the assertions below are the same claim from the other side: exactly one,
+   * the same one for all three roles, and nothing else has quietly acquired a route.
+   */
+  test('offers the profile, to every role that can sign in', () => {
+    // All three hold `manage_own_profile` -- see ROLE_PERMISSIONS in accounts/roles.py -- so all
+    // three get the same single link. A role that stopped holding it would lose it here.
+    for (const permissions of [ADMIN, CULTIVATOR, MEMBER]) {
+      expect(navigableFor(permissions).map((destination) => destination.key)).toEqual([
+        'own-profile',
+      ])
+    }
+  })
+
+  test('offers nothing else, because nothing else is built', () => {
+    /*
+     * Section 13 of the roles document: none of the models the other destinations act on exist. The
+     * assertion is on the catalogue rather than on one role's list, so a second `href` added
+     * anywhere fails here -- which is the point. The header renders links from this and nothing
+     * else, so an href pointing at a route that does not exist becomes a 404 in the bar on every
+     * signed-in screen.
+     */
+    const ready = CLUB_DESTINATIONS.filter((destination) => destination.href !== null)
+
+    expect(ready.map((destination) => destination.key)).toEqual(['own-profile'])
+    // `state` and `href` are two fields that have to agree. A `ready` destination with no href
+    // renders as inert text; a `planned` one with an href renders as a link marked "not built yet".
+    for (const destination of CLUB_DESTINATIONS) {
+      expect(destination.state === 'ready', destination.key).toBe(destination.href !== null)
+    }
+  })
+
+  test('points the profile at the route that actually exists', () => {
+    expect(navigableFor(MEMBER)[0].href).toBe('/profile')
   })
 })

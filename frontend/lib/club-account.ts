@@ -10,7 +10,10 @@
  *   field here has to survive being empty — it cannot sign in, so this is a contract rather than a
  *   screen anyone will see, and the contract is what stops a future caller assuming otherwise;
  * * the identity number is not here and must never be. It is encrypted at rest, it is not in
- *   `UserOut`, and there is nothing on a home page that needs it.
+ *   `UserOut`, and there is nothing on a home page that needs it. The profile screen shows a
+ *   masked form of it, fetched from an endpoint of its own — see `lib/profile.ts`;
+ * * the date of birth is not here either, and that is a move rather than a rule. It lives on
+ *   /profile with the document it came from. `formatIsoDate` stays because that screen needs it.
  */
 
 import type { User } from './api'
@@ -62,19 +65,22 @@ export const fullName = (user: User): string | null =>
 /**
  * The details card, in reading order.
  *
- * Name first, because it is what the member checks. Date of birth last, because it is the one
- * thing on here nobody can change by asking.
+ * Name first, because it is what the member checks.
+ *
+ * **The date of birth is deliberately not here.** It was, and it was the last row for a
+ * defensible reason — it is the one thing on the card nobody can change by asking. Moving it to
+ * /profile is that reasoning followed through rather than reversed: a card whose every row a
+ * member can now go and correct is a card with one row that behaves differently, and the honest
+ * place for a read-only fact taken off an identity document is beside the identity number it was
+ * taken from. `formatIsoDate` stays here, and the profile screen is what calls it.
+ *
+ * Four rows rather than five also lets the card sit at two columns without a widow.
  */
 export const detailRows = (user: User): readonly DetailRow[] => [
   { key: 'name', label: DETAILS_CARD.labels.name, value: fullName(user) },
   { key: 'nickname', label: DETAILS_CARD.labels.nickname, value: held(user.nickname) },
   { key: 'email', label: DETAILS_CARD.labels.email, value: held(user.email) },
   { key: 'mobile', label: DETAILS_CARD.labels.mobile, value: held(user.mobile) },
-  {
-    key: 'dateOfBirth',
-    label: DETAILS_CARD.labels.dateOfBirth,
-    value: formatIsoDate(user.date_of_birth),
-  },
 ]
 
 /** The standing of the membership, as a label and the sentence that explains it. */

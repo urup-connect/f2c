@@ -3,12 +3,6 @@
 ## Public Website (f2c.co.za)
 
 ### Product Catalog
-- [ ] Create Billing category page
-- [ ] Create Fruit category page
-- [ ] Create Vegetables category page
-- [ ] Create Nuts category page
-- [ ] Create Dried category page
-- [ ] Create Honey category page
 - [ ] Create Cannabis category page
 
 ### Landing Page

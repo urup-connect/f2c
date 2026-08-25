@@ -19,11 +19,16 @@ type ClubHeaderProps = {
  * Forest green, which is what separates the club from the cream public product at a glance — a
  * member should be able to tell whether they are signed in without reading anything.
  *
+
  * **The nav renders nothing while there is nowhere to go.** Not an empty `nav` element, and not a
- * row of disabled links: `navigableFor` returns only destinations with a real `href`, and today
- * that is none of them. A landmark containing nothing is a landmark a screen-reader user is invited
- * into for no reason. What the account may eventually do is on the page itself, in tiles that say
- * so. The bar starts carrying links on its own the day the first destination gains one.
+ * row of disabled links: `navigableFor` returns only destinations with a real `href`. A landmark
+ * containing nothing is a landmark a screen-reader user is invited into for no reason. What the
+ * account may eventually do is on the page itself, in tiles that say so.
+ *
+ * That day has arrived, and nothing here changed to meet it: `own-profile` gained an `href` in
+ * `club-navigation.ts` and the bar started carrying one link. This component was written for it and
+ * needed no edit — which is the whole reason the nav reads from the catalogue rather than listing
+ * routes of its own.
  */
 export const ClubHeader = ({ displayName, homeHref, navigable }: ClubHeaderProps) => (
   <header className="bg-forest-green">

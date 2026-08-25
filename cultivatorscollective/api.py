@@ -12,6 +12,7 @@ with ``auth=None``. django-ninja's cookie auth also enforces CSRF on unsafe
 methods, which is mandatory here because authentication is cookie-based rather
 than token-based.
 """
+from app.accounts.api import router as accounts_router
 from app.authn.api import router as authn_router
 from django.conf import settings
 from app.documents.api import router as documents_router
@@ -28,6 +29,12 @@ api = NinjaAPI(
     docs_url='/docs' if settings.DEBUG else None,
 )
 
+# A member's own profile: the fields they may change, the two they may only
+# read, and their photograph. Every endpoint is about request.user and none
+# takes an account identifier -- see accounts/api.py on why that is the design
+# rather than an omission. /accounts/me/avatar is the only endpoint on this API
+# that answers with something other than JSON.
+api.add_router('/accounts', accounts_router)
 # Passkeys, emailed codes and sessions.
 api.add_router('/auth', authn_router)
 # Club documents. /documents/current is unauthenticated: sign-up has to read it

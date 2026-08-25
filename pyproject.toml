@@ -15,7 +15,8 @@ dependencies = [
     "webauthn (>=2.5,<3.0)",
     "cryptography (>=45.0)",
     "django-storages[azure] (>=1.14,<2.0)",
-    "azure-identity (>=1.19)"
+    "azure-identity (>=1.19)",
+    "pillow (>=11.0)"
 ]
 
 

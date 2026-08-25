@@ -18,8 +18,11 @@
  * and a tile that says so is worth more than a tile missing altogether: it tells a cultivator what
  * the club intends them to be able to do, and it tells the next developer where the screen goes.
  *
- * When a feature lands, one entry gains an `href` and changes state. Nothing else moves.
+ * When a feature lands, one entry gains an `href` and changes state. Nothing else moves. That has
+ * now happened once — `own-profile` — so the claim is tested rather than promised.
  */
+
+import { PROFILE_PATH } from './club-roles'
 
 /**
  * Whether there is somewhere to go yet.
@@ -368,13 +371,20 @@ export const CLUB_DESTINATIONS = [
 
   /* ----------------------------------------------------------- account */
   {
+    /*
+     * The first destination to land, and the one that proves the shape works: one entry gained an
+     * `href` and changed state, and nothing else in this file moved. The header's nav starts
+     * rendering on its own as a consequence -- see `ClubHeader`, which was written waiting for
+     * exactly this.
+     */
     key: 'own-profile',
     label: 'Your profile',
-    description: 'Your name, nickname, email address, mobile number and picture.',
+    description:
+      'Your name and mobile number, your photograph, and what the club holds from your ID.',
     permission: 'platform.manage_own_profile',
     section: 'account',
-    state: 'planned',
-    href: null,
+    state: 'ready',
+    href: PROFILE_PATH,
   },
   {
     key: 'support',

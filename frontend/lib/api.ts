@@ -115,11 +115,20 @@ export type LoginStart = {
   options: PublicKeyCredentialRequestOptionsJSON | null;
 };
 
-/** A non-2xx response from Django, carrying its status and message. */
+/**
+ * A non-2xx response from Django, carrying its status, its message and its body.
+ *
+ * `body` is the parsed JSON, when there was any, and `null` otherwise. It exists because
+ * django-ninja error responses are not all one shape: most carry only `{"detail": "..."}`, which
+ * `message` already holds, but some carry a refusal per field -- see `ProfileRefusedOut` -- and
+ * without this the caller would have to choose between `apiFetch` and reading the body. Typed as
+ * `unknown`, so a caller that wants it has to narrow it deliberately.
+ */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body: unknown = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -137,7 +146,7 @@ export async function unwrap<T>(response: Response): Promise<T> {
       (parsed && typeof parsed === "object" && "detail" in parsed
         ? String((parsed as { detail: unknown }).detail)
         : null) ?? `Request failed with status ${response.status}`;
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, parsed);
   }
 
   return parsed as T;

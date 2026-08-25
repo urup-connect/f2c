@@ -67,3 +67,102 @@ class UserOut(Schema):
         -- a synchronous ORM call there raises ``SynchronousOnlyOperation``.
         """
         return sorted(permissions_for(obj))
+
+
+class ProfileOut(Schema):
+    """A member's own record, as the profile screen reads it.
+
+    Separate from ``UserOut`` rather than an extension of it, and the reason is
+    the two fields at the bottom. ``UserOut`` is what every signed-in page
+    receives on every request through ``/api/auth/me``; this is what one screen
+    asks for when a member opens it. Folding these in would put a decryption and
+    an avatar lookup on the path of every page render, to serve a field almost
+    none of them draws.
+
+    ``permissions`` is absent for the same reason in reverse: this screen renders
+    no menu, and the session it belongs to already carries the list.
+
+    ``id_number_masked`` is the only form the identity number takes here, and
+    ``accounts.profile`` has no way to produce any other -- see ``profile_of``.
+    All but the last four digits are replaced, which is enough for the owner to
+    recognise their document and useless to anybody who intercepts the response.
+    An RSA number's last four are the citizenship digit, a legacy digit and the
+    Luhn check digit, so they disclose neither the date of birth nor the
+    gender-ordered sequence the leading ten carry.
+
+    ``avatar_url`` is a path on this API, never a storage address. The avatars
+    container is private and has no public URL; the only way to a photograph is
+    the endpoint that checks the session first. It carries a version so that a
+    replaced photograph is fetched rather than served from the browser's cache,
+    every avatar being written to the same path.
+    """
+
+    first_name: str
+    last_name: str
+    # Shown but not editable here: it is unique across the club and other
+    # members know each other by it, so changing one is a club-facing act.
+    nickname: str
+    # Shown but not editable here: it is the sign-in identifier, and swapping it
+    # needs proof that the new address receives mail.
+    email: str | None
+    # `+27` and nine digits, or blank.
+    mobile: str
+    display_name: str
+    # Read-only, both of them. Taken from an identity document at sign-up, so a
+    # field the member could retype is a field `date_of_birth_verified_at` would
+    # no longer be telling the truth about.
+    date_of_birth: date | None
+    date_of_birth_verified_at: datetime | None
+    has_id_number: bool
+    # All but the last four digits replaced with `*`. Blank when none is on
+    # file, and the literal 'UNREADABLE' for a row that will not decrypt --
+    # surfaced rather than reported as absent, because a member told the club
+    # holds no document when it holds one it cannot read would go and send it
+    # again. See `accounts.profile.UNREADABLE_ID_NUMBER`.
+    id_number_masked: str
+    has_avatar: bool
+    # Null when there is no photograph, so the screen draws initials rather than
+    # requesting an address that would 404.
+    avatar_url: str | None
+    role: str
+    status: str
+
+
+class ProfileIn(Schema):
+    """The three fields a member may change about themselves.
+
+    Every field is required, and none is optional-with-a-default. This is a
+    replace rather than a patch: a form that sends two of three fields and has
+    the third left alone is a form whose behaviour depends on what the browser
+    chose to omit, and the failure mode is a member's surname quietly surviving
+    a rename. The screen holds all three, so it sends all three.
+
+    A blank ``mobile`` is accepted and clears the column. A member who no longer
+    has the handset they gave should be able to say so, rather than leave a
+    number on file for the club to ring.
+
+    Not here, deliberately: ``nickname``, ``email``, ``date_of_birth`` and the
+    identity number. ``accounts.profile`` says why for each.
+    """
+
+    first_name: str
+    last_name: str
+    mobile: str = ''
+
+
+class ProfileRefusedOut(Schema):
+    """Why a profile write was refused.
+
+    ``detail`` is a sentence for whoever is calling the endpoint directly.
+    ``fields`` is the same refusal per field, which is what the form renders
+    against each input -- the frontend validates all three itself, so a member
+    only meets this if the two rule sets have drifted, and naming the field is
+    what makes that drift findable rather than mysterious.
+
+    ``mobile_unavailable`` marks the one refusal that is not about the value: the
+    number is well formed and belongs to another account.
+    """
+
+    detail: str
+    fields: dict[str, list[str]] = {}
+    mobile_unavailable: bool = False

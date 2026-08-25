@@ -35,6 +35,36 @@ def normalise_id_number(value):
     return _DIGITS_ONLY.sub('', str(value or '')).strip()
 
 
+#: How many digits of an identity number are shown when it is masked. Four is
+#: enough for the owner to recognise their own document and useless to anybody
+#: else: an RSA ID's last four are the citizenship digit, a legacy digit and the
+#: Luhn check digit, so they disclose neither the date of birth nor the
+#: gender-ordered sequence that the leading ten do.
+ID_NUMBER_VISIBLE_DIGITS = 4
+
+
+def mask_id_number(value):
+    """An identity number with all but its last four digits replaced.
+
+    The one implementation, used by the Django admin and by the profile endpoint
+    alike. It was the admin's own method first; it moved here when a member
+    became able to see their own number, because two maskings of the same field
+    is one of them eventually showing more than the other meant to.
+
+    Not a security boundary -- a masked number is still four digits of a real
+    one -- but it is the difference between a leaked response disclosing a
+    document number and disclosing that a document number exists.
+
+    Takes the plaintext. Nothing here decrypts, so a caller has to have read
+    ``User.id_number`` deliberately.
+    """
+    digits = normalise_id_number(value)
+    if not digits:
+        return ''
+    hidden = max(0, len(digits) - ID_NUMBER_VISIBLE_DIGITS)
+    return '{}{}'.format('*' * hidden, digits[hidden:])
+
+
 def luhn_is_valid(digits):
     """Standard Luhn check over the whole string, check digit included."""
     total = 0

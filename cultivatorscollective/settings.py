@@ -18,6 +18,7 @@ from django.core.exceptions import ImproperlyConfigured
 # Safe to import here: it reads an environment mapping and touches no model and
 # no setting, so it does not need the app registry that this file is loaded to
 # build. See its module docstring for why the reader lives there and not here.
+from app.accounts.storage import avatars_storage_config
 from app.documents.storage import documents_storage_config
 from app.payments.gateway import payfast_config
 
@@ -300,11 +301,27 @@ STORAGES = {
     # land in the container the CDN serves to the public. Azure Blob Storage when
     # DJANGO_DOCUMENT_STORAGE_CONTAINER is set, local disk otherwise.
     'documents': documents_storage_config(os.environ, debug=DEBUG),
+    # Member avatars, and the reason there is a third alias rather than a second
+    # use of 'documents'. A club document is published to everybody; an avatar is
+    # a photograph of somebody's face. This container is private, has no CDN in
+    # front of it and no URL at all -- GET /api/accounts/me/avatar checks the
+    # session and streams the bytes. accounts/storage.py refuses a configuration
+    # that names the documents container here, because that mistake would publish
+    # every member's photograph. Azure Blob Storage when
+    # DJANGO_AVATAR_STORAGE_CONTAINER is set, local disk otherwise.
+    'avatars': avatars_storage_config(os.environ),
 }
 
-# Only reached by the filesystem fallback above. Served by runserver under
+# Only reached by the filesystem fallbacks above. Served by runserver under
 # DEBUG (see the project URLconf); a deployment with no container configured
 # needs a real web server on this path.
+#
+# Avatars land here too when no avatar container is configured, and under DEBUG
+# that means runserver's static handler will serve one to anybody who guesses
+# the path. Acceptable in local development and nowhere else: a deployment
+# either configures a private container or puts a web server on this path that
+# does not serve the avatars prefix. Recorded here rather than left to be
+# discovered.
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
@@ -401,6 +418,16 @@ NINJA_DEFAULT_THROTTLE_RATES = {
     # token. See payments/throttles.py -- and note that the Payfast
     # notification endpoint is deliberately not listed here at all.
     'checkout': '30/m',
+    # Uploading an avatar. Keyed on the account rather than the IP, which is
+    # what the rest of this list cannot do -- these endpoints need a session.
+    # Tight because each request decodes and re-encodes an image up to 8MB,
+    # which is the most expensive thing a member can ask this API to do, and
+    # nothing legitimate replaces a photograph ten times a minute. See
+    # accounts/throttles.py.
+    'avatar_upload': '10/m',
+    # Writing the three editable profile fields. Cheap, but a member editing
+    # their own record has no reason to save it thirty times a minute either.
+    'profile_write': '20/m',
 }
 
 

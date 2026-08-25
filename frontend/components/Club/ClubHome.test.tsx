@@ -82,7 +82,19 @@ describe('the cards', () => {
 
     expect(screen.getByRole('region', { name: DETAILS_CARD.heading })).toBeInTheDocument()
     expect(screen.getByText('Thandi Mokoena')).toBeInTheDocument()
-    expect(screen.getByText('15 March 1990')).toBeInTheDocument()
+    expect(screen.getByText('greenfingers')).toBeInTheDocument()
+  })
+
+  test('does not show the date of birth, and points at where it lives', () => {
+    renderHome()
+
+    // The card is now four rows and a link. The date is on /profile, beside the identity number it
+    // was taken from.
+    expect(screen.queryByText('15 March 1990')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: DETAILS_CARD.editLabel })).toHaveAttribute(
+      'href',
+      '/profile',
+    )
   })
 
   test('shows how the account stands', () => {

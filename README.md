@@ -27,7 +27,7 @@ only module that knows about all of them. Adding a feature means adding one `add
 
 | App | Owns |
 | --- | --- |
-| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the four roles, registering a sharing member, and the admin over all of it |
+| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the four roles, a member's own profile and photograph, registering a sharing member, and the admin over all of it |
 | `authn/` | Passkeys, emailed codes, sessions, rate limits — how a member proves who they are |
 | `documents/` | Club documents, their revisions, and the agreements members give |
 | `membership/` | Turning a sign-up submission into a member. Owns no models |
@@ -45,9 +45,13 @@ there.
 | The member model | `accounts/models.py` (`User`) |
 | Roles and what each may do | `accounts/roles.py` |
 | Registering a sharing member | `accounts/services.py` |
+| What a member may change about themselves | `accounts/profile.py` |
+| Decoding and re-encoding an uploaded avatar | `accounts/avatars.py` |
+| Where avatars are stored, and why they have no URL | `accounts/storage.py` |
 | What a membership costs, and what a payment does to an account | `payments/services.py` |
 | The Payfast protocol: signature, checkout, notification checks | `payments/gateway.py` |
 | Resolving a `platform.*` permission | `accounts/backends.py` |
+| Profile and avatar endpoints | `accounts/api.py` |
 | Sign-in endpoints | `authn/api.py` |
 | Passkey ceremonies | `authn/webauthn.py` |
 | Emailed sign-in codes | `authn/otp.py` |
@@ -130,14 +134,14 @@ Each app tests what it owns, and `manage.py test <app>` runs just that app:
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `common/tests/` | 41 | Encryption round-trips, the blind index, RSA ID checks |
-| `accounts/tests/` | 181 | The member record, roles and permissions, and the admin form over the encrypted ID number |
+| `accounts/tests/` | 244 | The member record, roles and permissions, the admin form over the encrypted ID number, a member's own profile, and the avatar pipeline |
 | `authn/tests/` | 138 | The sign-in endpoints, both credential services, the rate limits |
 | `documents/tests/` | 115 | Documents, revisions, agreements, storage, the publish command |
 | `membership/tests/` | 88 | The registration write and the endpoints in front of it |
 | `payments/tests/` | 219 | The Payfast signature and configuration, what a payment does to a membership, both endpoints, the constraints, the two commands, the read-only admin |
 | `cultivatorscollective/tests/` | 12 | The brand skin over the Django admin |
 
-Frontend, 1018 tests:
+Frontend, 1457 tests:
 
 ```
 cd frontend
@@ -215,6 +219,16 @@ erased accounts are all refused identically, and the refusal never says which.
 | `POST /api/auth/passkeys` | Yes | Store a verified new passkey |
 | `GET /api/auth/passkeys` | Yes | List the member's passkeys |
 | `DELETE /api/auth/passkeys/{id}` | Yes | Revoke one |
+| `GET /api/accounts/me/profile` | Yes | The member's own record, identity number masked |
+| `PUT /api/accounts/me/profile` | Yes | Replace the three editable fields |
+| `POST /api/accounts/me/avatar` | Yes | Store a photograph, decoded and re-encoded |
+| `GET /api/accounts/me/avatar` | Yes | Stream it. The only endpoint here that is not JSON |
+| `DELETE /api/accounts/me/avatar` | Yes | Take it down and delete the blob |
+
+No endpoint under `/api/accounts/` takes an account identifier. That is the
+design rather than an omission: an endpoint that took one would have to decide
+whether the caller may act on it, and the only correct answer for a profile is
+"only your own". Removing the parameter removes the decision.
 
 ### Passkeys have hard hosting requirements
 
@@ -366,6 +380,12 @@ documents every variable.
 | `DJANGO_DOCUMENT_STORAGE_SAS_TOKEN` | No | Used when no account key is set. Needs container write permission, and expires. |
 | `DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING` | No | Account and key together. Overrides `DJANGO_DOCUMENT_STORAGE_ACCOUNT`. |
 | `DJANGO_DOCUMENT_STORAGE_LOCATION` | No | Blob-name prefix inside the container. Normally blank. |
+| `DJANGO_AVATAR_STORAGE_CONTAINER` | No | A **private** container for member photographs, distinct from the documents one. Startup fails if the two match. Blank means uploads go to `MEDIA_ROOT`. |
+| `DJANGO_AVATAR_STORAGE_ACCOUNT` | With a container | Storage account name. Not needed if a connection string is set. |
+| `DJANGO_AVATAR_STORAGE_ACCOUNT_KEY` | No | Account key. Leave blank on App Service and use the managed identity. |
+| `DJANGO_AVATAR_STORAGE_SAS_TOKEN` | No | Used when no account key is set. |
+| `DJANGO_AVATAR_STORAGE_CONNECTION_STRING` | No | Account and key together. Overrides `DJANGO_AVATAR_STORAGE_ACCOUNT`. |
+| `DJANGO_AVATAR_STORAGE_LOCATION` | No | Blob-name prefix inside the container. Normally blank. |
 | `DJANGO_PAYFAST_MERCHANT_ID` | When `DEBUG=False` | From the Payfast dashboard. Falls back to Payfast's published sandbox merchant under `DEBUG`. |
 | `DJANGO_PAYFAST_MERCHANT_KEY` | When `DEBUG=False` | Secret. Application settings, not source control. |
 | `DJANGO_PAYFAST_PASSPHRASE` | When `DEBUG=False` | Set the same value on the Payfast account. Payfast refuses subscriptions from a merchant without one. |
@@ -502,6 +522,64 @@ settings is never silently ignored.
 URLs are unsigned (`expiration_secs=None`): these links go into a page anyone
 can open, and a SAS token in them would expire.
 
+## A member's own profile
+
+`/profile` is one screen for all three roles, guarded by a session rather than a
+role: every account that can sign in has exactly one profile, and it is the same
+screen. It splits into what a member may change and what they may only read.
+
+| | Fields | Where |
+| --- | --- | --- |
+| Theirs to change | First name, last name, mobile number | `PUT /api/accounts/me/profile` |
+| Shown, changed by the club | Nickname, email address | Django admin |
+| Shown, taken from a document | Date of birth, identity number (masked) | Django admin |
+
+The email address is not editable because it is the sign-in identifier, and
+swapping it needs proof the new address receives mail. The nickname is unique
+across the club and other members know each other by it. The last two came off an
+identity document, and a field a member can retype is a field
+`date_of_birth_verified_at` would no longer be telling the truth about. Each
+reason is recorded in `accounts/profile.py`.
+
+The identity number crosses the wire **masked and only masked** -- all but its
+last four digits replaced -- and `accounts.profile` has no way to produce any
+other form, so the endpoint cannot be talked into disclosing one. The masking is
+`common.validators.mask_id_number`, shared with the Django admin so the two
+cannot drift.
+
+### Where a photograph goes
+
+A **private** container of its own, and never the one the CDN fronts. A club
+document is published to everybody; an avatar is a photograph of somebody's face.
+The container has no public access, no SAS is minted, and nothing calls `.url()`
+on that backend -- so an avatar has exactly one address:
+
+```
+GET /api/accounts/me/avatar?v=<avatar_updated_at>
+```
+
+which checks the session before it streams a byte. The cost is accepted: avatars
+are served by the application rather than by a CDN. They are 512-pixel squares of
+a few tens of kilobytes, cached privately for a week, and a member looks at their
+own. `accounts/storage.py` **refuses to start** if `DJANGO_AVATAR_STORAGE_CONTAINER`
+names the documents container, because that mistake would publish every member's
+photograph.
+
+Every upload is decoded and **re-encoded** by Pillow rather than stored as it
+arrived (`accounts/avatars.py`). That one decision does most of the work: a file
+that is not an image is refused, a polyglot loses the half that was not pixels,
+and EXIF goes -- including the GPS coordinates a phone writes into a photograph,
+which most members do not know is there. The orientation tag is applied before it
+is discarded, which is the one piece of EXIF that matters; dropping it without
+acting on it turns every portrait upload on its side.
+
+The browser crops before it uploads, and none of that is trusted. The crop
+geometry is pure and tested in `frontend/lib/image-crop.ts`, and it holds one
+invariant on every pan and zoom: the square is always inside the image. Only the
+square is uploaded -- the rest of the frame never leaves the browser.
+
+Erasure deletes the blob, not just the column. See `User.soft_delete`.
+
 ## Not yet configured
 
 Production deployment is deliberately out of scope for now. When a target is
@@ -518,6 +596,13 @@ The club documents add one: an Azure Blob Storage container behind the CDN, and
 the `DJANGO_DOCUMENT_STORAGE_*` variables above. Without it the PDFs are written
 to `MEDIA_ROOT` and served by runserver, which is fine locally and is not a
 deployment.
+
+Member avatars add a second, and it must be a **private** container -- the
+`DJANGO_AVATAR_STORAGE_*` variables above. Without it photographs are written to
+`MEDIA_ROOT`, where under `DEBUG` runserver's static handler will serve one to
+anybody who guesses the path. Fine on a developer's machine; a deployment either
+configures the container or puts a web server on `MEDIA_URL` that does not serve
+the `avatars/` prefix.
 
 Payments add three. A **Payfast merchant** and the `DJANGO_PAYFAST_*` variables
 above -- Django refuses to start without them once `DEBUG` is off, because a

@@ -1,8 +1,10 @@
+import Link from 'next/link'
+
 import type { Passkey, User } from '@/lib/api'
 import { detailRows, greetingName } from '@/lib/club-account'
 import { CLUB_HOMES_COPY, DETAILS_CARD, MEMBERSHIP_CARD } from '@/lib/club-content'
 import { sectionsFor } from '@/lib/club-navigation'
-import type { ClubRole } from '@/lib/club-roles'
+import { PROFILE_PATH, type ClubRole } from '@/lib/club-roles'
 import { PasskeyCard } from '@/components/Account/PasskeyCard'
 import { ClubCard } from './ClubCard'
 import { DestinationSections } from './DestinationSections'
@@ -29,6 +31,11 @@ type ClubHomeProps = {
  * The cards are ordered by what the club can actually do for someone today: what it holds about
  * them, how they stand, how they get back in, and then everything it intends to offer. That last
  * card is the largest and the least useful, which is why it is last.
+ *
+ * The details card **shows** four fields and changes none of them. It used to say that changing them
+ * was not possible at all; two of the four now are, on /profile, so it links there instead — and it
+ * still says which two are not, because a member who goes looking for the email address on that
+ * screen and does not find it has been sent on a wasted trip.
  */
 export const ClubHome = ({ role, user, passkeys, passkeysUnavailable }: ClubHomeProps) => {
   const copy = CLUB_HOMES_COPY[role]
@@ -49,8 +56,29 @@ export const ClubHome = ({ role, user, passkeys, passkeysUnavailable }: ClubHome
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <ClubCard heading={DETAILS_CARD.heading} note={DETAILS_CARD.note}>
+        <ClubCard heading={DETAILS_CARD.heading}>
           <DetailList rows={detailRows(user)} />
+
+          {/*
+            * The note is rendered here rather than passed to `note`, because it now ends in a link
+            * and that prop takes a string. Two sentences, and they say different things: the first
+            * is what a member can do, the second is what they cannot and who to ask. Splitting them
+            * is what stops the link reading as though it led to all four fields.
+            */}
+          <div className="mt-6 flex flex-col gap-2">
+            <p className="font-sans text-sm leading-relaxed text-muted-foreground">
+              {DETAILS_CARD.note}{' '}
+              <Link
+                href={PROFILE_PATH}
+                className="font-medium text-forest-green underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-green"
+              >
+                {DETAILS_CARD.editLabel}
+              </Link>
+            </p>
+            <p className="font-sans text-sm leading-relaxed text-muted-foreground">
+              {DETAILS_CARD.fixedNote}
+            </p>
+          </div>
         </ClubCard>
 
         <ClubCard heading={MEMBERSHIP_CARD.heading}>

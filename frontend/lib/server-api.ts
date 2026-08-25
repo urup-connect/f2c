@@ -10,6 +10,7 @@ import {
   type Passkey,
   type User,
 } from "./api";
+import type { Profile } from "./profile-api";
 
 /**
  * Server-side calls to Django.
@@ -53,6 +54,25 @@ export async function getHealth(): Promise<Health | null> {
     return await serverFetch<Health>("/api/health");
   } catch {
     return null;
+  }
+}
+
+/**
+ * The signed-in member's own profile, or null when there is no valid session.
+ *
+ * Read on the server so the whole screen is in the first paint. That matters more here than it
+ * would elsewhere: a profile form that arrives empty and fills in a moment later is a form a
+ * member can start typing into before their own details land on top of what they typed.
+ *
+ * A 401 answers null rather than throwing, matching `getCurrentUser`. It cannot happen past the
+ * club layout's guard, and the branch exists so a caller cannot forget it.
+ */
+export async function getProfile(): Promise<Profile | null> {
+  try {
+    return await serverFetch<Profile>("/api/accounts/me/profile");
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return null;
+    throw error;
   }
 }
 

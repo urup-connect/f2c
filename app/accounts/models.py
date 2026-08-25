@@ -33,6 +33,7 @@ from django.utils import timezone
 
 from app.common import crypto
 from app.common.validators import (
+    mask_id_number,
     nickname_key,
     normalise_id_number,
     normalise_sa_mobile_number,
@@ -42,6 +43,7 @@ from app.common.validators import (
 )
 
 from .roles import ROLE_GROUP_NAMES, SHARING_CONSENT_VERSION, UserRole
+from .storage import avatar_storage, avatar_upload_to
 
 # Re-exported so that ``from app.accounts.models import UserRole`` reads the
 # same way as ``UserStatus`` beside it. ``accounts.roles`` is the canonical
@@ -385,6 +387,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=32, blank=True, default=SHARING_CONSENT_VERSION
     )
 
+    # The member's own photograph, kept on the private avatars store rather
+    # than the container the CDN fronts -- see `accounts.storage`. Always a
+    # 512-pixel square JPEG, because `accounts.avatars` decodes and re-encodes
+    # every upload rather than storing what arrived; nothing else may write
+    # here. Blank is the normal state and is not a gap to be filled: a member
+    # who wants no photograph of themselves on file is entitled to none.
+    avatar = models.FileField(
+        blank=True,
+        storage=avatar_storage,
+        upload_to=avatar_upload_to,
+        help_text='Set through the profile endpoint, which crops and re-encodes.',
+    )
+    # When the avatar last changed. It is what lets the address the frontend
+    # requests carry a version, so a replaced photograph is fetched again
+    # instead of the browser showing the cached previous one -- `avatar` itself
+    # cannot say, because every avatar is written to the same path. Null for an
+    # account that has never had one.
+    avatar_updated_at = models.DateTimeField(null=True, blank=True, editable=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     # Distinguishes an account that was erased from one merely deactivated.
@@ -581,6 +602,57 @@ class User(AbstractBaseUser, PermissionsMixin):
         """True when a number is on file, without decrypting it."""
         return bool(self.id_number_encrypted)
 
+    @property
+    def id_number_masked(self):
+        """All but the last four digits, or ``''`` when none is on file.
+
+        Decrypts, so it is a property rather than a column and it is not free.
+        Raises ``crypto.DecryptionError`` for a row that will not decrypt --
+        surfaced rather than swallowed, because that is a key or integrity
+        problem somebody has to look at, and each caller has its own idea of
+        what to show while they do.
+        """
+        if not self.has_id_number:
+            return ''
+        return mask_id_number(self.id_number)
+
+    @property
+    def has_avatar(self):
+        """True when a photograph is on file.
+
+        ``FileField`` is falsey when the column is blank, which is what this
+        reads. It does not ask storage whether the blob is really there: that
+        would be a network call per render against the Azure backend, and a
+        column pointing at a missing blob is a broken deployment rather than a
+        state a screen should try to describe.
+        """
+        return bool(self.avatar)
+
+    def clear_avatar(self):
+        """Delete the stored photograph and forget it. Does not save.
+
+        Deletes the blob as well as blanking the column, because the whole
+        reason avatars overwrite one path is that the club has no reason to hold
+        a photograph a member has taken down. ``delete(save=False)`` is what
+        does both; the caller saves.
+
+        Tolerant of a blob that is already gone. Storage failing to delete
+        something that does not exist must not stop the column being cleared --
+        otherwise a half-migrated environment leaves a member unable to remove
+        their own photograph.
+        """
+        if not self.avatar:
+            self.avatar_updated_at = None
+            return self
+
+        try:
+            self.avatar.delete(save=False)
+        except FileNotFoundError:
+            self.avatar = ''
+
+        self.avatar_updated_at = None
+        return self
+
     def capture_sa_id_number(self, value, verified_at=None):
         """Validate an RSA ID number, store it, and read the birth date off it.
 
@@ -750,7 +822,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         who paid what -- and cascading those away would destroy the
         collective's own operating history. What goes is everything that
         identifies the person: name, nickname, email address, mobile number,
-        ID number.
+        ID number, and their photograph -- the last of which is deleted from
+        storage rather than merely unlinked, since a blob nobody points at is
+        still a picture of somebody's face.
         ``email_hash`` is the one deliberate survivor, and its declaration says
         why.
 
@@ -787,6 +861,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.mobile = ''
         self.id_number_encrypted = ''
         self.id_number_hash = None
+        # The blob goes, not just the column. A photograph of a face is
+        # personal data in the plainest sense, and an erasure that left the
+        # image sitting in storage with only the pointer removed would be an
+        # erasure the club could not honestly claim to have made.
+        self.clear_avatar()
         self.status = UserStatus.INACTIVE
         self.deleted_at = timezone.now()
         self.set_unusable_password()

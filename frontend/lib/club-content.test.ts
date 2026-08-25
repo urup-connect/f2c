@@ -45,13 +45,13 @@ describe('every home is complete', () => {
 })
 
 describe('the details card', () => {
-  test('labels every field the club shows', () => {
+  test('labels every field the card shows', () => {
+    // Four, not five. The date of birth moved to the profile screen, which labels it itself.
     expect(Object.keys(DETAILS_CARD.labels)).toEqual([
       'name',
       'nickname',
       'email',
       'mobile',
-      'dateOfBirth',
     ])
   })
 
@@ -63,8 +63,17 @@ describe('the details card', () => {
     expect(labels).not.toMatch(/identity|\bid\b/i)
   })
 
-  test('says why nothing here can be changed, rather than leaving it to be inferred', () => {
+  test('says which fields are the member’s own to change, and which are not', () => {
+    /*
+     * This used to assert only that the note existed, because the note said nothing here could be
+     * changed at all. Two of the four now can. Both halves are asserted because either one alone
+     * misleads: the invitation without the exception sends a member looking for an email field
+     * that is not there, and the exception without the invitation is the old apology.
+     */
     expect(DETAILS_CARD.note.length).toBeGreaterThan(0)
+    expect(DETAILS_CARD.editLabel.length).toBeGreaterThan(0)
+    expect(DETAILS_CARD.fixedNote).toMatch(/nickname/i)
+    expect(DETAILS_CARD.fixedNote).toMatch(/email/i)
   })
 })
 

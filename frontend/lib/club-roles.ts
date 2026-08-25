@@ -35,6 +35,20 @@ export const CLUB_HOMES = {
 /** Every club home, for a caller that needs to recognise one. */
 export const CLUB_HOME_PATHS = Object.values(CLUB_HOMES) as readonly string[]
 
+/**
+ * A member's own profile. One path, not one per role.
+ *
+ * Filed here beside the homes because this module is where the club's signed-in geography lives,
+ * and named as a constant because two callers need it — the bar at the top of every screen, and the
+ * details card that points at it. Not part of `CLUB_HOMES`: this is not anybody's home, and adding
+ * it there would break the `Record<ClubRole, string>` the type check on that map depends on.
+ *
+ * The route is guarded by `requireSession` rather than `requireRole`, which is what makes one path
+ * correct: every account that can sign in has exactly one profile, and it is the same screen. See
+ * `app/(club)/profile/page.tsx`.
+ */
+export const PROFILE_PATH = '/profile'
+
 /** How the club refers to each role on screen. */
 export const ROLE_LABELS = {
   admin: 'Administrator',
