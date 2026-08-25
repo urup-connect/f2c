@@ -544,18 +544,18 @@ happens to see. The same reason it already admits the shape of an erased account
 
 The roles, the catalogue and the enforcement path are built and tested. Nothing they govern is.
 
-| Not built | Consequence |
-| --- | --- |
+| Not built                                                                                      | Consequence |
+|------------------------------------------------------------------------------------------------| --- |
 | Plants, strains, batches, listings, pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue names actions with nothing to perform them against. The codenames are the requirement on the record, not working features |
-| The cultivator organisation | There is no `CultivatorProfile`, no membership or appointment table, and no primary-versus-full-versus-limited rights. `platform.appoint_cultivator_staff` is listed and cannot yet be exercised. Deferred on purpose: built against features that do not exist, its shape would be a guess |
-| Object-level rules | "A cultivator's own listings", "a member's own inventory", "the primary cultivator" — all of them need the model they are scoped to. `RoleBackend` refuses object-level questions rather than answering them wrongly |
-| ~~Any authenticated frontend page~~ | **Built.** `/member`, `/cultivator` and `/admin` render from `permissions`, never from `role` — `frontend/lib/club-navigation.ts` maps each `platform.*` codename to a destination, and a contract test reads this file as text so a renamed codename cannot quietly empty a menu. Almost every destination is marked *Not built yet*, which is the rest of this table |
-| Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action, because there is no endpoint whose action is in the catalogue. The mechanism is tested directly instead |
-| The four-plant allocation, and the cap | `SHARING_MEMBER_PLANT_ALLOCATION` is `4` and is enforced nowhere, because there is no plant to count. `register_sharing_member` returns the number; it cannot create the stock |
-| A sharing member's stock in the swap zone | The whole point of the role, and entirely unbuilt. There is no swap zone |
-| Converting a sharing member into a member | One identity document means one account, so somebody joining properly after holding stock is the same row moved — a role change, an email address, and the club document agreements. Not built |
-| Re-attestation | `sharing_consent_version` records which wording was attested. If the wording is revised, existing records keep their version and nothing asks for a fresh attestation |
-| Any endpoint for registering a sharing member | `accounts.services.register_sharing_member` is reachable from the admin and the shell only. It already authorises its caller, so it is the right shape to put a router in front of |
+| ~~The cultivator organisation~~                                                                | There is no `CultivatorProfile`, no membership or appointment table, and no primary-versus-full-versus-limited rights. `platform.appoint_cultivator_staff` is listed and cannot yet be exercised. Deferred on purpose: built against features that do not exist, its shape would be a guess |
+| Object-level rules                                                                             | "A cultivator's own listings", "a member's own inventory", "the primary cultivator" — all of them need the model they are scoped to. `RoleBackend` refuses object-level questions rather than answering them wrongly |
+| ~~Any authenticated frontend page~~                                                            | **Built.** `/member`, `/cultivator` and `/admin` render from `permissions`, never from `role` — `frontend/lib/club-navigation.ts` maps each `platform.*` codename to a destination, and a contract test reads this file as text so a renamed codename cannot quietly empty a menu. Almost every destination is marked *Not built yet*, which is the rest of this table |
+| Endpoints that check a platform permission                                                     | No API endpoint calls `has_perm` for a `platform.*` action, because there is no endpoint whose action is in the catalogue. The mechanism is tested directly instead |
+| The four-plant allocation, and the cap                                                         | `SHARING_MEMBER_PLANT_ALLOCATION` is `4` and is enforced nowhere, because there is no plant to count. `register_sharing_member` returns the number; it cannot create the stock |
+| A sharing member's stock in the swap zone                                                      | The whole point of the role, and entirely unbuilt. There is no swap zone |
+| Converting a sharing member into a member                                                      | One identity document means one account, so somebody joining properly after holding stock is the same row moved — a role change, an email address, and the club document agreements. Not built |
+| Re-attestation                                                                                 | `sharing_consent_version` records which wording was attested. If the wording is revised, existing records keep their version and nothing asks for a fresh attestation |
+| Any endpoint for registering a sharing member                                                  | `accounts.services.register_sharing_member` is reachable from the admin and the shell only. It already authorises its caller, so it is the right shape to put a router in front of |
 
 ## 14. Risks
 

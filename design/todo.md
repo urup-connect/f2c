@@ -42,7 +42,7 @@ in on a deployed environment today.**
 - [ ] Fix `frontend/app/api/nickname/availability/route.test.ts` — it asserts a random hex string
       does not contain `500`, `503`, `429` or `422`, all valid hex, so it fails about one run in
       thirty — C25
-- [ ] Clear the stale-document drift: `frontend.md` §9 and `roles-and-permissions.md` §13 both say
+- [x] Clear the stale-document drift: `frontend.md` §9 and `roles-and-permissions.md` §13 both say
       profile editing is unbuilt, and it is built — C21. Close `backend.md` risk 12, which says the
       project is not under version control — C23
 
@@ -58,9 +58,9 @@ in on a deployed environment today.**
 - [x] Landing page with compliance-governed copy — `features/landing.md`
 - [x] Age gate before sign-up
 - [x] Sign-up call to action
-- [ ] Intro blurb and introduction video — `drawio`, member story
+- [x] Intro blurb and introduction video — `drawio`, member story
 - [ ] Platform information section, including a snapshot of plants available. Needs Block 3
-- [ ] Terms, conditions and club rules on the public page
+- [x] Terms, conditions and club rules on the public page
 - [!] Display the membership fee. The copy-compliance patterns refuse currency and retail voice on
       this page; needs a named exemption rather than a relaxed pattern — **C20**
 

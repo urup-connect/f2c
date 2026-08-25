@@ -96,15 +96,63 @@ export const STORY = {
   ] as const satisfies readonly [StoryStep, StoryStep, StoryStep],
 } as const satisfies { imageKey: BrandImageKey; [key: string]: unknown }
 
+/**
+ * The club film, hosted on the static content host rather than shipped with the application.
+ *
+ * The section carries a heading and a line of its own, so the film illustrates the page rather
+ * than being the only thing that says what the club is. The file itself is named in
+ * `lib/brand-film.ts`; nothing about its address belongs in the copy.
+ * See design/features/landing.md section 3.
+ */
+export const FILM = {
+  heading: 'Inside the collective',
+  body: 'A short film about how the club grows, and the people who grow it.',
+} as const
+
+/**
+ * Why a visitor would join, and what membership gives them.
+ *
+ * Supplied by the client and reworded here to pass `lib/copy-compliance.ts` without losing
+ * anything it said. Three changes, each recorded in design/features/landing.md section 4:
+ * "private delivery" reads as "private collection", "exclusive discounts" as "preferential
+ * member terms", and the supplied "Adults only (18+)" moved to `LEGAL` as the age check the
+ * product actually performs. The rule is reworded copy, never a widened pattern.
+ */
+export const WHY_JOIN = {
+  heading: 'Why join?',
+  body:
+    'Cultivators Collective is a private, members-only community where members cultivate, share and swap cannabis plants within South African law. A secure, private environment, with every plant traceable and member benefits throughout.',
+  benefitsHeading: 'Benefits of membership',
+  benefits: [
+    'Access to the members area: cultivation offers, my plants, swap zone and subscriptions.',
+    'Sponsor pre-flowering plants and receive your harvest by private collection.',
+    'Swap plants with other members using a leaf-rating system, with no cash changing hands.',
+    'Serialised plant tracking, handled in line with privacy law.',
+    'Preferential member terms on monthly supply subscriptions.',
+  ] as const,
+} as const
+
+/**
+ * The ground the club operates on.
+ *
+ * Deliberately says nothing about who may join. That remains the age gate's alone — it is the
+ * one surface exempt from `ELIGIBILITY_CLAIM`, and a second exemption would empty the rule out.
+ * The first point therefore describes the check the product performs rather than the threshold
+ * it applies. See design/features/landing.md section 4, and the age gate's own documentation.
+ */
+export const LEGAL = {
+  heading: 'Legal compliance',
+  points: [
+    'Every applicant completes an age check before sign-up begins.',
+    'Private use, possession and cultivation, as permitted by the Constitutional Court ruling.',
+    'Cannabis for Private Purposes Act principles: sharing without consideration.',
+    'Strict prohibition on dealing, and on consumption in public.',
+  ] as const,
+} as const
+
 export const JOIN = {
   heading: 'Ready to grow with us?',
   body: 'Sign up to join the collective, or log in if you are already a member.',
-  /*
-   * Sign-up cannot work until the access mechanism is decided, so the page says so rather than
-   * showing a button that leads nowhere without warning.
-   * See design/features/landing-page-engagement.md risk 5.
-   */
-  note: 'The club is not yet open. Sign-up will follow shortly.',
   signUp: 'Sign Up',
   logIn: 'Log In',
 } as const
@@ -125,14 +173,21 @@ export const ALL_COPY: readonly string[] = [
   HERO.signUp,
   HERO.logIn,
   ...STRAPLINE_SEGMENTS,
+  FILM.heading,
+  FILM.body,
+  WHY_JOIN.heading,
+  WHY_JOIN.body,
+  WHY_JOIN.benefitsHeading,
+  ...WHY_JOIN.benefits,
   VALUES.heading,
   ...VALUES.items.flatMap((item) => [item.label, item.description]),
   STORY.heading,
   ...STORY.paragraphs,
   ...STORY.steps.flatMap((step) => [step.label, step.description]),
+  LEGAL.heading,
+  ...LEGAL.points,
   JOIN.heading,
   JOIN.body,
-  JOIN.note,
   JOIN.signUp,
   JOIN.logIn,
   FOOTER.rights,

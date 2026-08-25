@@ -19,15 +19,15 @@ describe('JoinBand', () => {
     expect(screen.getByRole('link', { name: 'Log In' })).toHaveAttribute('href', '/login')
   })
 
-  test('says plainly that the club is not yet open', () => {
+  test('carries no caveat about the club being closed', () => {
     /*
-     * Criterion 13. Sign-up cannot work until the access mechanism is decided, so a reader
-     * who follows the button is told what to expect before they do.
-     * See design/features/landing-page-engagement.md risk 5.
+     * The band used to say the club was not yet open. The page now describes the members area
+     * in the present tense and the two cannot both stand, so the line went with the client's
+     * decision. See design/features/landing.md risk 1.
      */
     render(<JoinBand />)
 
-    expect(screen.getByText(JOIN.note)).toBeInTheDocument()
+    expect(screen.queryByText(/not yet open/i)).not.toBeInTheDocument()
   })
 
   test('is a landmark named by its own heading', () => {

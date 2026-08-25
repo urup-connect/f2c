@@ -534,17 +534,17 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 
 ## 12. Risks
 
-| # | Risk | Status |
-| --- | --- | --- |
-| 1 | Losing `DJANGO_FIELD_ENCRYPTION_KEY` destroys every stored identity number with no recovery path. | Open — needs a documented backup and rotation procedure |
-| 2 | The default `LocMemCache` makes rate limits per worker. A multi-worker deployment silently multiplies every limit. | Open — blocks production |
-| 3 | Codes are printed to the console. No email provider is configured, so no member can sign in on a deployed environment. | Open — blocks production |
-| 4 | `flush_sessions()` decodes every live session to find one member's. Linear in session count. | Accepted at current scale |
-| 5 | `login/start` reveals which addresses have a passkey, because credential IDs must reach the browser for the authenticator to match against. Inherent to identifier-first passkey flows; closing it means moving to a usernameless flow over discoverable credentials. | Accepted |
-| 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted |
-| 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3 |
-| 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage |
-| 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator |
+| # | Risk | Status                                                                                       |
+| --- | --- |----------------------------------------------------------------------------------------------|
+| 1 | Losing `DJANGO_FIELD_ENCRYPTION_KEY` destroys every stored identity number with no recovery path. | Open — needs a documented backup and rotation procedure                                      |
+| 2 | The default `LocMemCache` makes rate limits per worker. A multi-worker deployment silently multiplies every limit. | Open — blocks production                                                                     |
+| 3 | Codes are printed to the console. No email provider is configured, so no member can sign in on a deployed environment. | Open — blocks production                                                                     |
+| 4 | `flush_sessions()` decodes every live session to find one member's. Linear in session count. | Accepted at current scale                                                                    |
+| 5 | `login/start` reveals which addresses have a passkey, because credential IDs must reach the browser for the authenticator to match against. Inherent to identifier-first passkey flows; closing it means moving to a usernameless flow over discoverable credentials. | Accepted                                                                                     |
+| 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted                                                                                     |
+| 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3                                        |
+| 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage                                                                       |
+| 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator                             |
 | 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. | Open — wants legal review of the wording, and a decision on notifying sharing members directly |
-| 11 | A cultivator creates `User` rows. It is the only non-administrator route to an account, and it captures a third party's identity number. | Accepted — authorised on a permission, and every record carries who attested |
-| 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Open — fix before initialising the repository |
+| 11 | A cultivator creates `User` rows. It is the only non-administrator route to an account, and it captures a third party's identity number. | Accepted — authorised on a permission, and every record carries who attested                 |
+| 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Closed                                                 |

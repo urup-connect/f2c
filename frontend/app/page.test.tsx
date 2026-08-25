@@ -1,6 +1,18 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
-import { ALL_COPY, HERO, JOIN, STORY, STRAPLINE_SEGMENTS, VALUES } from '@/lib/landing-content'
+import { brandFilmSource } from '@/lib/brand-film'
+import {
+  ALL_COPY,
+  FILM,
+  HERO,
+  JOIN,
+  LEGAL,
+  STORY,
+  STRAPLINE_SEGMENTS,
+  VALUES,
+  WHY_JOIN,
+} from '@/lib/landing-content'
+import { SITE_CONFIG } from '@/lib/site'
 import Home, { metadata } from './page'
 
 /*
@@ -45,16 +57,19 @@ describe('the landing page', () => {
     expect(metadata.robots).toEqual({ index: true, follow: true })
   })
 
-  test('runs hero, ribbon, values, story, join and footer in that order', () => {
-    // Criterion 5.
+  test('runs hero, ribbon, film, why join, values, story, legal, join and footer in that order', () => {
+    // Criterion 5, extended by the film and the two sections the client supplied.
     const { container } = render(<Home />)
     const text = container.textContent ?? ''
 
     const positions = [
       HERO.tagline,
       STRAPLINE_SEGMENTS[0],
+      FILM.heading,
+      WHY_JOIN.heading,
       VALUES.heading,
       STORY.heading,
+      LEGAL.heading,
       JOIN.heading,
       'All rights reserved',
     ].map((marker) => text.indexOf(marker))
@@ -80,7 +95,14 @@ describe('the landing page', () => {
   test('names each section as a landmark, so a reader can jump between them', () => {
     render(<Home />)
 
-    for (const name of [VALUES.heading, STORY.heading, JOIN.heading]) {
+    for (const name of [
+      FILM.heading,
+      WHY_JOIN.heading,
+      VALUES.heading,
+      STORY.heading,
+      LEGAL.heading,
+      JOIN.heading,
+    ]) {
       expect(screen.getByRole('region', { name })).toBeInTheDocument()
     }
     expect(screen.getByRole('main')).toBeInTheDocument()
@@ -103,6 +125,15 @@ describe('the landing page', () => {
     for (const source of sources) {
       expect(source).not.toMatch(/cultivator-portrait|face|person|portrait/i)
     }
+  })
+
+  test('serves the club film from the deployment CDN', () => {
+    // The first thing in the product to read CDN_BASE_URL. See lib/site.ts.
+    const { container } = render(<Home />)
+    const video = container.querySelector('video')
+
+    expect(video).not.toBeNull()
+    expect(video?.getAttribute('src')).toBe(brandFilmSource(SITE_CONFIG))
   })
 
   test('carries no starter-template content', () => {

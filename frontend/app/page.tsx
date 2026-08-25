@@ -1,10 +1,13 @@
 import type { Metadata } from 'next'
 import { BrandStory } from '@/components/Landing/BrandStory'
 import { BrandValues } from '@/components/Landing/BrandValues'
+import { ClubFilm } from '@/components/Landing/ClubFilm'
 import { JoinBand } from '@/components/Landing/JoinBand'
 import { LandingFooter } from '@/components/Landing/LandingFooter'
 import { LandingHero } from '@/components/Landing/LandingHero'
+import { LegalNotice } from '@/components/Landing/LegalNotice'
 import { StraplineRibbon } from '@/components/Landing/StraplineRibbon'
+import { WhyJoin } from '@/components/Landing/WhyJoin'
 
 /*
  * The one route in the product that may be indexed. Every other route inherits
@@ -29,8 +32,11 @@ export default function Home() {
       <main className="flex flex-1 flex-col">
         <LandingHero />
         <StraplineRibbon />
+        <ClubFilm />
+        <WhyJoin />
         <BrandValues />
         <BrandStory />
+        <LegalNotice />
         <JoinBand />
       </main>
 

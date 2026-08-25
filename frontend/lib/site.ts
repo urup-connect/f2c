@@ -17,11 +17,10 @@ export type SiteConfig = {
    *
    * The CDN root rather than any one folder on it. Callers append their own path.
    *
-   * **Nothing in this application reads it at present.** The club documents were the first thing
-   * served from here, and they no longer come from configuration: Django owns their addresses now,
-   * because it owns their versions — see `lib/club-documents.ts`. The variable and its checks are
-   * kept for whatever is served from the host next; it is still required, so a deployment that
-   * drops it fails on the way up rather than at the first asset.
+   * Read by `lib/brand-film.ts`, which builds the address of the landing page's club film. That
+   * is the only reader. The club documents were the first thing served from here and no longer
+   * come from configuration: Django owns their addresses now, because it owns their versions —
+   * see `lib/club-documents.ts`.
    */
   readonly cdnBaseUrl: string
   readonly isProduction: boolean

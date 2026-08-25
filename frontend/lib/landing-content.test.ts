@@ -4,12 +4,15 @@ import { VALUE_ICONS } from './brand-icons'
 import { CLINICAL_CLAIM, CURRENCY, ELIGIBILITY_CLAIM, RETAIL_VOICE } from './copy-compliance'
 import {
   ALL_COPY,
+  FILM,
   FOOTER,
   HERO,
   JOIN,
+  LEGAL,
   STORY,
   STRAPLINE_SEGMENTS,
   VALUES,
+  WHY_JOIN,
 } from './landing-content'
 
 /* design/features/landing-page-engagement.md criteria 7, 9, 10, 12, 13, 14 and section 6.1.1. */
@@ -90,16 +93,69 @@ describe('brand story', () => {
   })
 })
 
+describe('film copy', () => {
+  test('heads the section and says what the film is, so it never stands alone', () => {
+    expect(FILM.heading.length).toBeGreaterThan(0)
+    expect(FILM.body).toMatch(/film/i)
+  })
+
+  test('names no file and no host, which belong in the film manifest', () => {
+    for (const line of [FILM.heading, FILM.body]) {
+      expect(line).not.toMatch(/https?:|\.mp4/i)
+    }
+  })
+})
+
+describe('why join copy', () => {
+  test('names the club by the name the rest of the product uses', () => {
+    expect(WHY_JOIN.body).toContain('Cultivators Collective')
+    expect(WHY_JOIN.body).not.toMatch(/F2C/i)
+  })
+
+  test('lists five benefits, each a full sentence', () => {
+    expect(WHY_JOIN.benefits).toHaveLength(5)
+    for (const benefit of WHY_JOIN.benefits) {
+      expect(benefit.length).toBeGreaterThan(20)
+      expect(benefit).toMatch(/\.$/)
+    }
+  })
+
+  test('heads the benefits separately from the section', () => {
+    expect(WHY_JOIN.heading.length).toBeGreaterThan(0)
+    expect(WHY_JOIN.benefitsHeading).toMatch(/benefit/i)
+  })
+})
+
+describe('legal copy', () => {
+  test('states the ground the club operates on', () => {
+    expect(LEGAL.heading.length).toBeGreaterThan(0)
+    expect(LEGAL.points.length).toBeGreaterThan(2)
+  })
+
+  test('names the age check without naming the threshold', () => {
+    /*
+     * The age gate is the one surface exempt from ELIGIBILITY_CLAIM. This section describes the
+     * check the product performs; it does not say who may join.
+     * See design/features/landing.md section 4.
+     */
+    expect(LEGAL.points.some((point) => /age check/i.test(point))).toBe(true)
+  })
+
+  test('rules out dealing and public consumption', () => {
+    expect(LEGAL.points.some((point) => /dealing/i.test(point))).toBe(true)
+  })
+})
+
 describe('join band copy', () => {
   test('invites the visitor to join', () => {
     expect(JOIN.heading.length).toBeGreaterThan(0)
     expect(JOIN.body).toMatch(/collective/i)
   })
 
-  test('says plainly that the club is not yet open', () => {
-    // Criterion 13. Sign-up cannot work until the access mechanism is decided, so the page
-    // must not imply that it can.
-    expect(JOIN.note).toMatch(/not yet open/i)
+  test('carries no caveat about the club being closed', () => {
+    // The page describes the members area in the present tense; the two cannot both stand.
+    // See design/features/landing.md risk 1.
+    expect(Object.values(JOIN).join(' ')).not.toMatch(/not yet open/i)
   })
 })
 
@@ -120,7 +176,9 @@ describe('every line of copy on the page', () => {
     for (const segment of STRAPLINE_SEGMENTS) expect(ALL_COPY).toContain(segment)
     for (const item of VALUES.items) expect(ALL_COPY).toContain(item.description)
     for (const step of STORY.steps) expect(ALL_COPY).toContain(step.description)
-    expect(ALL_COPY).toContain(JOIN.note)
+    for (const benefit of WHY_JOIN.benefits) expect(ALL_COPY).toContain(benefit)
+    for (const point of LEGAL.points) expect(ALL_COPY).toContain(point)
+    expect(ALL_COPY).toContain(FILM.body)
   })
 
   /*

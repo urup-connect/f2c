@@ -4,10 +4,11 @@ import { JOIN } from '@/lib/landing-content'
 /**
  * The closing call to action.
  *
- * Repeats both ways in for a reader who has scrolled the whole page, and says plainly that the
- * club is not yet open — sign-up cannot work until the access mechanism is decided, and a
- * better page only sends more people at that door.
- * See design/features/landing-page-engagement.md criterion 13 and risk 5.
+ * Repeats both ways in for a reader who has scrolled the whole page.
+ *
+ * It carried a line saying the club was not yet open. That line went when the page began
+ * describing the members area in the present tense: the two cannot both be on the page, and the
+ * client's decision was the present tense. See design/features/landing.md risk 1.
  *
  * Sign Up points at `/join` for the same reason it does in the hero: a fresh age check every
  * time, whichever of the two buttons a reader reaches. See `app/(auth)/join`.
@@ -32,8 +33,6 @@ export const JoinBand = () => (
           {JOIN.logIn}
         </ButtonLink>
       </div>
-
-      <p className="text-sm text-sage-green">{JOIN.note}</p>
     </div>
   </section>
 )

@@ -280,10 +280,8 @@ catalogue of what it intends to offer, almost all of it marked *Not built yet*. 
 state: `roles-and-permissions.md` section 13 lists the models that do not exist, and the tiles name
 the screens that will sit on top of them.
 
-Three specific gaps behind the gate:
+Two specific gaps behind the gate:
 
-- **Nothing is editable.** `platform.manage_own_profile` has no screen and no endpoint; the details
-  card says so rather than leaving a member to hunt for a button.
 - **No administration screens.** The administrator's home is self-contained — it does not link to
   the Django admin, because that opens on `is_staff` and the two facts are independent, so such a
   link would work for some administrators and refuse others. The cost is that the nine
@@ -304,3 +302,4 @@ Three specific gaps behind the gate:
 | 4 | `.next/types/validator.ts` is generated build output that `tsconfig.json` includes. A stale copy referencing deleted routes breaks `npm run typecheck` with errors that point at no real source file. Cleared once; will recur after routes are renamed. | Open |
 | 5 | 1,305 tests take about sixty seconds, most of it jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
 | 6 | `app/api/nickname/availability/route.test.ts` asserts an eight-character random hex reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex, so the test fails on roughly one run in thirty. Predates this work. | Open — a one-line fix, not yet taken |
+| 7 | `CDN_BASE_URL` is read while `/` is prerendered, so the club film's address is fixed at build time — as `SITE_URL` already is, through the root layout's `metadataBase`. A promoted artefact serves the film from the wrong host. Same class as risk 2. Making the one indexable page dynamic would cost more than it saves; the remedy is a build per environment. | Open |
