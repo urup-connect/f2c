@@ -17,6 +17,19 @@ is deliberately unbuilt, it is recorded as unbuilt rather than omitted.
 | [features/landing.md](features/landing.md) | The public landing page, its copy governance and its indexing rules |
 | [features/brand.md](features/brand.md) | Colour, typography, logo artwork, photography and the design tokens behind them |
 
+Three further documents describe what is *planned* rather than what exists, and are the exception to
+the rule above:
+
+| Document | Covers |
+| --- | --- |
+| [plan.md](plan.md) | The roadmap: what the platform is, where the work stands, and the order the remaining blocks can be built in |
+| [todo.md](todo.md) | Every outstanding item from the brief and the design set, in build order, each marked built, partial, not built, or blocked |
+| [conflict.md](conflict.md) | Where the brief in `twp-tasks/` disagrees with what is built, with itself, or with the older plan — and what should be done about each |
+
+The brief itself is in [twp-tasks/](twp-tasks/): a set of short subject documents and six drawio
+story diagrams. It is the statement of intent. Where it and the built system disagree, `conflict.md`
+holds the disagreement rather than either side silently winning.
+
 Read `frontend.md` and `backend.md` for the shape of the system. Read a feature document for the
 reasoning behind one part of it.
 
