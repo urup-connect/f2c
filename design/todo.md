@@ -158,10 +158,15 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
       cultivator load stock as another; who is uploading is an argument, not a cell
 - [x] Dates must be dates. `03/04/2026` is refused rather than guessed — a planting date wrong by a
       month is a harvest estimate wrong by a month that nobody questions
-- [ ] **Individual plant capture.** The same validation against one row, and it belongs with the
-      endpoint in Block 9 rather than as a second code path now
-- [ ] An endpoint for either. Both run from the command line; staff generate and load on a
-      cultivator's behalf until Block 9
+- [x] **Individual plant capture** — `services.capture_plant`, reached from `manage.py add_plant`
+      and from the admin's add form. **Not a second code path**: both routes share the coercion, the
+      three database checks and the write with the upload, because the brief gives one field list for
+      both. Errors are keyed by field so a form can attach each to the right input
+- [x] The admin's add form allocates a serial. Before it did, `serial` was `editable=False` and so on
+      no form, and the column is unique but not null — the first plant added by hand would have saved
+      blank and the second would have failed on the index
+- [ ] An endpoint for either. All three routes are staff-side; a cultivator does nothing themselves
+      until Block 9
 - [ ] Stock on hand **export** — `drawio`, cultivator story v1. The read is
       `Plant.objects.available_from(cultivator)`; there is no stock model and
       `design/backend.md` section 3 records why. Import is the upload above

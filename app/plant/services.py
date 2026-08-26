@@ -27,20 +27,28 @@ filling it in asserts what the cultivator expects the listing to offer. A
 mismatch is an error telling them to change the listing -- which is the one place
 that list is edited. Left blank, the plant inherits silently.
 
-**Not built here.** Individual plant capture, which is the same validation
-against one row and belongs with the endpoint in Block 9; the stock-on-hand
-export, which is a read over ``Plant.objects.available_from``; and any
-notification, which is Block 8.
+**Both entry points share everything but their source.**
+``cultivator-stock-upload.md`` opens with "Cultivators can load individual plants
+**or** batch upload multiple plants using an excel template" and then gives *one*
+list of required fields for both. So there is one list here:
+``upload_plants`` reads a workbook and ``capture_plant`` takes a mapping, and from
+that point they are the same three checks and the same write. The alternative --
+a second validator for the single-plant form -- would eventually disagree with
+this one, and the half that disagreed would be whichever was used less.
+
+**Not built here.** The stock-on-hand export, which is a read over
+``Plant.objects.available_from``; and any notification, which is Block 8.
 """
 from dataclasses import dataclass, field
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from app.finished_product.models import FinishedProductType
 from app.strains.models import CultivatorStrainListing, ListingStatus
 
 from .models import Batch, Plant, allocate_serials
-from .spreadsheet import HEADINGS, RowError, read_rows
+from .spreadsheet import RowError, read_row, read_rows
 
 
 @dataclass
@@ -91,25 +99,8 @@ def upload_plants(cultivator, source, *, dry_run=False):
     rows_read = len({row['_row'] for row in rows} | {error.row for error in errors})
     report = UploadReport(dry_run=dry_run, rows_read=rows_read, errors=list(errors))
 
-    listings = _listings_for(cultivator)
-    product_types = _product_types()
-
-    resolved = []
-    for row in rows:
-        listing, row_errors = _resolve_listing(row, listings)
-        if listing is not None:
-            row_errors.extend(
-                _check_product_types(row, listing, product_types)
-            )
-        report.errors.extend(row_errors)
-        if listing is not None and not row_errors:
-            resolved.append((row, listing))
-
-    # Against the database as well as within the file. `spreadsheet` catches a
-    # plant ID repeated inside the workbook; this catches one that collides with
-    # stock already loaded, which is the more likely mistake -- a cultivator
-    # re-uploading a file they have already used.
-    report.errors.extend(_check_existing_plant_ids(resolved))
+    resolved, prepare_errors = prepare_rows(cultivator, rows)
+    report.errors.extend(prepare_errors)
 
     if report.errors:
         report.errors.sort(key=lambda error: (error.row, error.column or ''))
@@ -119,36 +110,122 @@ def upload_plants(cultivator, source, *, dry_run=False):
         report.ok = True
         return report
 
-    with transaction.atomic():
-        batches = _batches_for(cultivator, resolved)
-        # One allocation for the whole upload, so the serials in a crop come out
-        # contiguous. See `models.allocate_serials`.
-        serials = allocate_serials(len(resolved))
-
-        created = []
-        for serial, (row, listing) in zip(serials, resolved):
-            # `Plant.objects.create` one at a time rather than `bulk_create`,
-            # deliberately. `bulk_create` does not call `save`, and `save` is the
-            # only thing deriving the leaf rating -- which, uniquely among this
-            # project's derived columns, has no check constraint to catch the
-            # omission (see the field). Five hundred inserts in one transaction
-            # is a cost worth paying for a column nothing else guards.
-            created.append(Plant.objects.create(
-                serial=serial,
-                cultivator_plant_id=row['cultivator_plant_id'],
-                listing=listing,
-                batch=batches.get(row['batch'].casefold()) if row['batch'] else None,
-                grow_price=row['grow_price'],
-                minimum_yield_grams=row['minimum_yield_grams'],
-                planting_date=row['planting_date'],
-                estimated_bloom_date=row['estimated_bloom_date'],
-                estimated_harvest_date=row['estimated_harvest_date'],
-            ))
+    created = write_plants(cultivator, resolved)
 
     report.ok = True
     report.created = created
-    report.batches = sorted({plant.batch.reference for plant in created if plant.batch_id})
+    report.batches = sorted({
+        plant.batch.reference for plant in created if plant.batch_id
+    })
     return report
+
+
+def capture_plant(cultivator, **raw):
+    """Load one plant. Returns the :class:`~app.plant.models.Plant`.
+
+    The other half of ``cultivator-stock-upload.md``: "Cultivators can load
+    individual plants **or** batch upload multiple plants". The brief describes
+    one list of requirements for both, so this is the same list -- literally the
+    same functions. ``raw`` is a mapping keyed like ``spreadsheet.COLUMNS``,
+    holding whatever the caller has: form input, JSON, or values typed at a
+    shell.
+
+    That reuse is the whole point of the shape. Two implementations of "is this a
+    date" would eventually disagree, and the one that disagreed would be
+    whichever was exercised less -- which is this one, until Block 9 puts an
+    endpoint in front of it.
+
+    Raises ``ValidationError`` with a dict keyed by the internal field names, so
+    a form can attach each message to the field it belongs to. That is what
+    ``RowError.key`` exists for.
+    """
+    row, errors = read_row(raw)
+
+    resolved = []
+    if row is not None:
+        resolved, prepare_errors = prepare_rows(cultivator, [row])
+        errors = list(errors) + list(prepare_errors)
+
+    if errors:
+        raise ValidationError({
+            error.key: ValidationError(error.message, code='invalid')
+            for error in errors
+        })
+
+    return write_plants(cultivator, resolved)[0]
+
+
+def prepare_rows(cultivator, rows):
+    """Check coerced rows against the database. Returns ``(resolved, errors)``.
+
+    ``resolved`` is a list of ``(row, listing)`` pairs for the rows that survived;
+    every row with a complaint is left out of it, because nothing is written when
+    there is a complaint at all.
+
+    Shared by both entry points above, which is what makes "the same validation"
+    a fact about the code rather than a claim in a docstring.
+    """
+    listings = _listings_for(cultivator)
+    product_types = _product_types()
+
+    resolved = []
+    errors = []
+    for row in rows:
+        listing, row_errors = _resolve_listing(row, listings)
+        if listing is not None:
+            row_errors.extend(_check_product_types(row, listing, product_types))
+        errors.extend(row_errors)
+        if listing is not None and not row_errors:
+            resolved.append((row, listing))
+
+    # Against the database as well as within the source. `spreadsheet` catches a
+    # plant ID repeated inside one workbook; this catches one that collides with
+    # stock already loaded, which is the more likely mistake -- a cultivator
+    # re-uploading a file they have already used, or retyping a plant they
+    # entered yesterday.
+    errors.extend(_check_existing_plant_ids(resolved))
+    if errors:
+        # A row named in a duplicate complaint must not also be written. Recomputed
+        # rather than tracked, because `_check_existing_plant_ids` reports by row
+        # number and the pairs are what the caller writes from.
+        blamed = {error.row for error in errors}
+        resolved = [pair for pair in resolved if pair[0]['_row'] not in blamed]
+
+    return resolved, errors
+
+
+@transaction.atomic
+def write_plants(cultivator, resolved):
+    """Write validated rows as stock. Returns the plants, in the order given.
+
+    The only place a plant is created, so a serial is allocated the same way and
+    a batch is resolved the same way whether one plant arrived or five hundred.
+    """
+    batches = _batches_for(cultivator, resolved)
+    # One allocation for the whole write, so the serials in a crop come out
+    # contiguous. See `models.allocate_serials`.
+    serials = allocate_serials(len(resolved))
+
+    created = []
+    for serial, (row, listing) in zip(serials, resolved):
+        # `Plant.objects.create` one at a time rather than `bulk_create`,
+        # deliberately. `bulk_create` does not call `save`, and `save` is the
+        # only thing deriving the leaf rating -- which, uniquely among this
+        # project's derived columns, has no check constraint to catch the
+        # omission (see the field). Five hundred inserts in one transaction is a
+        # cost worth paying for a column nothing else guards.
+        created.append(Plant.objects.create(
+            serial=serial,
+            cultivator_plant_id=row['cultivator_plant_id'],
+            listing=listing,
+            batch=batches.get(row['batch'].casefold()) if row['batch'] else None,
+            grow_price=row['grow_price'],
+            minimum_yield_grams=row['minimum_yield_grams'],
+            planting_date=row['planting_date'],
+            estimated_bloom_date=row['estimated_bloom_date'],
+            estimated_harvest_date=row['estimated_harvest_date'],
+        ))
+    return created
 
 
 def template_reference(cultivator):
@@ -217,7 +294,7 @@ def _resolve_listing(row, listings):
 
     return None, [RowError(
         row['_row'],
-        HEADINGS['strain'],
+        'strain',
         row['strain'],
         'You have no listed offering for that strain. Check the spelling '
         'against the Reference sheet, publish the listing if it is still a '
@@ -242,7 +319,7 @@ def _check_product_types(row, listing, product_types):
         if product is None:
             errors.append(RowError(
                 row['_row'],
-                HEADINGS['finished_product_types'],
+                'finished_product_types',
                 label,
                 'No such finished product type is available. The Reference '
                 'sheet lists what your strains will be delivered as.',
@@ -250,7 +327,7 @@ def _check_product_types(row, listing, product_types):
         elif product.pk not in offered:
             errors.append(RowError(
                 row['_row'],
-                HEADINGS['finished_product_types'],
+                'finished_product_types',
                 label,
                 f'Your {listing.strain.name} listing does not offer that. Add '
                 'it to the listing first -- a plant cannot offer something its '
@@ -284,7 +361,7 @@ def _check_existing_plant_ids(resolved):
         if row_number is not None:
             errors.append(RowError(
                 row_number,
-                HEADINGS['cultivator_plant_id'],
+                'cultivator_plant_id',
                 plant_id,
                 'You have already loaded a plant with that ID for this strain.',
             ))

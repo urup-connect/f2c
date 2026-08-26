@@ -59,9 +59,18 @@ every model; each feature owns its own models, admin, schemas and router.
 
 `plant` is Block 3 and the spine of the product: everything the club sells is a row in its table. The
 model layer is built — plant, batch, serial allocation, ownership history, the leaf rating — and so is
-the Excel batch upload `cultivator-stock-upload.md` asks for, as a per-cultivator template, a reader
-that issues no query, and a service that refuses to write anything unless every row is valid. Both
-run from the command line; there is no endpoint, and no individual-plant capture screen.
+both halves of capture. `cultivator-stock-upload.md` opens with "Cultivators can load individual
+plants **or** batch upload multiple plants using an excel template" and then gives *one* list of
+required fields for both — so there is one list in the code. `upload_plants` reads a workbook and
+`capture_plant` takes a mapping; from that point they are the same coercion, the same three
+database checks and the same write. A second validator for the single-plant form would eventually
+disagree with the first, and the half that disagreed would be whichever was used less.
+
+Three interfaces, none of them an endpoint: `manage.py plant_template` and `manage.py upload_plants`
+for a batch, `manage.py add_plant` for one, and the admin's add form for one. The admin form
+assembles a row in the reader's own shape and hands it to the same two functions, then maps each
+complaint back onto the field it came from — which is what `RowError.key` is for. Block 9 is where a
+cultivator gets to do any of this themselves.
 
 The upload is split in two on purpose. `plant/spreadsheet.py` decides whether a *file* is readable and
 touches no model; `plant/services.py` decides whether what it read is *true* and issues every query.
@@ -726,7 +735,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 1119 |
+| Tests | 1157 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
 | Backend | SQLite locally; **MySQL 8.4 in CI**, which is where the constraints are proven — section 8.6 |
 
@@ -765,6 +774,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `plant/tests/test_models.py` | Serial allocation and the refusal to restart a sequence; the constraints against raw updates; the ownership history and the one gap in it; the four-plant count that excludes a harvested plant |
 | `plant/tests/test_spreadsheet.py` | The template round-tripping through its own reader; the ambiguous date that is refused rather than guessed; the price refused rather than rounded; duplicates inside one file; that there is no cultivator column and none for anything the platform generates |
 | `plant/tests/test_upload.py` | That one bad row stops the file and consumes no serial; that another cultivator's listing is invisible; the C18 column confirming and never overriding; batches shared across two uploads; every refusal the commands make |
+| `plant/tests/test_capture.py` | That a single capture is refused by the same rules as a workbook row and shares its serial counter and plant-ID namespace; that errors arrive keyed by field; and that the admin allocates a serial on add |
 
 The suite is written around a specific idea: **test what is invisible when it breaks.** An encrypted
 column that stops round-tripping loses data with no error. A denormalised `is_active` that drifts

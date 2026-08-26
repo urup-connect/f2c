@@ -6,11 +6,16 @@ and the model are singular and serialised, because a cultivator's stock is a set
 of individual plants rather than a quantity of anything; `design/backend.md`
 section 3 records why there is no stock model.
 
-This admin is the operator's tool and not the cultivator's screen. Block 3's
-capture work — individual entry and the Excel batch upload — is a cultivator
-feature behind an endpoint that does not exist yet, so what staff get here is the
-ability to answer questions and to make the two corrections the brief names as
-administrative: disable a plant, and disable a batch.
+This admin is the operator's tool and not the cultivator's screen. Until Block 9
+gives cultivators an endpoint, it is also the only place a plant can be entered by
+hand — through `PlantCaptureForm`, which validates through the *same* functions
+the Excel upload uses rather than restating any of their rules. For more than a
+handful of plants the template is the route: `manage.py plant_template` then
+`manage.py upload_plants`.
+
+Beyond that, what staff get here is the ability to answer questions and to make
+the two corrections the brief names as administrative: disable a plant, and
+disable a batch.
 
 Three things are deliberately not editable, and each would break something
 quiet if it were:
@@ -32,10 +37,104 @@ admin not offering it is load-bearing rather than tidy.
 It is the same argument `documents` makes about a consent row: evidence somebody
 can retype is not evidence.
 """
+from django import forms
 from django.contrib import admin, messages
 from django.utils import timezone
 
-from .models import Batch, Plant, PlantOwnership, PlantStatus, SerialCounter
+from app.strains.models import CultivatorStrainListing, ListingStatus
+
+from .models import (
+    Batch,
+    Plant,
+    PlantOwnership,
+    PlantStatus,
+    SerialCounter,
+    allocate_serials,
+)
+from .services import prepare_rows
+from .spreadsheet import read_row
+
+#: `RowError.key` uses the template's field names. Two of them are not fields on
+#: this form: a row names a strain where the form picks the listing that strain
+#: belongs to, and the product types are inherited rather than entered.
+ERROR_FIELD = {'strain': 'listing', 'finished_product_types': None}
+
+
+class PlantCaptureForm(forms.ModelForm):
+    """Adding one plant, validated by the same code the Excel upload uses.
+
+    ``cultivator-stock-upload.md`` asks for individual capture beside the batch
+    upload, and gives one list of requirements for both. This form is the staff
+    route to the first of those until Block 9 gives cultivators their own screen.
+
+    **The validation is not reimplemented here.** ``clean`` assembles a row in the
+    shape the template reader produces and hands it to ``read_row`` and
+    ``prepare_rows`` -- the same two functions an upload goes through -- then maps
+    each complaint back onto the field it came from. So the date rules, the
+    plant-ID duplicate check and the listing check are the upload's, exactly, and
+    there is no second set to drift.
+
+    That matters most for the dates. ``Plant`` carries check constraints for
+    bloom-after-planting and harvest-after-planting, and a constraint violation
+    reaches the admin as an ``IntegrityError`` -- a 500 page, not a field error.
+    Validating here is what turns those into something a person can act on, and
+    it also catches harvest-before-bloom, which no constraint expresses.
+    """
+
+    class Meta:
+        model = Plant
+        fields = (
+            'listing', 'cultivator_plant_id', 'batch', 'grow_price',
+            'minimum_yield_grams', 'planting_date', 'estimated_bloom_date',
+            'estimated_harvest_date',
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only listings a member can actually buy against. Loading stock into a
+        # draft listing puts plants behind a wall, and `prepare_rows` would
+        # refuse it anyway -- this stops it being offered in the first place.
+        self.fields['listing'].queryset = (
+            CultivatorStrainListing.objects
+            .filter(status=ListingStatus.LISTED)
+            .select_related('strain', 'cultivator')
+            .order_by('cultivator__nickname', 'strain__name')
+        )
+
+    def clean(self):
+        cleaned = super().clean()
+        listing = cleaned.get('listing')
+        if listing is None:
+            # Every check below is scoped to a cultivator, and without a listing
+            # there is no cultivator to scope to. The field already carries its
+            # own "this is required".
+            return cleaned
+
+        raw = {
+            'cultivator_plant_id': cleaned.get('cultivator_plant_id'),
+            'strain': listing.strain.name,
+            'grow_price': cleaned.get('grow_price'),
+            'minimum_yield_grams': cleaned.get('minimum_yield_grams'),
+            'planting_date': cleaned.get('planting_date'),
+            'estimated_bloom_date': cleaned.get('estimated_bloom_date'),
+            'estimated_harvest_date': cleaned.get('estimated_harvest_date'),
+            # Inherited from the listing, so there is nothing to confirm.
+            'finished_product_types': None,
+            # The form picks a Batch row; `_batches_for` resolves a reference
+            # string. Left blank so the two do not both try.
+            'batch': None,
+        }
+
+        row, errors = read_row(raw)
+        if row is not None:
+            _, prepare_errors = prepare_rows(listing.cultivator, [row])
+            errors = list(errors) + list(prepare_errors)
+
+        for error in errors:
+            field = ERROR_FIELD.get(error.key, error.key)
+            self.add_error(field, error.message)
+
+        return cleaned
 
 
 class PlantOwnershipInline(admin.TabularInline):
@@ -65,6 +164,10 @@ class PlantOwnershipInline(admin.TabularInline):
 
 @admin.register(Plant)
 class PlantAdmin(admin.ModelAdmin):
+    # The add form is a different form from the change form, and has to be: on
+    # add there is no serial yet and the listing is a choice, while on change the
+    # serial is history and the listing is what the plant was sold against.
+    add_form = PlantCaptureForm
     list_display = (
         'serial',
         'cultivator_plant_id',
@@ -157,6 +260,66 @@ class PlantAdmin(admin.ModelAdmin):
             super().get_queryset(request)
             .select_related('listing__strain', 'listing__cultivator', 'owner', 'batch')
         )
+
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        """The capture form on add, the ordinary one on change."""
+        if not change:
+            kwargs['form'] = self.add_form
+            # `fieldsets` below describes an existing plant, including fields the
+            # capture form does not carry. Cleared so the add page renders the
+            # capture form's own fields.
+            kwargs.setdefault('fields', None)
+        return super().get_form(request, obj, change=change, **kwargs)
+
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:
+            return (
+                (
+                    None,
+                    {
+                        'fields': (
+                            'listing', 'cultivator_plant_id', 'batch',
+                            'grow_price', 'minimum_yield_grams',
+                            'planting_date', 'estimated_bloom_date',
+                            'estimated_harvest_date',
+                        ),
+                        'description': (
+                            'For more than a handful of plants use the template '
+                            'instead: <code>manage.py plant_template</code> then '
+                            '<code>manage.py upload_plants</code>. The serial, '
+                            'the leaf rating and the status are allocated by the '
+                            'platform and are not asked for here.'
+                        ),
+                    },
+                ),
+            )
+        return super().get_fieldsets(request, obj)
+
+    def get_readonly_fields(self, request, obj=None):
+        # None of the read-only fields exist on the add form -- a serial that has
+        # not been allocated and an owner that cannot yet exist have nothing to
+        # display -- and listing them would make the add page fail to render.
+        if obj is None:
+            return ()
+        return super().get_readonly_fields(request, obj)
+
+    def save_model(self, request, obj, form, change):
+        """Allocate the serial on the way in.
+
+        This is what makes adding through the admin safe at all. ``serial`` is
+        ``editable=False``, so it is on no form and was left empty -- and because
+        the column is unique but not null, the *first* plant added by hand would
+        have saved with a blank serial and the second would have failed on the
+        index. A plant with no serial has nothing to put on a certificate of
+        ownership and nothing for an administrator to trace.
+
+        The upload allocates a contiguous block for a whole file; one plant takes
+        one. Both go through ``allocate_serials``, so both draw on the same
+        counter and neither can reissue a number.
+        """
+        if not change and not obj.serial:
+            obj.serial = allocate_serials(1)[0]
+        super().save_model(request, obj, form, change)
 
     @admin.display(description='Strain', ordering='listing__strain__name')
     def strain_name(self, obj):

@@ -83,20 +83,31 @@ MONEY = Decimal('0.01')
 
 
 class RowError:
-    """One thing wrong with one cell, in the terms the spreadsheet uses.
+    """One thing wrong with one field, in the terms its consumer uses.
 
     ``row`` is the number Excel shows in its own margin, not a zero-based index
     into anything -- a cultivator fixing an upload is looking at the file, and an
     error report they have to translate is an error report they will misread.
+
+    ``key`` is the internal field name and ``column`` is the spreadsheet heading
+    derived from it. Both, because the same error has two audiences: an upload
+    report names the column somebody is looking at, and a form -- the admin's, or
+    Block 9's endpoint -- has to attach the message to a field. Carrying only the
+    heading would leave the form matching on display text.
     """
 
-    __slots__ = ('row', 'column', 'value', 'message')
+    __slots__ = ('row', 'key', 'value', 'message')
 
-    def __init__(self, row, column, value, message):
+    def __init__(self, row, key, value, message):
         self.row = row
-        self.column = column
+        self.key = key
         self.value = value
         self.message = message
+
+    @property
+    def column(self):
+        """The spreadsheet heading, for a report a cultivator reads."""
+        return HEADINGS.get(self.key, self.key)
 
     def __str__(self):
         where = f'Row {self.row}'
@@ -300,7 +311,8 @@ def _read_sheet(sheet):
             # would carry hundreds of complaints about rows nobody typed.
             continue
 
-        row, row_errors = _read_row(values, index_of, offset)
+        raw = {key: _cell(values, position) for key, position in index_of.items()}
+        row, row_errors = read_row(raw, row_number=offset)
 
         # Within the file as well as against the database. Two rows claiming one
         # plant ID is a mistake the unique constraint would catch on the second
@@ -311,7 +323,7 @@ def _read_sheet(sheet):
             if key in seen_plant_ids:
                 row_errors.append(RowError(
                     offset,
-                    HEADINGS['cultivator_plant_id'],
+                    'cultivator_plant_id',
                     plant_id,
                     f'Already used for this strain on row {seen_plant_ids[key]}.',
                 ))
@@ -364,17 +376,30 @@ def _is_blank(values):
     return all(value is None or str(value).strip() == '' for value in values or ())
 
 
-def _read_row(values, index_of, row_number):
-    """Coerce one spreadsheet row. Returns ``(row or None, errors)``."""
-    raw = {
-        key: _cell(values, position) for key, position in index_of.items()
-    }
+def read_row(raw, row_number=1):
+    """Coerce one plant's raw values. Returns ``(row or None, errors)``.
+
+    Public, and the reason this module has a single-row entry point at all: an
+    upload and an individual capture are the same nine fields with two different
+    sources, and ``cultivator-stock-upload.md`` describes them as one list of
+    requirements. Two implementations of "is this a date" would eventually
+    disagree, and the one that disagreed would be whichever was used less.
+
+    ``raw`` is a mapping keyed by the internal names in :data:`COLUMNS`, holding
+    whatever the source produced -- an Excel cell, a form field, a JSON value.
+    Missing keys are treated as blank, so a caller need not supply the optional
+    ones.
+
+    ``row_number`` is what the errors are labelled with. It defaults to 1 for a
+    single capture, where there is no row to point at and the number is noise;
+    the sheet reader passes the line the cultivator is looking at.
+    """
     errors = []
 
     for key in REQUIRED:
         if raw.get(key) in (None, ''):
             errors.append(RowError(
-                row_number, HEADINGS[key], None, 'This is required.'
+                row_number, key, None, 'This is required.'
             ))
 
     row = {'_row': row_number}
@@ -386,7 +411,7 @@ def _read_row(values, index_of, row_number):
         value = raw.get(key)
         if value in (None, ''):
             continue
-        amount, error = _to_decimal(value, row_number, HEADINGS[key])
+        amount, error = _to_decimal(value, row_number, key)
         if error:
             errors.append(error)
         else:
@@ -396,7 +421,7 @@ def _read_row(values, index_of, row_number):
         value = raw.get(key)
         if value in (None, ''):
             continue
-        when, error = _to_date(value, row_number, HEADINGS[key])
+        when, error = _to_date(value, row_number, key)
         if error:
             errors.append(error)
         else:
@@ -413,21 +438,21 @@ def _read_row(values, index_of, row_number):
     if row['estimated_bloom_date'] < row['planting_date']:
         errors.append(RowError(
             row_number,
-            HEADINGS['estimated_bloom_date'],
+            'estimated_bloom_date',
             row['estimated_bloom_date'].isoformat(),
             'A plant cannot flower before it was planted.',
         ))
     if row['estimated_harvest_date'] < row['planting_date']:
         errors.append(RowError(
             row_number,
-            HEADINGS['estimated_harvest_date'],
+            'estimated_harvest_date',
             row['estimated_harvest_date'].isoformat(),
             'A plant cannot be harvested before it was planted.',
         ))
     if row['estimated_harvest_date'] < row['estimated_bloom_date']:
         errors.append(RowError(
             row_number,
-            HEADINGS['estimated_harvest_date'],
+            'estimated_harvest_date',
             row['estimated_harvest_date'].isoformat(),
             'Harvest is expected before bloom. Check the two dates.',
         ))
@@ -446,31 +471,31 @@ def _cell(values, position):
     return value or None if isinstance(value, str) else value
 
 
-def _to_decimal(value, row_number, column):
+def _to_decimal(value, row_number, key):
     if isinstance(value, bool):
         # `True` is an int in Python and would quietly become R1.
-        return None, RowError(row_number, column, value, 'This must be a number.')
+        return None, RowError(row_number, key, value, 'This must be a number.')
     try:
         amount = Decimal(str(value).replace(' ', '').replace(',', ''))
     except (InvalidOperation, ValueError, TypeError):
         return None, RowError(
-            row_number, column, value, 'This must be a number.'
+            row_number, key, value, 'This must be a number.'
         )
 
     if amount != amount.quantize(MONEY):
         return None, RowError(
-            row_number, column, value,
+            row_number, key, value,
             'At most two decimal places. This has more, which is usually a '
             'formula rather than a price.',
         )
     if amount <= 0:
         return None, RowError(
-            row_number, column, value, 'This must be more than zero.'
+            row_number, key, value, 'This must be more than zero.'
         )
     return amount.quantize(MONEY), None
 
 
-def _to_date(value, row_number, column):
+def _to_date(value, row_number, key):
     if isinstance(value, datetime):
         return value.date(), None
     if isinstance(value, date):
@@ -479,7 +504,7 @@ def _to_date(value, row_number, column):
         return date.fromisoformat(str(value).strip()), None
     except (ValueError, TypeError):
         return None, RowError(
-            row_number, column, value,
+            row_number, key, value,
             'This must be a date. Format the cell as a date, or type it as '
             '2026-03-01 — a date like 03/04/2026 means different things in '
             'different places and will not be guessed at.',
