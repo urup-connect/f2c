@@ -16,7 +16,8 @@ dependencies = [
     "cryptography (>=45.0)",
     "django-storages[azure] (>=1.14,<2.0)",
     "azure-identity (>=1.19)",
-    "pillow (>=11.0)"
+    "pillow (>=11.0)",
+    "mysqlclient (>=2.2.8,<3.0.0)"
 ]
 
 

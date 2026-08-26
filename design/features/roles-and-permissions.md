@@ -264,7 +264,7 @@ that leaked one would raise no error until it was used.
 
 Club rules have no button of their own in the original brief, and that stays true: they are
 published through the Django admin, where the document machinery already lives. See
-`design/backend.md` section 9.
+`design/backend.md` section 10.
 
 ### 6.3 Cultivation
 

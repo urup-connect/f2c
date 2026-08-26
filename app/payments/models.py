@@ -130,6 +130,31 @@ class Subscription(models.Model):
         db_index=True,
     )
 
+    # The member's live-subscription slot: a copy of `user_id` while this
+    # arrangement is in force, and null once it is cancelled or lapsed. Derived
+    # by `save`, never set by hand, and not a form field.
+    #
+    # It exists to carry "at most one live subscription per member" as an
+    # unconditional unique index. The natural spelling of that rule is
+    # `UniqueConstraint(fields=('user',), condition=Q(status__in=LIVE_STATUSES))`
+    # -- a partial unique index, which **MySQL cannot build at any version, and
+    # which Django then omits without raising anything.** No error, no warning,
+    # nothing in the migration output: the rule was absent from every deployed
+    # schema while this model, its migration and `tests/test_models.py` all still
+    # described it, and the failure it was written to prevent is Payfast holding
+    # two mandates against one member and billing both. `design/backend.md`
+    # section 8.2.
+    #
+    # Nulls are distinct under a unique index on both SQLite and MySQL, so any
+    # number of dead subscriptions may sit against one member while at most one
+    # live one can. That is the rule, exactly, on every backend.
+    #
+    # A plain UUID rather than a second foreign key to the same account. A
+    # foreign key would bring a second cascade path and a second index over the
+    # same relation for no gain -- this column is not a relationship, it is a
+    # lock, and `user` remains the relationship.
+    live_for_user = models.UUIDField(null=True, blank=True, editable=False)
+
     # What was agreed, at the moment it was agreed. See the class docstring.
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     frequency = models.PositiveSmallIntegerField(
@@ -174,10 +199,56 @@ class Subscription(models.Model):
             # At most one arrangement in force per member. Without this, a
             # retried registration or a repaired row could leave two live
             # mandates against one account and Payfast billing twice.
+            #
+            # Over the derived `live_for_user` column and unconditional, because
+            # the conditional form of this index is one MySQL will not build and
+            # Django will not complain about. See the field's declaration.
             models.UniqueConstraint(
-                fields=('user',),
-                condition=models.Q(status__in=[s.value for s in LIVE_STATUSES]),
+                fields=('live_for_user',),
                 name='one_live_subscription_per_member',
+                violation_error_message=(
+                    'That member already holds a live subscription.'
+                ),
+            ),
+            # And this is what keeps the index above meaning what it says.
+            #
+            # The rule used to be stated over `status` directly, so a raw
+            # `.update(status='pending')` on a cancelled row -- exactly the
+            # repair somebody attempts by hand when a member says their payment
+            # link is dead -- was refused by the database. Moving the rule onto a
+            # derived column would have quietly given that up: the update leaves
+            # `live_for_user` null, no unique index fires, and the member ends up
+            # with two live mandates.
+            #
+            # So the derived column is tied to the two columns it is derived
+            # from, in SQL. `accounts.User`'s `is_active` constraint is the same
+            # pattern for the same reason, and section 3.1 makes the general
+            # argument: `save` keeps a denormalised column true, and a check
+            # constraint is what catches the write that went around `save`.
+            # `live_for_user__isnull=False` is not redundant beside the equality,
+            # and leaving it out made this constraint silently useless. A `CHECK`
+            # fails only when its condition is *false*; SQL comparisons against
+            # null are *unknown*, and unknown passes. So `live_for_user = user`
+            # on a null column was unknown rather than false, the whole OR was
+            # unknown, and the raw update this exists to refuse went through. The
+            # explicit null test is what makes that branch false.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status__in=[s.value for s in LIVE_STATUSES],
+                        live_for_user__isnull=False,
+                        live_for_user=models.F('user'),
+                    )
+                    | (
+                        ~models.Q(status__in=[s.value for s in LIVE_STATUSES])
+                        & models.Q(live_for_user__isnull=True)
+                    )
+                ),
+                name='live_for_user_matches_status',
+                violation_error_message=(
+                    'live_for_user is derived from status and cannot be set '
+                    'directly.'
+                ),
             ),
             # An active subscription is one Payfast has taken money against, so
             # it has a token and a paid-up date. Stated in SQL because the
@@ -194,6 +265,25 @@ class Subscription(models.Model):
 
     def __str__(self):
         return f'{self.user_id} {self.get_status_display()} R{self.amount}'
+
+    def save(self, *args, update_fields=None, **kwargs):
+        """Derive the live-subscription slot, then write.
+
+        The same shape as ``accounts.User.save`` and for the same reason: a
+        column the database enforces a rule over must never be set by a caller,
+        and a partial save that moves ``status`` must carry the slot with it or
+        a cancelled subscription keeps its lock and the member can never open
+        another. ``services.cancel`` and ``services.lapse_overdue`` both save
+        with ``update_fields``, so this is not hypothetical.
+        """
+        self.live_for_user = self.user_id if self.status in LIVE_STATUSES else None
+
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if 'status' in update_fields or 'user' in update_fields:
+                update_fields.add('live_for_user')
+
+        return super().save(*args, update_fields=update_fields, **kwargs)
 
     @property
     def cycle_days(self):

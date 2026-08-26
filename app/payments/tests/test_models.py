@@ -95,7 +95,13 @@ class LiveSubscriptionConstraintTests(PaymentsTestCase):
 
     def test_the_constraint_holds_against_a_raw_update(self):
         """Reviving a cancelled subscription while one is already live is
-        exactly the repair somebody would attempt by hand."""
+        exactly the repair somebody would attempt by hand.
+
+        Since 0002 this is caught by ``live_for_user_matches_status`` rather than
+        by the unique index directly -- the index is over a derived column, and a
+        raw update leaves that column behind. Which constraint fires does not
+        matter; that the write is refused does. See the model.
+        """
         cancelled = self.other(SubscriptionStatus.CANCELLED)
         cancelled.save()
 
@@ -103,6 +109,114 @@ class LiveSubscriptionConstraintTests(PaymentsTestCase):
             with transaction.atomic():
                 Subscription.objects.filter(pk=cancelled.pk).update(
                     status=SubscriptionStatus.PENDING
+                )
+
+
+class LiveSlotTests(PaymentsTestCase):
+    """The derived column carrying "one live subscription per member".
+
+    ``design/backend.md`` section 8.2. The rule used to be a partial unique
+    index, which MySQL will not build and Django omits in silence, so it moved
+    onto a column that is a copy of ``user_id`` while the subscription is in
+    force and null once it is not.
+
+    The risk that buys is the one every denormalised column has, and here it is
+    money: a cancelled subscription still holding its slot means the member can
+    never open another, and a cancelled one that *lost* its slot while still
+    live means Payfast can hold two mandates. So the column is asserted directly,
+    and so is the constraint that catches a write which bypassed ``save``.
+    """
+
+    def test_a_live_subscription_holds_its_member_s_slot(self):
+        self.assertEqual(self.subscription.live_for_user, self.member.pk)
+
+    def test_activating_keeps_the_slot(self):
+        self.subscription.status = SubscriptionStatus.ACTIVE
+        self.subscription.gateway_token = 't'
+        self.subscription.paid_until = gateway.billing_date()
+        self.subscription.save()
+
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.live_for_user, self.member.pk)
+
+    def test_cancelling_releases_the_slot(self):
+        self.subscription.status = SubscriptionStatus.CANCELLED
+        self.subscription.save()
+
+        self.subscription.refresh_from_db()
+        self.assertIsNone(self.subscription.live_for_user)
+
+    def test_a_partial_save_releases_the_slot(self):
+        """Where a derived column normally gets left behind. `services.cancel`
+        and `services.lapse_overdue` both save this way."""
+        self.subscription.status = SubscriptionStatus.LAPSED
+        self.subscription.save(update_fields=['status'])
+
+        self.subscription.refresh_from_db()
+        self.assertIsNone(self.subscription.live_for_user)
+
+    def test_a_released_slot_lets_the_member_start_again(self):
+        """The whole reason the rule is about live subscriptions and not about
+        members: somebody who cancelled and rejoined has a history."""
+        self.subscription.status = SubscriptionStatus.CANCELLED
+        self.subscription.save()
+
+        fresh = Subscription.objects.create(
+            user=self.member,
+            amount=Decimal('150.00'),
+            frequency=gateway.FREQUENCIES['monthly'],
+            checkout_token=new_checkout_token(),
+            checkout_expires_at=timezone.now() + timedelta(days=1),
+        )
+
+        self.assertEqual(fresh.live_for_user, self.member.pk)
+
+    def test_several_dead_subscriptions_may_sit_against_one_member(self):
+        """Nulls are distinct under a unique index on every backend, which is
+        the whole trick."""
+        for status in (
+            SubscriptionStatus.CANCELLED,
+            SubscriptionStatus.LAPSED,
+            SubscriptionStatus.CANCELLED,
+        ):
+            Subscription.objects.create(
+                user=self.member,
+                status=status,
+                amount=Decimal('150.00'),
+                frequency=gateway.FREQUENCIES['monthly'],
+                checkout_token=new_checkout_token(),
+                checkout_expires_at=timezone.now() + timedelta(days=1),
+            )
+
+        self.assertEqual(
+            Subscription.objects.filter(
+                user=self.member, live_for_user__isnull=True
+            ).count(),
+            3,
+        )
+
+    def test_a_slot_pointing_at_the_wrong_member_is_refused(self):
+        """It is a copy of `user_id`, and the constraint says so in SQL. A slot
+        naming somebody else would take *their* ability to subscribe."""
+        other_member = self.member.__class__.objects.create_user(
+            email='other@example.com'
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Subscription.objects.filter(pk=self.subscription.pk).update(
+                    live_for_user=other_member.pk
+                )
+
+    def test_a_live_subscription_cannot_have_an_empty_slot(self):
+        """The three-valued-logic case: a CHECK passes when its condition is
+        unknown, and comparing null with `=` is unknown. Without the explicit
+        null test in the constraint this write would succeed and the unique
+        index would then guard nothing."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Subscription.objects.filter(pk=self.subscription.pk).update(
+                    live_for_user=None
                 )
 
 
@@ -212,9 +326,13 @@ class QuerySetTests(PaymentsTestCase):
         self.assertIn(self.subscription, Subscription.objects.live())
 
     def test_live_excludes_a_cancelled_one(self):
-        Subscription.objects.filter(pk=self.subscription.pk).update(
-            status=SubscriptionStatus.CANCELLED
-        )
+        # Through `save`, not a raw `.update()`. This used the queryset as a
+        # shortcut to reach the state under test, and since `live_for_user`
+        # arrived a raw status change is refused by
+        # `live_for_user_matches_status` -- which is the point of that
+        # constraint, so the test moves rather than the rule.
+        self.subscription.status = SubscriptionStatus.CANCELLED
+        self.subscription.save(update_fields=['status'])
 
         self.assertEqual(Subscription.objects.live().count(), 0)
 

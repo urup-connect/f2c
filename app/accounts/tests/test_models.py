@@ -499,10 +499,15 @@ class MobileDuplicateGuardTests(TransactionTestCase):
 
     def setUp(self):
         super().setUp()
+        # `user_mobile_key_unique` since 0007 moved the rule off `mobile` and
+        # onto the derived `mobile_key`, because the conditional index this used
+        # to be is one MySQL will not build. The guard under test is still 0003's
+        # and still counts duplicates on `mobile` itself, which is the column it
+        # was written against. `design/backend.md` section 8.2.
         self.constraint = next(
             constraint
             for constraint in User._meta.constraints
-            if constraint.name == 'user_mobile_unique'
+            if constraint.name == 'user_mobile_key_unique'
         )
 
     def without_the_constraint(self):
@@ -568,18 +573,69 @@ class _DroppedConstraint:
 
     Only for the guard tests above, which have to create the state the
     constraint exists to prevent.
+
+    **It hides the constraint from the model as well as from the schema**, and
+    that is not belt and braces. SQLite cannot drop a table-level constraint in
+    place: Django rebuilds the whole table and regenerates its definition from
+    ``model._meta``, so a constraint still declared there comes straight back and
+    ``remove_constraint`` is a no-op that raises nothing. The rows this context
+    exists to create then fail on a constraint the caller believes it dropped.
+
+    This did not arise while the constraint carried a ``condition``, because a
+    partial unique constraint is a separate ``CREATE UNIQUE INDEX`` and dropping
+    one is a ``DROP INDEX`` that never consults the model. Migration 0007 made it
+    unconditional -- MySQL builds no partial index (``design/backend.md`` section
+    8.2) -- and that changed how it is dropped.
     """
 
     def __init__(self, constraint):
         self.constraint = constraint
 
+    def _without_the_constraint(self):
+        return [
+            constraint
+            for constraint in User._meta.constraints
+            if constraint.name != self.constraint.name
+        ]
+
+    @staticmethod
+    def _clear_rebuild_leftovers():
+        """Drop the ``new__`` tables SQLite's table rebuild leaves behind.
+
+        The rebuild creates a shadow copy of the table and of every
+        many-to-many through table beside it -- ``new__accounts_user_groups``
+        and ``new__accounts_user_user_permissions`` here -- and does not remove
+        the latter two. One rebuild is fine; the second fails with *table
+        already exists*, and this context manager does two.
+
+        Only ever true of SQLite, which is the only backend that rebuilds a
+        table to change a constraint.
+        """
+        if connection.vendor != 'sqlite':
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name LIKE 'new\\_\\_%' ESCAPE '\\'"
+            )
+            leftovers = [name for (name,) in cursor.fetchall()]
+            for name in leftovers:
+                cursor.execute(f'DROP TABLE "{name}"')
+
     def __enter__(self):
+        self.declared = User._meta.constraints
+        # Before the schema edit, because the table rebuild reads this.
+        User._meta.constraints = self._without_the_constraint()
+        self._clear_rebuild_leftovers()
         with connection.schema_editor() as editor:
             editor.remove_constraint(User, self.constraint)
         return self
 
     def __exit__(self, *exc_info):
         User.objects.all().delete()
+        User._meta.constraints = self.declared
+        self._clear_rebuild_leftovers()
         with connection.schema_editor() as editor:
             editor.add_constraint(User, self.constraint)
+        self._clear_rebuild_leftovers()
         return False

@@ -19,7 +19,7 @@ destroyed along with their personal data.
 Sections 4 and 5 are how those two are reconciled. The rest of the backend is conventional.
 
 The API surface is authentication and a health check, and nothing else. There is no membership, no
-payment, no cultivation record. Section 11 sets out what that means.
+payment, no cultivation record. Section 12 sets out what that means.
 
 ## 2. Why Django serves no pages
 
@@ -51,7 +51,58 @@ every model; each feature owns its own models, admin, schemas and router.
 | `documents` | Club documents, revisions, agreements | `accounts` |
 | `membership` | Turning a sign-up submission into a member. No models | `accounts`, `documents`, `payments` |
 | `payments` | The membership subscription, the Payfast integration, and what a payment does to an account | `accounts` |
+| `finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
+| `strains` | The strain catalogue, the aroma and effect vocabularies, and each cultivator's listing against a strain. No endpoints | `accounts`, `finished_product` |
+| `cultivators` | The cultivator's public profile. No endpoints | `accounts` |
 | `cultivatorscollective` | Settings, URLs, and the API root | all of them |
+
+`plant` is registered and empty. It is Block 3, and an empty app in `INSTALLED_APPS` is a placeholder
+rather than a feature.
+
+### There is no `stock` app, and there was one
+
+It was scaffolded on a reasonable reading of the brief — `stock` for what a cultivator has on hand,
+`plant` for what a member is holding — and removed, because that distinction does not survive the
+schema. It is recorded here because it is the kind of thing that gets re-proposed.
+
+**Every use of "stock" in `twp-tasks/` means a count of plants.** `member-roles.md` gives the
+cultivator "upload plant **stocks**" and "manage plant **stocks** — adjust available plants";
+`platform.allocate_sharing_member_stock` allocates *flowering plants*; `stock-holding-limit.md` is
+about "owning more than 4 flowering plants". There is no fungible inventory anywhere in this
+platform. Every unit is a serialised plant with a planting date, a harvest date and one owner.
+
+**The serial is the decisive argument.** `plant-id-numbers.md` says the platform-allocated serial
+exists "to track ownership changes", so a plant on a cultivator's hands and a plant in a member's
+holding have to be *the same row with a different owner*. Two tables means a sale moves a row between
+them, which breaks the continuity that is the serial's whole purpose — and breaks the certificate of
+ownership, which needs the planting date, the harvest date, the strain and the cultivator pseudonym on
+one row that outlives every transfer.
+
+So stock is a queryset over `Plant`, not a table: stock on hand is the plants a cultivator holds
+unsold, "adjust available plants" is a status change or a row added and removed, and the four-plant
+limit is a count. A model holding quantities would be a denormalised aggregate over another table —
+and section 8.2 is the record of what this project requires of a denormalised column: a specific
+justification, and **a check constraint tying it to its source**. A cross-table count is the one kind
+SQL cannot constrain at all, so it is the one kind this codebase has no way to make safe.
+
+Two smaller things point the same way. `features/landing.md` puts `stock` in `RETAIL_VOICE`, the
+banned-word list for member-facing copy — it is not the club's own vocabulary. And a `stock` app would
+need `plant` while `plant` would need to know its own availability, which is the one rule this app
+layout does not bend.
+
+The apps that *do* belong in that space are later blocks with models of their own and a one-way
+dependency on `plant`: orders and cart in Block 5, fulfilment in Block 6, the swap zone in Block 10.
+
+The three catalogue apps are the first to be built with no router at all, which is a deliberate
+consequence of the sequencing rather than an oversight: `todo.md` puts the models in Block 1 and every
+endpoint over them in Block 9, so the Django admin is the whole interface until then. What they do own
+is a full admin, which is where `member-roles.md`'s administrator CRUD over strains and product types
+actually lives today.
+
+The dependency direction is the thing to check when reading them. `finished_product` knows nothing
+about strains, listings or plants — the platform defines the catalogue and does not care who narrows
+it — and `strains` reaches into it by string reference. That is C18's three levels expressed as an
+import direction: platform catalogue, then the cultivator's listing, then the plant.
 
 The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
 belongs to the project rather than to any app, because it is the only one that has to know about all
@@ -91,7 +142,8 @@ that is most of the people who administer it.
 
 The primary key is a **UUIDv7**, not v4. It is time-ordered, so inserts land at the end of the
 primary-key index rather than scattering random writes across it. Free on SQLite, and it matters on
-PostgreSQL.
+MySQL, where InnoDB clusters the table on its primary key and a random one splits pages on every
+insert. Section 8.3 has the cost that comes with it.
 
 The sign-in identifier is a unique, **lower-cased whole** email address — local part included.
 Case-sensitive local parts are legal and universally ignored by real mail providers. Honouring them
@@ -353,7 +405,227 @@ A genuinely cross-site deployment — frontend and API on different registrable 
 `SameSite=None` plus HTTPS. Under one registrable domain (`app.example.co.za` and
 `api.example.co.za`), `Lax` is correct and simpler.
 
-## 8. Rate limiting
+## 8. The database
+
+SQLite in development. **QA and production are MySQL 8.4.** That is a decision with consequences,
+and this section exists because most of them are silent.
+
+### 8.0 How the connection is configured
+
+`cultivatorscollective/database.py` reads `DATABASES` from the environment, as a pure function of a
+mapping — the same shape as the two storage readers and `payfast_config`, and for the same reason:
+every branch and every refusal is testable with no database server involved.
+
+| Variable | Effect |
+| --- | --- |
+| `DJANGO_DB_HOST` | **The switch.** Blank means SQLite at `db.sqlite3`; set means MySQL |
+| `DJANGO_DB_NAME`, `DJANGO_DB_USER` | Required once a host is named. Missing either is a refusal, not a default |
+| `DJANGO_DB_PASSWORD` | Optional. A passwordless local MySQL user is a legitimate development setup |
+| `DJANGO_DB_PORT` | Defaults to 3306 |
+
+`DATABASES` used to be four hardcoded lines pointing at `db.sqlite3`, which made the deployed backend
+unconfigurable and made everything below untestable — there was no way to point the suite at the
+database QA and production actually run.
+
+Three details are decisions rather than plumbing:
+
+**A half-configured MySQL is an error.** `DJANGO_DB_NAME` set with no `DJANGO_DB_HOST` refuses at
+startup rather than falling back. The failure it prevents is the quiet one: a typo in a variable name
+or a rename in a deployment template, and the application comes up on a local SQLite file with every
+MySQL variable set and ignored. Invisible on a developer's machine; in production it is member data
+written somewhere nobody backs up.
+
+**`sql_mode` is set explicitly and in full.** Section 8.4 needs `STRICT_TRANS_TABLES`. The trap is
+that `init_command` *replaces* the server's `sql_mode` rather than adding to it, so naming only that
+one would quietly discard the zero-date and division-by-zero protections MySQL 8 has on by default.
+The whole set is named.
+
+**The test database is given an explicit charset and collation.** `utf8mb4` and
+`utf8mb4_0900_ai_ci`, so a CI run reproduces production's comparison semantics — which are case- *and*
+accent-insensitive, and are the reason strain uniqueness rides on a slug (section 8.3).
+
+**The driver installs everywhere, and its wheels are Windows-only.** `mysqlclient` is in
+`[project.dependencies]`, so no deployment is one forgotten package away from not booting — a
+developer on SQLite installs it and never loads it. The cost is that it is a C extension with no
+published Linux wheel: on Linux, pip builds it from the source tarball and needs `pkg-config`,
+`default-libmysqlclient-dev` and a compiler. CI installs those before pip runs, and a Linux
+deployment has to as well. The failure without them is `Can not find valid pkg-config name`, which
+reads like a missing package rather than a missing toolchain.
+
+### 8.1 What MySQL will not do, and does not say
+
+Django asks the backend whether it supports a feature and, for indexes and constraints, **omits what
+it cannot build rather than refusing to migrate.** No error, no warning, no row in the migration
+output. The constraint is simply absent from the deployed schema while the model file, the migration
+and the test suite all still describe it.
+
+Three things fall into that gap, and 8.4 settles two of them:
+
+| Feature | MySQL 8.4 | Consequence if unsupported |
+| --- | --- | --- |
+| Partial index — `UniqueConstraint(condition=...)` | **No. No MySQL version builds one** | Silently dropped |
+| Expression index — `UniqueConstraint(Lower('x'))` | Yes, since 8.0.13. **Never on MariaDB** | Silently dropped |
+| `CHECK` constraint | Yes, since 8.0.16 | Silently unenforced |
+
+So the version in use is fine for two of the three rows, and **the partial-index row is permanent.**
+It is not a version to wait out: MySQL has no filtered-index feature and no plans for one, so
+`condition=` on a `UniqueConstraint` is a shape this codebase can never use. That is the rule section
+8.2 was written about and section 8.3 is written around.
+
+The floor is 8.0.16 rather than 8.4 — that is where `CHECK` starts being enforced, and below it every
+check constraint here is decoration, including the two that section 3.1 calls the backstop for writes
+that bypass the model. MariaDB is not a substitute at any version, because of the expression-index
+row. **Both of those are now asserted at `migrate` rather than trusted** — see 8.5.
+
+### 8.2 Three constraints that used to disappear on MySQL — closed
+
+These were in the repository until `accounts/0007` and `payments/0002`, and each was the only thing
+enforcing a rule stated nowhere else:
+
+| Constraint | What was lost | Now |
+| --- | --- | --- |
+| `user_nickname_unique_ci` | Two accounts could wear one nickname. Both an expression *and* a condition, so it failed the table above twice | `user_nickname_key_unique` over `User.nickname_key` |
+| `user_mobile_unique` | Two accounts could hold one mobile number | `user_mobile_key_unique` over `User.mobile_key` |
+| `one_live_subscription_per_member` | A member could hold two live subscriptions, and Payfast would bill both | Same name, over `Subscription.live_for_user` |
+
+The nickname was the worst of the three, and section 3.6 says why without knowing it: a nickname is
+the *only* identifier the API exposes for another member, so two accounts sharing one is
+impersonation rather than a collision. The catalogue depends on that guarantee too — a cultivator's
+public name is their nickname, and a fulfilment document carries nothing else.
+
+**The shape of the fix.** Each rule moved onto a derived column that is **null** wherever the old
+condition excluded a row, and the unique index over it is unconditional. Nulls are distinct under a
+unique index on both SQLite and MySQL, so "any number of accounts may hold no nickname, and no two
+may hold the same one" is expressed exactly, on every backend, with no feature the database lacks.
+
+Three details are what make it safe rather than merely portable, and all three are worth knowing
+before the pattern is used a fourth time:
+
+**A derived column can go stale, and a stale uniqueness key is worse than an absent one** — a member
+renamed by hand still occupies their old name and can be handed somebody else's, and every read goes
+through the key, so nothing would show it. So each key is tied to its source by a **check
+constraint**, exactly as `is_active` is tied to `status` in section 3.1. `save()` keeps them true;
+the constraint catches the write that went around `save()`.
+
+**`save()` now trims the nickname.** That is not tidying: it makes `nickname_key` exactly
+`LOWER(nickname)`, which is what lets the check constraint compare the two in SQL. Without it a
+stored ` Bob ` would carry a key of `bob` and the constraint would refuse the model's own write.
+
+**A `CHECK` passes when its condition is *unknown*, and a SQL comparison against null is unknown.**
+The first version of `live_for_user_matches_status` compared a nullable column with `=` and was
+therefore satisfied by exactly the row it existed to refuse — the raw update reviving a cancelled
+subscription went straight through. Every one of these constraints now carries an explicit
+`__isnull=False` beside its equality. `payments/tests/test_models.py` and
+`accounts/tests/test_uniqueness_keys.py` both pin it.
+
+The backfills refuse rather than repair, and **count without naming**, which is the rule
+`accounts/0003_mobile_unique` established: a nickname and a mobile number are personal information,
+and a migration that printed one would write it into every deploy log and CI transcript. They also
+run *before* the first `ALTER`, because MySQL has no transactional DDL and a migration that dies
+halfway leaves a partly changed schema.
+
+### 8.3 What the catalogue apps do about it
+
+`strains`, `finished_product` and `cultivators` were written after this decision and are portable by
+construction. Four rules, worth stating because they read as odd choices otherwise:
+
+**Every unique constraint is unconditional.** Where a rule applies to only some rows — a listed
+offer needs a short description, but a draft may be incomplete — it is a `CheckConstraint` instead of
+a partial index. One consequence is visible in the schema: a withdrawn listing still occupies its
+cultivator-and-strain pair, because scoping that index to live rows would need the feature MySQL
+lacks. A cultivator returning to a strain reinstates the withdrawn row.
+
+**Case-insensitive name uniqueness rides on a derived `slug`.** Not on `Lower(name)`, which is the
+obvious spelling and is an expression index. It also fixes a real dev-versus-production divergence:
+MySQL's default `utf8mb4_0900_ai_ci` collation is case- *and* accent-insensitive, so a plain unique
+index on `name` behaves differently there than on the SQLite the suite runs against. `slugify` folds
+identically on both.
+
+**The JSON columns are display-only.** MySQL cannot index a JSON column without a generated column
+beside it, so nothing filters on a terpene profile. Anything the Block 5 browse filters have to
+search has to be a column or a lookup table — which is one of the reasons aroma and effect are
+lookup tables rather than choice lists.
+
+**Primary keys are UUIDv7**, per `plan.md` section 3. MySQL has no native UUID type, so these are
+`char(32)` and InnoDB copies the primary key into every secondary index. Time-ordering is what makes
+that acceptable: inserts land at the end of the clustered index rather than splitting pages across
+it. The cost is real and is accepted on tables holding hundreds of rows.
+
+### 8.4 Operational notes
+
+| | |
+| --- | --- |
+| `sql_mode` | Must include `STRICT_TRANS_TABLES`, or an over-long decimal is truncated instead of refused |
+| Charset | `utf8mb4` at database, table and connection level. Anything less cannot store an emoji in a member's description, and will fail mid-insert rather than at validation |
+| DDL | Not transactional. A migration that fails halfway leaves the schema partly changed, so migrations want a backup behind them rather than a rollback |
+| Index key length | 3072 bytes on InnoDB with the default row format, which is 768 `utf8mb4` characters. Every unique column in this project is well inside it |
+
+### 8.5 The guards, because none of this can be trusted to a convention
+
+The database version is a **correctness dependency of this codebase**, not an operational detail, and
+an undeclared dependency is one that is eventually not met. `common/checks.py` declares it. Both
+guards are `Tags.database` checks, which Django runs when they are asked for — which `migrate` does,
+and which is exactly the moment a constraint would be silently skipped. `manage.py check --database
+default` runs them on demand.
+
+**The version guard** refuses MySQL below 8.0.16, where `CHECK` is parsed and discarded, and refuses
+MariaDB outright. Its refusals name what would break rather than only saying no. An unreachable
+database is not an error here — Django has its own check for that.
+
+**The constraint-shape guard is the more durable of the two**, because it reads the code rather than
+the version. It walks every model's constraints and reports any `UniqueConstraint` this backend will
+omit rather than build. So someone adding a `UniqueConstraint(condition=...)` in six months — the
+natural, correct-looking spelling of a rule this project has needed three times already — is told at
+`migrate` that it will not exist, instead of finding out when two members share a nickname. It
+deliberately says nothing about `CheckConstraint`, which also carries a `condition` and is a
+different thing entirely; conflating the two made the first version report every check constraint in
+the project, which is how a guard stops being read.
+
+### 8.6 The suite runs twice, on two databases
+
+The tests run on SQLite locally, which supports partial indexes, expression indexes and check
+constraints. So **a constraint test passes there whether or not the deployed database enforces the
+rule** — the exact failure mode section 11 says the suite is written to catch, and the one instance of
+it the suite cannot catch by itself.
+
+Three things close it, in increasing order of how much they prove.
+
+**The constraint tests write through a raw queryset `.update()`**, deliberately, because that is the
+write a check constraint exists to refuse. A rule enforced only in `save()` is not a rule.
+
+**The shapes are asserted against fake unsupporting backends.** `common/tests/test_checks.py` and the
+portability tests in `accounts/tests/test_uniqueness_keys.py` run the guards against connections that
+claim to support neither partial nor expression indexes, and assert that no constraint in the project
+is reported. That is the one thing SQLite cannot hide, and it runs on a developer's machine with no
+MySQL installed.
+
+**And `.github/workflows/ci.yml` runs the whole suite against MySQL 8.4.** That is the only place the
+constraints are proven rather than argued about. The `api` job also:
+
+- runs `makemigrations --check`, so a model changed without a migration fails there rather than on a
+  deploy;
+- runs `migrate` against an *empty* MySQL, which is what actually exercises the hand-written
+  backfills in `accounts/0007` and `payments/0002` — those refuse when the data already holds
+  duplicates, and a failure path nothing ever executes is a failure path that is probably wrong;
+- asserts `connection.vendor == 'mysql'` before doing any of it. Without that the job's own quiet
+  failure mode is a fallback to SQLite, where everything passes and proves nothing;
+- runs the suite with `--shuffle`, because several tests here mutate shared state to reach the
+  situation they are testing — `_DroppedConstraint` takes a constraint off the table and puts it
+  back — and a suite that only ever runs in one order is one where a missing restore looks like a
+  pass.
+
+`migrate` runs Django's `database`-tagged checks, so section 8.5's guards are exercised against a real
+MySQL there as a side effect, including the one that would refuse the server if it were too old.
+
+CI installs the MySQL client headers before pip, because `mysqlclient` has no Linux wheel — section
+8.0. It installs with pip and `requirements.txt` rather than Poetry; `poetry.lock` is committed and
+pins hashes where `requirements.txt` gives ranges, so switching is a reasonable upgrade if a
+dependency release ever breaks a build nobody touched.
+
+The `frontend` job is `npm ci`, lint, `tsc --noEmit`, vitest, `next build`, in that order — cheapest
+and most specific failure first, so a red build says what is wrong rather than only that something is.
+
+## 9. Rate limiting
 
 Per-IP limits on the unauthenticated endpoints, each with its own scope so that a burst of failed
 code entries cannot exhaust the budget for sending new ones.
@@ -375,7 +647,7 @@ configured rate multiplied by the worker count.
 Rates are read from `NINJA_DEFAULT_THROTTLE_RATES` when the throttle object is constructed, which
 happens at import time. `override_settings` cannot reach them.
 
-## 9. Admin
+## 10. Admin
 
 The authentication tables are read-only by design. Staff need to see which passkeys an account holds
 so they can revoke one a member has lost, and to confirm a code was issued when someone says it
@@ -435,14 +707,15 @@ box, and a row staff can type into is not evidence of anything. It is searchable
 document, and it flags a revision whose file or wording no longer hashes to what was agreed to —
 impossible while the immutability guard holds, which is exactly why it is surfaced.
 
-## 10. Testing
+## 11. Testing
 
 | | |
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 794 |
+| Tests | 972 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
+| Backend | SQLite locally; **MySQL 8.4 in CI**, which is where the constraints are proven — section 8.6 |
 
 | Module | Covers |
 | --- | --- |
@@ -471,6 +744,10 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `documents/tests/test_admin.py` | What the admin refuses once a revision is published |
 | `documents/tests/test_command.py` | Upload, digest and publish from the command line |
 | `documents/tests/test_storage.py` | Reading Azure configuration, and the refusals that stop a broken deploy |
+| `finished_product/tests/test_models.py` | The zero-cost default, `requires_payment` tracking the price, the non-negative constraint against a raw update, retirement without deletion |
+| `strains/tests/test_models.py` | The derived slug as the portable uniqueness key, exclusivity and the fact that nothing in SQL enforces it, the listing constraints against raw updates, C18 through both routes that check it |
+| `strains/tests/test_admin.py` | The listing form, which is the only thing enforcing C18 on the save that creates a listing; and that the cultivator pickers exclude members, administrators and erased growers |
+| `cultivators/tests/test_models.py` | That the pseudonym is the account's own display name and not a second namespace; publication defaults |
 
 The suite is written around a specific idea: **test what is invisible when it breaks.** An encrypted
 column that stops round-tripping loses data with no error. A denormalised `is_active` that drifts
@@ -499,12 +776,21 @@ passkey would have been refused with 401.
 Both are fixed — stored and compared as text — and `test_the_challenge_is_stored_pinned_to_the_member`
 guards it.
 
-## 11. What is not built
+## 12. What is not built
 
-There is no cultivation or distribution record. The API is authentication, the club documents,
-registration, payments and a health check. `accounts.User` is the substantive model, alongside the
-three tables in `authn` supporting authentication, the three in `documents`, and the two in
-`payments`.
+There is no distribution record. The API is authentication, the club documents, registration,
+payments and a health check. `accounts.User` is the substantive model, alongside the three tables in
+`authn` supporting authentication, the three in `documents`, and the two in `payments`.
+
+**The catalogue now exists as data**, which this section used to list as absent, and the distinction
+matters: `strains`, `finished_product` and `cultivators` have models, constraints, migrations, a full
+admin and tests — and **no endpoint of any kind.** An administrator can curate strains and product
+types and a member of staff can write a cultivator's listing, all through `/admin/`. No member can
+see any of it, because nothing serves it. That is Block 9 in `todo.md`.
+
+What is still missing around the catalogue is the level below it. There is no plant, so a listing
+advertises terms against no stock, "grow price from" has nothing to take a minimum over, and the
+finished product types a listing offers are inherited by nothing. C18's three levels are two.
 
 **Payment status is now recorded**, which this section used to list as absent. What is still missing
 around it is narrower and is set out in `design/features/payments.md` section 9: nothing schedules
@@ -524,7 +810,8 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | Requirement | Note |
 | --- | --- |
 | Process manager fronting Uvicorn | Gunicorn with `UvicornWorker` on Linux |
-| A real database | SQLite today; the UUIDv7 choice anticipates PostgreSQL |
+| **MySQL 8.4** | SQLite today. 8.0.16 is the hard floor and MariaDB is refused at any version; `common/checks.py` asserts both at `migrate`, and section 8.1 has the reasons |
+| Application settings for the database | `DJANGO_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD`. Plus the MySQL client headers on the host, since `mysqlclient` has no Linux wheel. Section 8.0 |
 | Static file handling | `STATIC_ROOT` plus WhiteNoise or a CDN |
 | A real email provider | `MAILERS` uses the console backend; sign-in codes and the payment link are printed to the terminal and reach nobody |
 | A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet |
@@ -532,7 +819,7 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | A shared cache backend | Without it the rate limits are per worker, not per deployment |
 | `manage.py check --deploy` | The Django deployment checklist |
 
-## 12. Risks
+## 13. Risks
 
 | # | Risk | Status                                                                                       |
 | --- | --- |----------------------------------------------------------------------------------------------|
@@ -548,3 +835,9 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. | Open — wants legal review of the wording, and a decision on notifying sharing members directly |
 | 11 | A cultivator creates `User` rows. It is the only non-administrator route to an account, and it captures a third party's identity number. | Accepted — authorised on a permission, and every record carries who attested                 |
 | 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Closed                                                 |
+| 13 | Three constraints silently disappeared on MySQL, because it builds no partial index and Django omits what the backend will not build. Nickname uniqueness, mobile uniqueness and one-live-subscription-per-member were absent from any deployed schema while the models, the migrations and the suite all still described them. Section 8.2. | **Closed** — `accounts/0007` and `payments/0002` moved all three onto derived columns with unconditional unique indexes, each tied to its source by a check constraint |
+| 14 | The suite runs on SQLite locally, so a constraint assertion passes there whether or not the deployed database enforces the rule. The one class of invisible failure the suite cannot catch by itself. Section 8.6. | **Closed** — `.github/workflows/ci.yml` runs the whole suite against MySQL 8.4, asserts the vendor before it does, and migrates an empty database so the hand-written backfills run |
+| 15 | MySQL below 8.0.16 parses `CHECK` and discards it, which would silently unenforce every check constraint in the project — including the `is_active`/`status` backstop in section 3.1, and MariaDB would drop expression indexes the same way. | **Closed** — `common/checks.py` refuses both at `migrate`, and a second guard reports any constraint the backend will omit rather than build. Section 8.5 |
+| 16 | Strain exclusivity spans two tables, so no constraint can express it. `CultivatorStrainListing.clean` is the only thing enforcing it, and a queryset `.create()` walks past it. | Open — closes when Block 2 puts a service in front of the write, as `accounts.services` does for sharing members |
+| 17 | The C18 subset rule is enforced in a model and in an admin form, because a many-to-many is invisible to `Model.clean` until the row exists. `ManyToManyField.set` from a shell bypasses both. | Accepted — one shared `check_offered_types` means the rule exists once, and both callers are tested |
+| 18 | Listing and profile images write to the default storage, which is local disk. `documents` is CDN-fronted but reserved for published club documents, and `accounts` is deliberately private, so public catalogue imagery has nowhere correct to go. | Open — a third, public container. Block 1 leftover |

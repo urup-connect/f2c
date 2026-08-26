@@ -24,3 +24,17 @@ azure-identity>=1.19
 # arrived, which is what strips EXIF and refuses a file that only claims to be
 # an image.
 pillow>=11.0
+# The MySQL driver. QA and production are MySQL 8.4; a developer with no
+# DJANGO_DB_HOST set runs on SQLite and never loads this, but it installs
+# everywhere so that a deployment cannot be one forgotten package away from not
+# booting.
+#
+# It is a C extension, and **the published wheels are Windows-only**. On Linux
+# pip builds it from the source tarball, which needs the MySQL client headers, a
+# compiler and pkg-config:
+#
+#   sudo apt-get install -y pkg-config default-libmysqlclient-dev build-essential
+#
+# .github/workflows/ci.yml does that before installing. Any Linux deployment has
+# to as well.
+mysqlclient>=2.2.8,<3.0

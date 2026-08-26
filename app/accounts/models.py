@@ -190,11 +190,17 @@ class UserManager(BaseUserManager):
         is what other members see. Matched the same way the unique constraint
         on the model indexes it, so a queryset and the database cannot
         disagree.
+
+        That match is now a plain equality against ``nickname_key``, the column
+        the constraint is built over. It used to annotate ``Lower('nickname')``,
+        which was correct and could use no index -- every nickname check was a
+        full scan with a function applied per row. The two also disagreed at the
+        margin: ``nickname_key`` trims the ends and ``Lower`` does not.
         """
         key = nickname_key(value)
         if not key:
             return self.none()
-        return self.annotate(_nickname_key=Lower('nickname')).filter(_nickname_key=key)
+        return self.filter(nickname_key=key)
 
     def nickname_is_taken(self, value, *, exclude_pk=None):
         """Whether this nickname belongs to somebody already.
@@ -259,6 +265,32 @@ class User(AbstractBaseUser, PermissionsMixin):
     # comparison rather than a plain unique=True.
     nickname = models.CharField(max_length=60, blank=True)
 
+    # The form uniqueness is actually decided on, and the third denormalised
+    # column on this model after `is_active` and `email_hash`. Like both of
+    # those, it exists because of something the database will not do.
+    #
+    # The rule is "one nickname per member, compared case-insensitively, and
+    # blanks do not collide" -- staff hold no nickname and `soft_delete` blanks
+    # it, so the second clause is not a nicety. The natural spelling of that is
+    # `UniqueConstraint(Lower('nickname'), condition=~Q(nickname=''))`, which is
+    # an expression index *and* a partial index. **MySQL builds neither, and
+    # Django omits a constraint the backend cannot build without saying so** --
+    # no error, no warning, nothing in the migration output. The rule was
+    # therefore absent from every deployed schema while the model file, the
+    # migration and the test suite all still described it. `design/backend.md`
+    # section 8.2.
+    #
+    # Null rather than an empty string for the blank case, and that is the whole
+    # trick: SQLite and MySQL both treat nulls as distinct under a unique index,
+    # so any number of accounts may hold no nickname while no two may hold the
+    # same one. An unconditional unique index over a nullable column expresses
+    # the rule exactly, and every backend builds it.
+    #
+    # Derived by `save` on every write, never set by hand, and not a form field.
+    nickname_key = models.CharField(
+        max_length=60, null=True, blank=True, editable=False
+    )
+
     # Always `+27` followed by nine digits: `validate_sa_mobile_number` is the
     # only way in, and it normalises before it accepts. That normalisation is
     # what makes the constraint below mean anything -- `082 123 4567` and
@@ -278,6 +310,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         validators=[validate_sa_mobile_number],
         help_text='Stored as +27 and nine digits, whatever form it was given in.',
+    )
+
+    # The same trick as `nickname_key`, for the same reason, and read that one
+    # first. This is a plain mirror rather than a normalisation: `save` has
+    # already put `mobile` in its one canonical form, so the only work left is
+    # turning a blank into a null so that the accounts holding no number -- staff,
+    # and every erased member -- do not collide with each other under an
+    # unconditional unique index.
+    mobile_key = models.CharField(
+        max_length=16, null=True, blank=True, editable=False
     )
 
     date_of_birth = models.DateField(null=True, blank=True)
@@ -510,29 +552,34 @@ class User(AbstractBaseUser, PermissionsMixin):
             # One nickname, one member -- compared case-insensitively, because
             # `Grower` and `grower` read as the same person to everyone but the
             # database, and a nickname that reads as an existing member's is
-            # impersonation. Indexed on Lower() rather than on a second
-            # denormalised column: a stored key would be one more thing that
-            # can drift from the value it is derived from, and `is_active`
-            # above is the only denormalisation this model can justify.
+            # impersonation.
             #
-            # Blank nicknames are excluded rather than colliding. Staff have
-            # none, and erasure blanks the field (see soft_delete), so without
-            # the condition the second erased member would be refused by the
-            # database.
+            # Unconditional, over the derived `nickname_key` column. This used to
+            # be `UniqueConstraint(Lower('nickname'), condition=~Q(nickname=''))`
+            # and this comment used to argue against a stored key on the grounds
+            # that it can drift. The argument was sound and the conclusion was
+            # wrong: MySQL builds neither a partial nor -- on MariaDB -- an
+            # expression index, and Django omits what the backend will not build
+            # without raising anything, so the rule was simply not there. A
+            # column that can drift and is tested against drifting beats a
+            # constraint that is silently absent. The field declaration has the
+            # detail, and `design/backend.md` section 8.2 has the history.
+            #
+            # Blank nicknames still do not collide -- staff have none, and
+            # erasure blanks the field -- but the exclusion now lives in the
+            # column as a null rather than in a condition on the index.
             models.UniqueConstraint(
-                Lower('nickname'),
-                condition=~models.Q(nickname=''),
-                name='user_nickname_unique_ci',
+                fields=['nickname_key'],
+                name='user_nickname_key_unique',
                 violation_error_message='That nickname is already taken.',
             ),
-            # One handset, one member. No Lower() and no expression: save()
-            # normalises the column to `+27` and nine digits before it is
-            # written, so the stored text is already the only form there is.
+            # One handset, one member. No case folding needed: save() normalises
+            # the column to `+27` and nine digits before it is written, so the
+            # stored text is already the only form there is, and `mobile_key` is
+            # a plain mirror of it with a blank turned into a null.
             #
-            # Blank numbers are excluded, for the same reason as the nickname
-            # above: staff have none, and erasure blanks the field, so without
-            # the condition the second erased member would be refused by the
-            # database.
+            # Blank numbers do not collide, for the same reason as the nickname
+            # above: staff have none, and erasure blanks the field.
             #
             # This is the third of the three identity keys, alongside `email`
             # (unique on the column) and `id_number_hash` (unique on the blind
@@ -540,12 +587,67 @@ class User(AbstractBaseUser, PermissionsMixin):
             # registration service, because a queryset .update(), a data
             # migration or a member of staff in the admin does not go through
             # it.
+            #
+            # Over `mobile_key` rather than `mobile`, and unconditional, for the
+            # same reason as the nickname above: the condition that excluded
+            # blanks is what MySQL cannot build, so the exclusion moved into the
+            # column as a null.
             models.UniqueConstraint(
-                fields=['mobile'],
-                condition=~models.Q(mobile=''),
-                name='user_mobile_unique',
+                fields=['mobile_key'],
+                name='user_mobile_key_unique',
                 violation_error_message=(
                     'Another account already holds that mobile number.'
+                ),
+            ),
+            # The two keys above are denormalised columns, and section 3.1's
+            # argument about `is_active` applies to them word for word: a column
+            # derived by `save` is a column a queryset `.update()`, a data
+            # migration or raw SQL can leave behind. The failure is worse here
+            # than for `is_active`, because a stale key means a member renamed by
+            # hand is still occupying their old name and can be given somebody
+            # else's -- silently, since every read goes through the key.
+            #
+            # So both are tied to their sources in SQL, and these are the
+            # backstop rather than the rule. `save` keeps them true; these stop a
+            # write that went around it.
+            #
+            # `Lower(nickname)` and not the Python function: `save` trims the
+            # nickname, so for anything this model writes the two are the same
+            # string. One caveat worth recording -- under MySQL's default
+            # case-insensitive collation this comparison is itself
+            # case-insensitive, so it catches a stale key but not a key that is
+            # merely the wrong case. On SQLite it catches both.
+            #
+            # `nickname_key__isnull=False` beside the equality is load-bearing,
+            # not belt and braces. A `CHECK` fails only when its condition is
+            # *false*, and a SQL comparison against null is *unknown*, which
+            # passes -- so without the explicit null test a row with a nickname
+            # and no key would satisfy this constraint by being unanswerable.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(nickname='', nickname_key__isnull=True)
+                    | models.Q(
+                        nickname_key__isnull=False,
+                        nickname_key=Lower('nickname'),
+                    )
+                ),
+                name='user_nickname_key_matches_nickname',
+                violation_error_message=(
+                    'nickname_key is derived from nickname and cannot be set '
+                    'directly.'
+                ),
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(mobile='', mobile_key__isnull=True)
+                    | models.Q(
+                        mobile_key__isnull=False, mobile_key=models.F('mobile')
+                    )
+                ),
+                name='user_mobile_key_matches_mobile',
+                violation_error_message=(
+                    'mobile_key is derived from mobile and cannot be set '
+                    'directly.'
                 ),
             ),
         ]
@@ -793,10 +895,33 @@ class User(AbstractBaseUser, PermissionsMixin):
             # code, and code should hear about it.
             self.mobile = validate_sa_mobile_number(self.mobile)
 
+        # Trimmed, for the same reason the address above is lower-cased: one
+        # stored form. It also makes `nickname_key` exactly `LOWER(nickname)`,
+        # which is what lets the check constraint in Meta compare the two in SQL
+        # -- without this, ` Bob ` would be stored with a key of `bob` and the
+        # constraint would refuse the model's own write.
+        self.nickname = self.nickname.strip()
+
+        # The two uniqueness keys, derived after their sources have been
+        # normalised above and never written by hand. `or None` is doing the
+        # load-bearing work in both: a null is what lets the accounts holding no
+        # nickname and no number coexist under an unconditional unique index.
+        # See both field declarations, and `design/backend.md` section 8.2.
+        self.nickname_key = nickname_key(self.nickname) or None
+        self.mobile_key = self.mobile or None
+
         if update_fields is not None:
             update_fields = set(update_fields) | {'is_active'}
             if 'email' in update_fields:
                 update_fields.add('email_hash')
+            # A partial save that renames a member must not leave the key it is
+            # compared on behind -- that would be a row whose displayed nickname
+            # and whose uniqueness key disagree, which is exactly the drift the
+            # `is_active` treatment above exists to prevent.
+            if 'nickname' in update_fields:
+                update_fields.add('nickname_key')
+            if 'mobile' in update_fields:
+                update_fields.add('mobile_key')
 
         # Whether this write is one the role column travels in. A partial save
         # that does not name `role` cannot change it, so mirroring the group

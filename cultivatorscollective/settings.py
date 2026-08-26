@@ -22,6 +22,8 @@ from app.accounts.storage import avatars_storage_config
 from app.documents.storage import documents_storage_config
 from app.payments.gateway import payfast_config
 
+from .database import database_config
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -128,9 +130,13 @@ INSTALLED_APPS = [
     'app.common',
     'app.accounts',
     'app.authn',
+    'app.cultivators',
     'app.documents',
+    'app.finished_product',
     'app.membership',
     'app.payments',
+    'app.plant',
+    'app.strains',
 ]
 
 MIDDLEWARE = [
@@ -172,12 +178,17 @@ WSGI_APPLICATION = 'cultivatorscollective.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+# SQLite on a developer's machine, MySQL 8.4 in QA and production. Read once at
+# startup by a pure function of the environment, the same shape as the storage
+# and Payfast readers -- `database.py` has the reasoning, including why
+# `sql_mode` is named in full and why the test database is given an explicit
+# collation.
+#
+# `common/checks.py` is what refuses a MySQL too old to enforce a check
+# constraint, and it runs on `migrate`. Nothing here validates the version,
+# because a settings module that opened a connection would make every management
+# command depend on the database being up.
+DATABASES = {'default': database_config(os.environ, BASE_DIR)}
 
 
 # Authentication: the user model

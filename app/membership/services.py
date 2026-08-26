@@ -46,7 +46,6 @@ whose agreements were lost, or an agreement against a member who was not
 created.
 """
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -312,12 +311,12 @@ def register_member(
     # From the document rather than typed a second time, so the two cannot
     # disagree.
     user.date_of_birth = date_of_birth
-    # `date_of_birth_verified_at` is deliberately left null, and this is *not*
+    # `date_of_birth_verified_at` is deliberately left null -- not assigned at
+    # all, so that the field's own default is what stands -- and this is *not*
     # `capture_sa_id_number`, which would stamp it. A number that passes its
     # check digit is a number that is not a typo; nobody has looked at a
     # document. Recording a self-service submission as verified would make that
     # field mean nothing, and it is the field the club would rely on later.
-    user.date_of_birth_verified_at = datetime.now(tz=timezone.utc)
     # Members sign in with a passkey or an emailed code and never hold a
     # password. An unusable one cannot match any input, so it cannot be
     # guessed.

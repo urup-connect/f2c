@@ -1,0 +1,278 @@
+# Continuous integration.
+#
+# The reason this file exists is `design/backend.md` risk 14. The suite runs on
+# SQLite, which builds partial indexes, expression indexes and check constraints
+# -- so a constraint test passes there whether or not the deployed database
+# enforces the rule at all. MySQL builds no partial index at any version and
+# Django omits what the backend will not build *without raising anything*, which
+# means the one class of failure this project's tests are written to catch is the
+# one its own test runner cannot see.
+#
+# So the `api` job runs the whole suite against MySQL 8.4 -- the version QA and
+# production run -- and that is the only place the constraints are proven rather
+# than assumed.
+#
+# Two things it does beyond running tests, and both are cheap:
+#
+#   * `makemigrations --check` fails the build on a model changed without a
+#     migration. Nothing else notices until somebody deploys.
+#   * `migrate` against an empty MySQL exercises the hand-written backfills in
+#     accounts/0007 and payments/0002. Those refuse to run when the data already
+#     holds duplicates, which is a failure path, and a failure path nothing
+#     executes is a failure path that is probably wrong.
+#
+# `migrate` also runs Django's `database`-tagged system checks, so the guards in
+# `common/checks.py` are exercised against real MySQL here as a side effect --
+# including the one that would refuse this very server if it were too old.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  # So a red build can be re-run after an infrastructure blip without an empty
+  # commit.
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first. CI that is still busy with
+# a superseded commit is CI nobody waits for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API — Django on MySQL 8.4
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        # Pinned to the minor version, not `8` or `latest`. The whole point of
+        # this job is that the database version is a correctness dependency of
+        # the schema (backend.md section 8.1), so it is not something to let a
+        # tag float. 8.0.16 is the floor; this is the target.
+        image: mysql:8.4
+        env:
+          # The server's own root password. Not a secret in any meaningful
+          # sense: the container is created for this job, reachable only from
+          # it, and destroyed with it.
+          MYSQL_ROOT_PASSWORD: ci-root
+          MYSQL_DATABASE: cultivatorscollective
+          MYSQL_USER: cultivators
+          MYSQL_PASSWORD: ci-password
+        ports:
+          - 3306:3306
+        # Without a health check the job races the server's first-boot
+        # initialisation and fails on connection refused, intermittently, which
+        # is the worst kind of red build.
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+
+    env:
+      DJANGO_SETTINGS_MODULE: cultivatorscollective.settings
+
+      # Django refuses to start without all three, by design: a backend that
+      # boots with encryption misconfigured writes plaintext or crashes at the
+      # first identity capture (backend.md section 3.3).
+      #
+      # These are throwaway values generated per run in the step below. They are
+      # deliberately NOT repository secrets -- nothing here reads or writes real
+      # member data, and a CI secret is one more copy of a key whose loss is
+      # unrecoverable. If a future job needs real credentials, it needs its own
+      # environment with its own review.
+      DJANGO_DEBUG: 'True'
+
+      # Points `database_config` at the service container above. Without a host
+      # it would fall back to SQLite and this job would test nothing it was
+      # written for.
+      DJANGO_DB_HOST: 127.0.0.1
+      DJANGO_DB_PORT: '3306'
+      DJANGO_DB_NAME: cultivatorscollective
+      DJANGO_DB_USER: cultivators
+      DJANGO_DB_PASSWORD: ci-password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # `requires-python = ">=3.14"`. The project uses `uuid.uuid7`, which
+          # is 3.14 or nothing.
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install the MySQL client headers
+        # `mysqlclient` is a C extension and **its published wheels are
+        # Windows-only**, so on this runner pip builds it from the source
+        # tarball. That needs the client headers, pkg-config and a compiler,
+        # none of which are on the image. Without this step the install fails
+        # with "Can not find valid pkg-config name", which reads like a missing
+        # package rather than a missing toolchain.
+        #
+        # Any Linux deployment needs the same thing. `default-libmysqlclient-dev`
+        # is the MariaDB client on Debian and Ubuntu, which mysqlclient builds
+        # against happily -- it is the *client* library, and says nothing about
+        # which server this connects to.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config default-libmysqlclient-dev build-essential
+
+      - name: Install dependencies
+        # pip and requirements.txt, which is the install path the README
+        # documents and which mirrors [project.dependencies]. poetry.lock is
+        # committed and would be stricter -- it pins hashes where these are
+        # ranges -- so `pipx install poetry && poetry install --no-root` is a
+        # reasonable upgrade if a dependency release ever breaks a build nobody
+        # touched.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Generate throwaway secrets
+        # Generated rather than hardcoded so that no value in this file could
+        # ever be mistaken for one in use somewhere. The two encryption keys
+        # must be 32 bytes, base64 (see common/crypto.py).
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import base64, secrets
+          from django.core.management.utils import get_random_secret_key
+
+          def key():
+              return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+
+          print(f'DJANGO_SECRET_KEY={get_random_secret_key()}')
+          print(f'DJANGO_FIELD_ENCRYPTION_KEY={key()}')
+          print(f'DJANGO_BLIND_INDEX_PEPPER={key()}')
+          PY
+
+      - name: Wait for MySQL
+        # The service health check gates the *container*, not the user account:
+        # MySQL accepts connections on its socket before it has finished
+        # creating MYSQL_USER, so a green health check is not the same as a
+        # usable database.
+        #
+        # Written against the driver the application uses rather than
+        # `mysqladmin`, for two reasons. The runner image is not guaranteed to
+        # ship a MySQL client -- and relying on one that happens to be there
+        # today is how a pipeline breaks on an image update nobody asked for.
+        # And this way the thing being waited for is exactly the thing the next
+        # step needs: this driver, these credentials, this database.
+        run: |
+          python - <<'PY'
+          import sys, time
+          import MySQLdb
+
+          for attempt in range(1, 31):
+              try:
+                  MySQLdb.connect(
+                      host='127.0.0.1', port=3306, user='cultivators',
+                      passwd='ci-password', db='cultivatorscollective',
+                  ).close()
+              except MySQLdb.Error as error:
+                  print(f'Attempt {attempt}: {error}', flush=True)
+                  time.sleep(2)
+              else:
+                  print("MySQL is accepting the application's credentials.")
+                  sys.exit(0)
+
+          sys.exit('MySQL never became ready.')
+          PY
+
+      - name: Confirm the database is the one under test
+        # A guard against the quiet failure mode of this whole job: if
+        # `database_config` fell back to SQLite -- a typo in a variable name, a
+        # rename -- everything below would pass and prove nothing. Better to
+        # fail here than to go green for the wrong reason.
+        run: |
+          python - <<'PY'
+          import django
+          django.setup()
+          from django.db import connection
+          print(f'vendor={connection.vendor}')
+          assert connection.vendor == 'mysql', (
+              f'Expected MySQL, got {connection.vendor}. This job exists to test '
+              'the deployed backend; on SQLite it proves nothing.'
+          )
+          version = connection.mysql_version
+          print(f'server={".".join(str(part) for part in version)} '
+                f'mariadb={connection.mysql_is_mariadb}')
+          assert version >= (8, 0, 16), 'common.checks would refuse this server.'
+          PY
+
+      - name: Check for missing migrations
+        # A model changed without a migration is a deploy that fails at the
+        # worst moment. `--check` makes it fail here instead.
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Migrate
+        # Against an empty MySQL, so the hand-written backfills in
+        # accounts/0007 and payments/0002 actually run. Also runs the
+        # `database`-tagged system checks, which is `common/checks.py`.
+        run: python manage.py migrate --noinput
+
+      - name: System checks
+        run: python manage.py check --database default
+
+      - name: Test
+        # The whole suite. On MySQL, which is the point.
+        #
+        # `--shuffle` because several tests in this suite mutate shared state to
+        # reach the situation they are testing -- `_DroppedConstraint` in
+        # accounts takes a constraint off the table and puts it back, and the
+        # `TransactionTestCase` classes do not roll back. A suite that only ever
+        # runs in one order is a suite where a missing restore looks like a pass.
+        # The seed is printed, so a failure is reproducible.
+        run: python manage.py test --shuffle
+
+  frontend:
+    name: Frontend — Next.js
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # LTS. Next.js drops older majors faster than this project will want
+          # to think about, so this is pinned rather than left to `latest`.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # `ci` and not `install`: it installs exactly what the lock file says
+        # and fails if package.json and the lock disagree, which is the whole
+        # reason a lock file is committed.
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        # `tsc --noEmit`. `next build` type-checks too, but it stops at the
+        # first error and reports it as a build failure; this reports every one
+        # of them as what it is.
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        # Last, because it is the slowest and the least specific: a lint, type
+        # or unit-test failure above says what is wrong, and a build failure
+        # after they pass is genuinely a build problem.
+        run: npm run build
