@@ -38,3 +38,9 @@ pillow>=11.0
 # .github/workflows/ci.yml does that before installing. Any Linux deployment has
 # to as well.
 mysqlclient>=2.2.8,<3.0
+# Reading and writing the cultivator stock-upload template (plant/spreadsheet.py).
+# Pure Python, no system libraries, so unlike mysqlclient above it needs nothing
+# installed on the host. `cultivator-stock-upload.md` asks for an Excel template
+# specifically; a CSV would have no dropdown of the cultivator's own strains,
+# which is the part that stops the most common upload mistake being made.
+openpyxl>=3.1,<4.0

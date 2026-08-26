@@ -125,37 +125,73 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
 
 ### Model — `stock-upload`, `plant-id-numbers`
 
-- [ ] Cultivator plant ID, supplied by the cultivator
-- [ ] Platform-allocated unique serial, used to track ownership changes
-- [ ] Optional crop or batch number
-- [ ] Strain, grow price, planting date, estimated bloom date, estimated harvest date, minimum yield
-- [ ] Available finished product types — subject to C18
-- [ ] Status: preflowering, in bloom, harvested, processed, shipped — `member-roles`
-- [ ] Derived: cultivator pseudonym, leaf rating, days to bloom, days to harvest
-- [ ] Ownership, and an ownership history that survives every transfer
+- [x] Cultivator plant ID, supplied by the cultivator
+- [x] Platform-allocated unique serial, used to track ownership changes — `SerialCounter` and
+      `allocate_serials`, one allocation per upload. It refuses to recreate a missing counter rather
+      than restart a sequence whose numbers are already on certificates
+- [x] Optional crop or batch number — a `Batch` record rather than a string, because Block 4 promotes
+      by batch and Block 3 disables one, and a string can do neither
+- [x] Strain, grow price, planting date, estimated bloom date, estimated harvest date, minimum yield.
+      Strain comes through the listing, which *is* the (cultivator, strain) pair, so the two cannot
+      disagree
+- [x] Available finished product types — inherited from the listing, no per-plant override, per
+      **C18**. Reads live; snapshotting it onto the order is a Block 5 question
+- [x] Status: preflowering, in bloom, harvested, processed, shipped — `member-roles`. Plus the actual
+      harvest date from `harvest.md`, tied to the status by a check constraint
+- [x] Derived: cultivator pseudonym, leaf rating, days to bloom, days to harvest. The day counts are
+      properties, not columns — a stored one is wrong by one every midnight
+- [x] Ownership, and an ownership history that survives every transfer — `Plant.owner` for the reads,
+      `PlantOwnership` as the append-only tenure log, both written by `transfer_to` in one transaction
 
 ### Capture
 
-- [ ] Individual plant capture
-- [ ] Excel batch upload against a published template — `stock-upload`
-- [ ] Batch upload validation and an error report a cultivator can act on
-- [ ] Stock on hand import and export — `drawio`, cultivator story v1
-- [ ] Adjust available plants, add and remove — `member-roles`
+- [x] **Excel batch upload against a published template** — `stock-upload`. The template is generated
+      per cultivator (`manage.py plant_template`), because the useful half of a template is the
+      dropdown of their own listed strains — a generic one has somebody typing strain names from
+      memory into a column that refuses what it does not recognise. Loaded with
+      `manage.py upload_plants --cultivator ... [--dry-run]`
+- [x] **Batch upload validation and an error report a cultivator can act on.** Row numbers as Excel
+      shows them, the column heading, the offending value, and the fix. **Nothing is written unless
+      every row is valid** — a 500-row upload that loads 480 leaves a cultivator working out which,
+      and a second upload that either duplicates or skips
+- [x] No cultivator column, though the brief lists "Cultivator ID" as a field. It would let one
+      cultivator load stock as another; who is uploading is an argument, not a cell
+- [x] Dates must be dates. `03/04/2026` is refused rather than guessed — a planting date wrong by a
+      month is a harvest estimate wrong by a month that nobody questions
+- [ ] **Individual plant capture.** The same validation against one row, and it belongs with the
+      endpoint in Block 9 rather than as a second code path now
+- [ ] An endpoint for either. Both run from the command line; staff generate and load on a
+      cultivator's behalf until Block 9
+- [ ] Stock on hand **export** — `drawio`, cultivator story v1. The read is
+      `Plant.objects.available_from(cultivator)`; there is no stock model and
+      `design/backend.md` section 3 records why. Import is the upload above
+- [ ] Adjust available plants, add and remove — `member-roles`. Withdrawing is built
+      (`platform.disable_plant`); adding is the capture work above
 
 ### Leaf rating — C4
 
-- [ ] Compute as `grow_price / 1000` rounded to the nearest 0.5 — `swap-zone`. Nothing displays it
-      until Block 10; it is a property of the plant
-- [ ] Choose the tie-break. R1,250 gives 1.25, equidistant between 1.0 and 1.5, and the brief's five
-      worked examples all avoid the midpoint. Round half up is conventional and favours the offering
-      member
-- [ ] **Do not** wire it to reviews. It is swap value, not reputation. The old plan conflated the two
+- [x] Compute as `grow_price / 1000` rounded to the nearest 0.5 — `swap-zone`. Stored rather than a
+      property, because Block 10 has to *match* equal values and a `WHERE` clause cannot call a
+      property. Derived on write; nothing displays it until Block 10
+- [x] Choose the tie-break. **Round half up**, so R1,250 gives 1.5 — conventional, and it favours the
+      member offering the plant. Computed in `Decimal` throughout: a float implementation would put
+      that case at 1.0 and disagree with the brief on the one value the brief does not cover
+- [x] **Do not** wire it to reviews. It is swap value, not reputation. Nothing in `plant` imports or
+      touches a rating
+- [!] A grow price under R250 rounds to a leaf rating of **0.0**, which has no swap value at all.
+      `swap-zone` sets no floor and its cheapest example is R500. Decide before Block 10 relies on it
 
 ### Administration
 
-- [ ] Disable or remove a plant — `platform.disable_plant`
-- [ ] Disable or remove a batch — `platform.disable_batch`
-- [ ] Trace serials and batches — `drawio`, administrator stories
+- [x] Disable or remove a plant — `platform.disable_plant`. A `disabled_at` timestamp and a batch
+      action, which refuses any plant a member holds: withdrawing stock is taking it off sale, and
+      taking a paid-for plant back is a refund, which **C9** has not decided
+- [x] Disable or remove a batch — `platform.disable_batch`. Does not withdraw the batch's plants; a
+      mis-numbered crop must not void stock a member has bought
+- [x] Trace serials and batches — `drawio`, administrator stories. The plant admin searches on both
+      identifiers, and the ownership ledger is read-only throughout
+- [ ] The permission checks themselves. Nothing calls `platform.disable_plant`; the admin authorises
+      on `is_staff` like every other Django admin page — **C13**
 
 ---
 

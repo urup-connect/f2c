@@ -54,10 +54,61 @@ every model; each feature owns its own models, admin, schemas and router.
 | `finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
 | `strains` | The strain catalogue, the aroma and effect vocabularies, and each cultivator's listing against a strain. No endpoints | `accounts`, `finished_product` |
 | `cultivators` | The cultivator's public profile. No endpoints | `accounts` |
+| `plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. No endpoints | `accounts`, `strains`, `finished_product` |
 | `cultivatorscollective` | Settings, URLs, and the API root | all of them |
 
-`plant` is registered and empty. It is Block 3, and an empty app in `INSTALLED_APPS` is a placeholder
-rather than a feature.
+`plant` is Block 3 and the spine of the product: everything the club sells is a row in its table. The
+model layer is built — plant, batch, serial allocation, ownership history, the leaf rating — and so is
+the Excel batch upload `cultivator-stock-upload.md` asks for, as a per-cultivator template, a reader
+that issues no query, and a service that refuses to write anything unless every row is valid. Both
+run from the command line; there is no endpoint, and no individual-plant capture screen.
+
+The upload is split in two on purpose. `plant/spreadsheet.py` decides whether a *file* is readable and
+touches no model; `plant/services.py` decides whether what it read is *true* and issues every query.
+That is what lets each date coercion and each refusal be tested against a workbook built in memory,
+and each lookup be tested without a workbook. It also puts one rule in exactly one place: **the
+cultivator is never read from the file.** `cultivator-stock-upload.md` lists "Cultivator ID" among the
+upload fields, and it is deliberately not a column — a column naming the cultivator is one that could
+be filled in with somebody else's name, and the upload would load stock into their inventory. Who is
+uploading is an argument to the command, and will be the session in Block 9.
+
+The four newest apps are the first to be built with no router at all, which is a deliberate
+consequence of the sequencing rather than an oversight: `todo.md` puts the models in Blocks 1 and 3
+and every endpoint over them in Block 9, so the Django admin is the whole interface until then. What
+they do own is a full admin, which is where `member-roles.md`'s administrator CRUD over strains and
+product types, and its "trace serials and batches", actually live today.
+
+The dependency direction is the thing to check when reading them. `finished_product` knows nothing
+about strains, listings or plants — the platform defines the catalogue and does not care who narrows
+it — and `strains` reaches into it by string reference. That is C18's three levels expressed as an
+import direction: platform catalogue, then the cultivator's listing, then the plant.
+
+The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
+belongs to the project rather than to any app, because it is the only one that has to know about all
+of them; adding a feature is one `add_router` line. The alternative — a single app owning the whole
+API surface — was rejected once `documents` arrived: it had already been built as its own app, and a
+second feature filing its endpoints somewhere else would have made "where does this go?" a matter of
+which week it was written.
+
+Dependencies run one way and nothing depends back, which is what keeps the split real rather than
+cosmetic. `authn` reaches into `accounts` for the member it authenticates; `accounts` does not know
+passkeys exist.
+
+The one place that direction is bent is erasure. `User.soft_delete` has to revoke credentials it
+does not own, or an erased account keeps a way back in. It reaches them through the reverse
+relations `authn` declares — `passkeys`, `email_otps`, `passkey_handle` — rather than importing the
+app, so the two never become mutually dependent. Those three names are a contract, and
+`accounts/tests/test_models.py` asserts all three tables end up empty.
+
+`payments` is the newest app and the clearest case for the split. It depends on `accounts` alone —
+it activates an account and knows nothing about club documents or sign-up — and `membership` depends
+on it, calling `open_subscription` inside the transaction that writes the member. The direction is
+what stops the money knowing about the form: `payments` has no idea a registration exists, which is
+why the same subscription machinery will serve an order or a swap fee without being reopened.
+
+`common` holds only what at least two features need and none should own. Encryption is there
+because an identity number will not be the last thing this project encrypts; the ID validators
+because the same number is checked at sign-up, in the admin and on the member record.
 
 ### There is no `stock` app, and there was one
 
@@ -92,44 +143,6 @@ layout does not bend.
 
 The apps that *do* belong in that space are later blocks with models of their own and a one-way
 dependency on `plant`: orders and cart in Block 5, fulfilment in Block 6, the swap zone in Block 10.
-
-The three catalogue apps are the first to be built with no router at all, which is a deliberate
-consequence of the sequencing rather than an oversight: `todo.md` puts the models in Block 1 and every
-endpoint over them in Block 9, so the Django admin is the whole interface until then. What they do own
-is a full admin, which is where `member-roles.md`'s administrator CRUD over strains and product types
-actually lives today.
-
-The dependency direction is the thing to check when reading them. `finished_product` knows nothing
-about strains, listings or plants — the platform defines the catalogue and does not care who narrows
-it — and `strains` reaches into it by string reference. That is C18's three levels expressed as an
-import direction: platform catalogue, then the cultivator's listing, then the plant.
-
-The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
-belongs to the project rather than to any app, because it is the only one that has to know about all
-of them; adding a feature is one `add_router` line. The alternative — a single app owning the whole
-API surface — was rejected once `documents` arrived: it had already been built as its own app, and a
-second feature filing its endpoints somewhere else would have made "where does this go?" a matter of
-which week it was written.
-
-Dependencies run one way and nothing depends back, which is what keeps the split real rather than
-cosmetic. `authn` reaches into `accounts` for the member it authenticates; `accounts` does not know
-passkeys exist.
-
-The one place that direction is bent is erasure. `User.soft_delete` has to revoke credentials it
-does not own, or an erased account keeps a way back in. It reaches them through the reverse
-relations `authn` declares — `passkeys`, `email_otps`, `passkey_handle` — rather than importing the
-app, so the two never become mutually dependent. Those three names are a contract, and
-`accounts/tests/test_models.py` asserts all three tables end up empty.
-
-`payments` is the newest app and the clearest case for the split. It depends on `accounts` alone —
-it activates an account and knows nothing about club documents or sign-up — and `membership` depends
-on it, calling `open_subscription` inside the transaction that writes the member. The direction is
-what stops the money knowing about the form: `payments` has no idea a registration exists, which is
-why the same subscription machinery will serve an order or a swap fee without being reopened.
-
-`common` holds only what at least two features need and none should own. Encryption is there
-because an identity number will not be the last thing this project encrypts; the ID validators
-because the same number is checked at sign-up, in the admin and on the member record.
 
 ## 4. The member record
 
@@ -713,7 +726,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 972 |
+| Tests | 1119 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
 | Backend | SQLite locally; **MySQL 8.4 in CI**, which is where the constraints are proven — section 8.6 |
 
@@ -748,6 +761,10 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `strains/tests/test_models.py` | The derived slug as the portable uniqueness key, exclusivity and the fact that nothing in SQL enforces it, the listing constraints against raw updates, C18 through both routes that check it |
 | `strains/tests/test_admin.py` | The listing form, which is the only thing enforcing C18 on the save that creates a listing; and that the cultivator pickers exclude members, administrators and erased growers |
 | `cultivators/tests/test_models.py` | That the pseudonym is the account's own display name and not a second namespace; publication defaults |
+| `plant/tests/test_leaf_rating.py` | The brief's five worked examples, the undocumented midpoint, and that the result is always a step of 0.5 |
+| `plant/tests/test_models.py` | Serial allocation and the refusal to restart a sequence; the constraints against raw updates; the ownership history and the one gap in it; the four-plant count that excludes a harvested plant |
+| `plant/tests/test_spreadsheet.py` | The template round-tripping through its own reader; the ambiguous date that is refused rather than guessed; the price refused rather than rounded; duplicates inside one file; that there is no cultivator column and none for anything the platform generates |
+| `plant/tests/test_upload.py` | That one bad row stops the file and consumes no serial; that another cultivator's listing is invisible; the C18 column confirming and never overriding; batches shared across two uploads; every refusal the commands make |
 
 The suite is written around a specific idea: **test what is invisible when it breaks.** An encrypted
 column that stops round-tripping loses data with no error. A denormalised `is_active` that drifts
@@ -782,15 +799,26 @@ There is no distribution record. The API is authentication, the club documents, 
 payments and a health check. `accounts.User` is the substantive model, alongside the three tables in
 `authn` supporting authentication, the three in `documents`, and the two in `payments`.
 
-**The catalogue now exists as data**, which this section used to list as absent, and the distinction
-matters: `strains`, `finished_product` and `cultivators` have models, constraints, migrations, a full
-admin and tests — and **no endpoint of any kind.** An administrator can curate strains and product
-types and a member of staff can write a cultivator's listing, all through `/admin/`. No member can
-see any of it, because nothing serves it. That is Block 9 in `todo.md`.
+**The catalogue and the plant now exist as data**, which this section used to list as absent, and the
+distinction matters: `strains`, `finished_product`, `cultivators` and `plant` have models,
+constraints, migrations, a full admin and tests — and **no endpoint of any kind.** An administrator
+can curate strains and product types, staff can write a cultivator's listing, and a plant can be
+entered and transferred, all through `/admin/` or a shell. No member can see any of it, because
+nothing serves it. That is Block 9 in `todo.md`.
 
-What is still missing around the catalogue is the level below it. There is no plant, so a listing
-advertises terms against no stock, "grow price from" has nothing to take a minimum over, and the
-finished product types a listing offers are inherited by nothing. C18's three levels are two.
+C18's three levels are now three: the platform defines the finished product type catalogue, a listing
+selects a subset, and `Plant.finished_product_types` inherits from its listing with no per-plant
+override. One question that falls out of it is open — the property reads *live*, so a cultivator
+removing a type from a listing changes what a member who already bought a plant may choose at
+harvest. The precedent for the answer is `payments.Subscription`, which copies what a member agreed
+to onto their own row; the natural place to take that snapshot is the order, in Block 5.
+
+What is missing around the plant is the half of Block 3 that puts stock there in bulk. There is no
+individual-capture endpoint and **no Excel batch upload**, which is how `cultivator-stock-upload.md`
+expects a cultivator to work — so `allocate_serials` is written for a five-hundred-row batch that
+nothing yet submits. There is also no status for a plant that died: C9 is open, nobody has decided
+whether a crop failure means substitution, refund or credit, and inventing one would settle that in
+the schema.
 
 **Payment status is now recorded**, which this section used to list as absent. What is still missing
 around it is narrower and is set out in `design/features/payments.md` section 9: nothing schedules
@@ -801,8 +829,9 @@ Roles are the newest instance of the same gap, and the sharpest. The three roles
 catalogue and the enforcement path are built and tested; almost nothing they govern exists. No
 endpoint checks a `platform.*` permission, because no endpoint performs an action the catalogue
 names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. A
-sharing member can be registered and holds no plants, because there is no plant model and so no swap
-zone for them to seed — which is the entire purpose of the role. See
+sharing member can be registered and holds no plants — the plant model now exists, so
+`platform.allocate_sharing_member_stock` is finally *expressible*, but there is no swap zone for them
+to seed and Block 10 is gated on a legal opinion, which is the entire purpose of the role. See
 `design/features/roles-and-permissions.md` section 13, which lists this properly.
 
 Production deployment is deliberately out of scope. When a target is chosen it needs:
