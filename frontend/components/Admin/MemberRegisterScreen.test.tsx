@@ -29,7 +29,6 @@ const setup = (initial: readonly MemberRow[] = [memberRow()], unavailable = fals
     <MemberRegisterScreen
       initial={initial}
       unavailable={unavailable}
-      memberHref={(id) => `/admin/members/${id}`}
     />,
   )
 }

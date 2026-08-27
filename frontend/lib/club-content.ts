@@ -18,6 +18,8 @@ export const CLUB_SHELL = {
   skipToContent: 'Skip to content',
   homeLabel: 'Cultivators Collective',
   navLabel: 'Club',
+  /** Names the trail landmark, so a screen reader says what the second nav on the page is for. */
+  breadcrumbLabel: 'Where you are',
   signOut: 'Sign out',
   signingOut: 'Signing out…',
   /** Shown in place of the nav while nothing behind it is built. */

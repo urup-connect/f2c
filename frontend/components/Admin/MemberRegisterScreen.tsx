@@ -13,6 +13,7 @@ import {
 } from '@/lib/member-register'
 import { listMembers } from '@/lib/member-register-api'
 import { MEMBER_REGISTER } from '@/lib/member-register-content'
+import { memberPath } from '@/lib/member-register-routes'
 import { SelectField } from './SelectField'
 
 type MemberRegisterScreenProps = {
@@ -20,8 +21,6 @@ type MemberRegisterScreenProps = {
   initial: readonly MemberRow[]
   /** True when the server could not read the register at all. */
   unavailable?: boolean
-  /** Where a row goes, passed in so the component holds no knowledge of the URL scheme. */
-  memberHref: (id: string) => string
 }
 
 const HEAD = 'px-3 py-2 text-left font-sans text-xs uppercase tracking-label text-muted-foreground'
@@ -75,7 +74,6 @@ const NOTHING: Filters = { status: '', role: '', search: '', joinedWithin: '' }
 export const MemberRegisterScreen = ({
   initial,
   unavailable = false,
-  memberHref,
 }: MemberRegisterScreenProps) => {
   const [rows, setRows] = useState<readonly MemberRow[]>(initial)
   const [filters, setFilters] = useState<Filters>(NOTHING)
@@ -283,7 +281,7 @@ export const MemberRegisterScreen = ({
                           * "Open" cell at the far right of a table that scrolls.
                           */}
                         <Link
-                          href={memberHref(row.id)}
+                          href={memberPath(row.id)}
                           className="text-forest-green underline decoration-2 underline-offset-4 hover:text-forest-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-green"
                         >
                           {row.display_name}

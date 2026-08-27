@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 
 import { MemberRegisterScreen } from '@/components/Admin/MemberRegisterScreen'
 import { requireRole } from '@/lib/club-session'
-import { memberPath } from '@/lib/member-register-routes'
 import { MEMBER_REGISTER } from '@/lib/member-register-content'
 import { getMembers } from '@/lib/server-api'
 
@@ -44,7 +43,6 @@ export default async function MembersPage() {
     <MemberRegisterScreen
       initial={members ?? []}
       unavailable={members === null}
-      memberHref={memberPath}
     />
   )
 }

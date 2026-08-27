@@ -2,11 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
 import { CatalogueScreen } from '@/components/Admin/CatalogueScreen'
-import {
-  NEW_STRAIN_PATH,
-  TERMS_PATH,
-  strainPath,
-} from '@/lib/catalogue-routes'
+import { NEW_STRAIN_PATH, TERMS_PATH } from '@/lib/catalogue-routes'
 import { requireRole } from '@/lib/club-session'
 import { getStrains } from '@/lib/server-api'
 import { CATALOGUE_LIST } from '@/lib/strain-catalogue-content'
@@ -55,7 +51,6 @@ export default async function StrainCataloguePage() {
   return (
     <CatalogueScreen
       initial={strains}
-      strainHref={strainPath}
       addHref={NEW_STRAIN_PATH}
       termsHref={TERMS_PATH}
     />

@@ -52,7 +52,6 @@ const setup = (
     <CatalogueScreen
       initial={initial}
       unavailable={unavailable}
-      strainHref={(id) => `/admin/strains/${id}`}
       addHref="/admin/strains/new"
       termsHref="/admin/strains/terms"
     />,

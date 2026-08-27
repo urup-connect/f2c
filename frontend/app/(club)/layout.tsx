@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
 
+import { ClubBreadcrumbs } from '@/components/Club/ClubBreadcrumbs'
 import { ClubHeader } from '@/components/Club/ClubHeader'
 import { greetingName } from '@/lib/club-account'
-import { CLUB_SHELL } from '@/lib/club-content'
+import { CLUB_HOMES_COPY, CLUB_SHELL } from '@/lib/club-content'
 import { navigableFor } from '@/lib/club-navigation'
-import { clubHomeFor } from '@/lib/club-roles'
+import { clubHomeFor, isClubRole } from '@/lib/club-roles'
 import { requireSession } from '@/lib/club-session'
 
 /**
@@ -28,6 +29,20 @@ import { requireSession } from '@/lib/club-session'
 export default async function ClubLayout({ children }: { children: ReactNode }) {
   const user = await requireSession()
 
+  /*
+   * Where the trail starts, and what it calls that place.
+   *
+   * The home each role lands on already has a name it uses for itself — "Club administration",
+   * "Your cultivation" — so the first crumb borrows it rather than inventing a generic word for
+   * three different places. An account with no club role has no home to name either, and falls back
+   * to the club's own name pointing at the front door, which is exactly where `clubHomeFor` sends
+   * it.
+   */
+  const home = {
+    href: clubHomeFor(user.role) ?? '/',
+    label: isClubRole(user.role) ? CLUB_HOMES_COPY[user.role].title : CLUB_SHELL.homeLabel,
+  }
+
   return (
     <>
       <a
@@ -39,9 +54,11 @@ export default async function ClubLayout({ children }: { children: ReactNode }) 
 
       <ClubHeader
         displayName={greetingName(user)}
-        homeHref={clubHomeFor(user.role) ?? '/'}
+        homeHref={home.href}
         navigable={navigableFor(user.permissions)}
       />
+
+      <ClubBreadcrumbs home={home} />
 
       <main id="club-content" className="flex flex-1 flex-col">
         {children}

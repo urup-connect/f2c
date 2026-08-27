@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import Link from 'next/link'
 
 import { ClubCard } from '@/components/Club/ClubCard'
+import { strainPath } from '@/lib/catalogue-routes'
 import {
   STRAIN_STATUSES,
   STRAIN_TYPES,
@@ -21,7 +22,6 @@ type CatalogueScreenProps = {
   /** True when the server could not read the catalogue at all. */
   unavailable?: boolean
   /** Route bases, passed in so the component holds no knowledge of the URL scheme. */
-  strainHref: (id: string) => string
   addHref: string
   termsHref: string
 }
@@ -65,7 +65,6 @@ const CELL = 'px-3 py-3 align-top font-sans text-sm text-foreground'
 export const CatalogueScreen = ({
   initial,
   unavailable = false,
-  strainHref,
   addHref,
   termsHref,
 }: CatalogueScreenProps) => {
@@ -277,7 +276,7 @@ export const CatalogueScreen = ({
                           * "Edit" cell at the far right of a table that scrolls.
                           */}
                         <Link
-                          href={strainHref(row.id)}
+                          href={strainPath(row.id)}
                           className="text-forest-green underline decoration-2 underline-offset-4 hover:text-forest-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-green"
                         >
                           {row.name}
