@@ -39,6 +39,7 @@ can retype is not evidence.
 """
 from django import forms
 from django.contrib import admin, messages
+from django.http import HttpResponse
 from django.utils import timezone
 
 from app.strains.models import CultivatorStrainListing, ListingStatus
@@ -51,7 +52,7 @@ from .models import (
     SerialCounter,
     allocate_serials,
 )
-from .services import prepare_rows
+from .services import build_stock_export, prepare_rows
 from .spreadsheet import read_row
 
 #: `RowError.key` uses the template's field names. Two of them are not fields on
@@ -194,7 +195,7 @@ class PlantAdmin(admin.ModelAdmin):
     date_hierarchy = 'estimated_harvest_date'
     autocomplete_fields = ('listing',)
     inlines = (PlantOwnershipInline,)
-    actions = ('disable_plants',)
+    actions = ('export_stock', 'disable_plants')
     readonly_fields = (
         'id', 'serial', 'leaf_rating', 'harvested_on', 'owner_name',
         'cultivator_pseudonym', 'offered_product_types', 'created_at',
@@ -359,6 +360,36 @@ class PlantAdmin(admin.ModelAdmin):
         """
         names = [product.name for product in obj.finished_product_types]
         return ', '.join(names) if names else '— none on the listing —'
+
+    @admin.action(description='Export selected plants to a spreadsheet')
+    def export_stock(self, request, queryset):
+        """The changelist's own filters, as a file.
+
+        The command exports one cultivator at one scope; this exports whatever
+        staff have on screen, which is the case the command cannot cover -- one
+        batch, one strain, everything overdue, one member's holdings. Same
+        writer, so the columns cannot differ between the two.
+
+        The owner column appears only if some selected plant has an owner, and
+        carries a nickname and nothing else. `services.stock_rows` is where that
+        is argued.
+        """
+        plants = (
+            queryset
+            .select_related('listing__strain', 'listing__cultivator', 'batch', 'owner')
+            .prefetch_related('listing__finished_product_types')
+            .order_by('estimated_harvest_date', 'serial')
+        )
+        workbook = build_stock_export(plants, scope_label='Selected in the admin')
+
+        response = HttpResponse(
+            content_type=(
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        )
+        response['Content-Disposition'] = 'attachment; filename="stock.xlsx"'
+        workbook.save(response)
+        return response
 
     @admin.action(description='Withdraw selected plants from sale')
     def disable_plants(self, request, queryset):

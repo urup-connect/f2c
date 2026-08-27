@@ -77,8 +77,10 @@ in on a deployed environment today.**
       minimum yield, short description shown to members — `member-roles`, `member-plant-purchase`
 - [!] Decide how the three levels of finished-product-type selection relate — platform catalogue,
       strain listing, individual plant. Three documents put the list in three places — **C18**
-- [ ] Administrator screens for strain and product type CRUD. Endpoint work is Block 9; the models
-      are here
+- [~] Administrator screens for strain and product type CRUD. Endpoint work is Block 9; the models
+      are here. **Strains are done** — `/admin/strains` and the three routes under it, over
+      `app/strains/api.py`. **Finished product types are not**, and neither is the cultivator's own
+      listing screen: staff still write a listing in the Django admin
 
 ---
 
@@ -167,11 +169,15 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
       blank and the second would have failed on the index
 - [ ] An endpoint for either. All three routes are staff-side; a cultivator does nothing themselves
       until Block 9
-- [ ] Stock on hand **export** — `drawio`, cultivator story v1. The read is
-      `Plant.objects.available_from(cultivator)`; there is no stock model and
-      `design/backend.md` section 3 records why. Import is the upload above
-- [ ] Adjust available plants, add and remove — `member-roles`. Withdrawing is built
-      (`platform.disable_plant`); adding is the capture work above
+- [x] Stock on hand **export** — `drawio`, cultivator story v1. `manage.py export_stock`, plus an
+      admin action for whatever staff have filtered. Scoped to that story's own two screens — *my
+      inventory for sale* (the default, and what SOH means) and *my member-owned inventory* — and it
+      flags the "late items" the same story asks for. There is no stock model; the read is a queryset,
+      and `design/backend.md` section 3 records why
+- [x] The owner column carries a nickname and nothing else, and is absent when nothing in scope is
+      owned. An export is a file that leaves the platform — **C19**
+- [x] Adjust available plants, add and remove — `member-roles`. Withdrawing is the admin action on
+      `platform.disable_plant`; adding is the capture work above
 
 ### Leaf rating — C4
 
@@ -315,11 +321,36 @@ Everything here is split across the two tiers from C2.
 
 ### Members
 
-- [ ] View, edit, suspend, reinstate — `platform.disable_user`
-- [ ] Recent sign-ups — `drawio`
-- [ ] Warnings, suspensions, expulsions — `drawio`
+- [x] **View, edit, suspend, reinstate** — `platform.disable_user`. A second router on the sign-up
+      prefix (`GET /api/members`, `GET|PUT /api/members/{id}`, `POST .../suspend`,
+      `POST .../reinstate`) and the screens at `/admin/members`: the register, and a member's own
+      record. Five editable columns — both names, nickname, email, mobile — and **nothing that
+      carries authority or money**: `role` stays a Django-admin appointment per `backend.md`
+      section 10, and the standing moves through suspend and reinstate, which have rules a field
+      assignment does not. Three writes are refused outright: an erased account, a sharing member
+      (**C14** has not decided whether an administrator may touch one), and an administrator
+      suspending themselves — that one signs the caller out and leaves nobody able to undo it
+- [x] **There is no create and no delete**, by decision. Sign-up is the only route into the
+      membership, because an account typed in by hand would have no consent ledger behind it and
+      `documents` is where the club's lawful basis for holding an identity number lives. Erasure
+      stays `User.soft_delete`, an explicit action in the Django admin — an erased account still
+      appears on the register, marked, and every write against it is refused
+- [x] Recent sign-ups — `drawio`. A *joined within* filter on the register rather than a screen of
+      its own: the list is newest-first already, so a window on it is the same list in the same
+      order
+- [x] **Reading an identity number in full, recorded.** `accounts.IdentityNumberDisclosure` — who
+      read whose, when, and why, with the reason required and required to say something. The row is
+      written *before* the column is decrypted and inside the same transaction, so a read that
+      happened is a read that is logged and a decrypt failure leaves no row claiming otherwise. The
+      masked last four remain the default everywhere else, per `backend.md` section 10
+- [ ] Warnings, suspensions, expulsions — `drawio`. Needs a sanction model, and there is none
 - [ ] Revoke access — `platform.revoke_access`
-- [ ] Membership pauses and cancellations — `platform.cancel_membership`
+- [ ] Membership pauses and cancellations — `platform.cancel_membership`. UC tier alone, per **C2**
+- [ ] **A `platform.manage_members` codename.** The register is gated on `platform.disable_user`
+      because that is the only action in the catalogue over a member's account — so correcting a
+      mistyped address currently needs the authority to suspend one. `manage_cultivators` has no
+      member-side twin. Splitting read from sanction belongs with the C2 tier work rather than
+      ahead of it, and the gap is named in `membership/administration.py`
 
 ### Cultivators
 
@@ -330,7 +361,16 @@ Everything here is split across the two tiers from C2.
 
 ### Platform
 
-- [ ] Strain catalogue CRUD — `platform.manage_strain_catalogue`
+- [x] Strain catalogue CRUD — `platform.manage_strain_catalogue`. `/api/catalogue` and the screens
+      at `/admin/strains`: the catalogue list, a strain's own record, and the aroma and effect
+      vocabularies. **There is no delete**, by decision: both foreign keys into a strain are
+      `PROTECT`, so a strain the club has sold against cannot be removed, and retirement
+      (`status = inactive`) is the whole answer — it is platform-wide through
+      `CultivatorStrainListingQuerySet.visible` and it is reversible. Withdrawing a vocabulary term
+      works the same way through `is_available`
+- [ ] Cultivator listings, read-write. The strain screen shows every offer against a strain and is
+      deliberately read-only — a grower's commercial terms are not an administrator's to edit while
+      curating botanical facts. Editing one is still Django-admin-only
 - [ ] Finished product type and price CRUD — `platform.manage_product_types`
 - [ ] Club and platform rules. Published through the Django admin by decision; the brief says they
       need no button — `platform.manage_club_rules`
@@ -464,3 +504,5 @@ Recorded so that this list is a complete picture rather than only the remainder.
 - [x] Club document publication, versioning and consent ledger
 - [x] Django admin over accounts, documents, subscriptions and payments
 - [x] Soft delete and POPIA erasure
+- [x] Administrator's membership register: `/admin/members`, read, edit, suspend and reinstate, with
+      a recorded disclosure of an identity number read in full — Block 9

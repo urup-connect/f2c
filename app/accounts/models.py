@@ -49,7 +49,13 @@ from .storage import avatar_storage, avatar_upload_to
 # same way as ``UserStatus`` beside it. ``accounts.roles`` is the canonical
 # home: the role and the catalogue of what each one may do belong together, and
 # a status has no such catalogue.
-__all__ = ['User', 'UserManager', 'UserRole', 'UserStatus']
+__all__ = [
+    'IdentityNumberDisclosure',
+    'User',
+    'UserManager',
+    'UserRole',
+    'UserStatus',
+]
 
 
 class UserStatus(models.TextChoices):
@@ -1057,3 +1063,82 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.status = UserStatus.ACTIVE
         self.save(update_fields=['status', 'updated_at'])
         return self
+
+
+class IdentityNumberDisclosure(models.Model):
+    """One occasion on which a member of staff read a member's ID number.
+
+    ``design/backend.md`` section 10 makes the identity number **write-only** in
+    the Django admin: staff may set it and confirm which one is on file from the
+    masked last four digits, and the plaintext is never rendered. The reasoning
+    is that putting the number on a page puts it in the browser cache, the proxy
+    logs and anyone's shoulder view, for no operational gain.
+
+    The administrator's Next.js register keeps that default and adds one
+    exception, and this row is the price of the exception. Reading the number in
+    full is a deliberate act that names a reason and leaves a record: the
+    endpoint writes one of these *before* it decrypts anything, so a read that
+    happened is a read that is recorded even if the response never reaches the
+    caller. There is no endpoint that returns the number without writing one.
+
+    **Nothing here is editable, and there is no delete.** A row staff can type
+    into is not evidence of anything -- the same argument
+    ``documents.DocumentConsent`` makes about a consent ledger.
+
+    Two deletion rules, and they differ on purpose:
+
+    * ``member`` cascades. Erasure is ``User.soft_delete``, which keeps the row,
+      so this is reached only by a real deletion -- superusers only -- and a
+      disclosure against an account that no longer exists names nobody. The same
+      reading ``payments.Subscription.user`` and ``documents.DocumentConsent.user``
+      take.
+    * ``read_by`` is ``SET_NULL``. Deleting the *auditor's* account must not
+      erase the fact that a disclosure happened, only who made it. The same
+      reading ``documents.DocumentVersion.published_by`` takes.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
+
+    member = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='identity_disclosures',
+        editable=False,
+    )
+    read_by = models.ForeignKey(
+        'User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='identity_numbers_read',
+        editable=False,
+    )
+
+    # Required, and required with content: a disclosure with no stated reason is
+    # a disclosure nobody can review afterwards, which is the whole purpose of
+    # the row. `blank=False` makes `full_clean` say so, and the service checks it
+    # before the write because the endpoint is the only caller that can supply
+    # one.
+    reason = models.CharField(
+        max_length=200,
+        help_text='Why the number had to be read. Recorded, and never blank.',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+        indexes = [
+            # The one query this table answers: what has been read against this
+            # member, most recent first. It is what the member's own screen shows
+            # and what a POPIA request would be answered from.
+            models.Index(
+                fields=('member', '-created_at'),
+                name='idnum_disclosure_member_idx',
+            ),
+        ]
+        verbose_name = 'identity number disclosure'
+        verbose_name_plural = 'identity number disclosures'
+
+    def __str__(self):
+        return f'Identity number of {self.member_id} read by {self.read_by_id}'

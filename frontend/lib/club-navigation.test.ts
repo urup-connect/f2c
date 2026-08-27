@@ -217,14 +217,32 @@ describe('sectionsFor', () => {
 describe('navigableFor', () => {
   /*
    * This block used to assert that every role was offered nothing at all, and said it would change
-   * on the day the first screen landed. That day was the profile screen. It is the only destination
-   * with an `href`, so the assertions below are the same claim from the other side: exactly one,
-   * the same one for all three roles, and nothing else has quietly acquired a route.
+   * on the day the first screen landed. Three have landed now: the profile, which all three roles
+   * hold, and the strain catalogue and the membership register, which only an administrator does.
+   * The assertions below are the same claim from the other side -- exactly those three, each to
+   * exactly the roles that hold its permission, and nothing else has quietly acquired a route.
    */
   test('offers the profile, to every role that can sign in', () => {
     // All three hold `manage_own_profile` -- see ROLE_PERMISSIONS in accounts/roles.py -- so all
-    // three get the same single link. A role that stopped holding it would lose it here.
+    // three get it. A role that stopped holding it would lose it here.
     for (const permissions of [ADMIN, CULTIVATOR, MEMBER]) {
+      expect(navigableFor(permissions).map((destination) => destination.key)).toContain(
+        'own-profile',
+      )
+    }
+  })
+
+  test('offers the two administrative screens to an administrator alone', () => {
+    // `manage_strain_catalogue` and `disable_user` are both in ADMIN_ACTIONS and in no other
+    // role's set. The catalogue is administrator-curated -- `member-roles.md` gives a cultivator a
+    // request, not a write -- and authority over another person's account is the club's alone.
+    expect(navigableFor(ADMIN).map((destination) => destination.key)).toEqual([
+      'strain-catalogue',
+      'accounts',
+      'own-profile',
+    ])
+
+    for (const permissions of [CULTIVATOR, MEMBER]) {
       expect(navigableFor(permissions).map((destination) => destination.key)).toEqual([
         'own-profile',
       ])
@@ -233,15 +251,19 @@ describe('navigableFor', () => {
 
   test('offers nothing else, because nothing else is built', () => {
     /*
-     * Section 13 of the roles document: none of the models the other destinations act on exist. The
-     * assertion is on the catalogue rather than on one role's list, so a second `href` added
-     * anywhere fails here -- which is the point. The header renders links from this and nothing
-     * else, so an href pointing at a route that does not exist becomes a 404 in the bar on every
-     * signed-in screen.
+     * Section 13 of the roles document: almost none of the models the other destinations act on
+     * exist. The assertion is on the catalogue rather than on one role's list, so a fourth `href`
+     * added anywhere fails here -- which is the point. The header renders links from this and
+     * nothing else, so an href pointing at a route that does not exist becomes a 404 in the bar on
+     * every signed-in screen.
      */
     const ready = CLUB_DESTINATIONS.filter((destination) => destination.href !== null)
 
-    expect(ready.map((destination) => destination.key)).toEqual(['own-profile'])
+    expect(ready.map((destination) => destination.key)).toEqual([
+      'strain-catalogue',
+      'accounts',
+      'own-profile',
+    ])
     // `state` and `href` are two fields that have to agree. A `ready` destination with no href
     // renders as inert text; a `planned` one with an href renders as a link marked "not built yet".
     for (const destination of CLUB_DESTINATIONS) {
@@ -249,7 +271,9 @@ describe('navigableFor', () => {
     }
   })
 
-  test('points the profile at the route that actually exists', () => {
+  test('points each destination at the route that actually exists', () => {
     expect(navigableFor(MEMBER)[0].href).toBe('/profile')
+    expect(navigableFor(ADMIN)[0].href).toBe('/admin/strains')
+    expect(navigableFor(ADMIN)[1].href).toBe('/admin/members')
   })
 })

@@ -242,6 +242,143 @@ def _template_notes():
     )
 
 
+#: The export's columns, in the order a cultivator reads them. Distinct from
+#: :data:`COLUMNS` on purpose, and almost its mirror image: the template omits
+#: everything the platform generates because a cultivator must not supply it,
+#: and the export *leads* with those, because they are the part a cultivator
+#: cannot work out for themselves.
+#:
+#: Each entry is ``(key, heading, number format or None)``.
+EXPORT_COLUMNS = (
+    ('serial', 'Serial', None),
+    ('cultivator_plant_id', 'Cultivator plant ID', None),
+    ('strain', 'Strain', None),
+    ('batch', 'Crop / batch', None),
+    ('status', 'Status', None),
+    ('leaf_rating', 'Leaf rating', '0.0'),
+    ('grow_price', 'Grow price (R)', '#,##0.00'),
+    ('minimum_yield_grams', 'Minimum yield (g)', '#,##0.00'),
+    ('planting_date', 'Planted', 'yyyy-mm-dd'),
+    ('estimated_bloom_date', 'Bloom (est.)', 'yyyy-mm-dd'),
+    ('estimated_harvest_date', 'Harvest (est.)', 'yyyy-mm-dd'),
+    ('harvested_on', 'Harvested', 'yyyy-mm-dd'),
+    ('days_to_bloom', 'Days to bloom', '0'),
+    ('days_to_harvest', 'Days to harvest', '0'),
+    ('overdue', 'Overdue', None),
+    ('finished_product_types', 'Delivered as', None),
+    ('held_by', 'Held by', None),
+)
+
+#: The sheet stock is written to.
+STOCK_SHEET = 'Stock'
+
+#: Where the counts go. A dump of rows answers "what do I have"; a farm also
+#: wants "how much, and how much of it is late" without writing a pivot table.
+SUMMARY_SHEET = 'Summary'
+
+
+def build_export(rows, summary=None, *, scope_label='', held_by=False):
+    """A workbook of stock. Returns an openpyxl ``Workbook``.
+
+    ``rows`` are mappings of **plain values** keyed by :data:`EXPORT_COLUMNS` --
+    no model instances. That is what keeps this module's promise of touching no
+    ORM, and it is ``services.stock_rows`` that flattens a queryset into them.
+    The split is the same one the reader makes, for the same reason: the
+    spreadsheet mechanics are testable without a database and the queries are
+    testable without a spreadsheet.
+
+    ``held_by`` includes the owner column. Off by default, and the default is the
+    point: stock on hand is unsold by definition, so the column would be empty --
+    and once it is not empty it carries a member's identity to a cultivator, which
+    is a decision (see ``services.stock_rows``) rather than a formatting choice.
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = STOCK_SHEET
+
+    columns = [
+        column for column in EXPORT_COLUMNS
+        if held_by or column[0] != 'held_by'
+    ]
+
+    heading_font = Font(bold=True, color='FFFFFF')
+    heading_fill = PatternFill('solid', start_color='2F5233')
+
+    for index, (key, heading, number_format) in enumerate(columns, start=1):
+        cell = sheet.cell(row=1, column=index, value=heading)
+        cell.font = heading_font
+        cell.fill = heading_fill
+        cell.alignment = Alignment(vertical='center', wrap_text=True)
+
+        dimension = sheet.column_dimensions[get_column_letter(index)]
+        dimension.width = max(len(heading) + 4, 14)
+        if number_format:
+            # On the column, never on two thousand cells. See `build_template`
+            # for what that mistake cost.
+            dimension.number_format = number_format
+
+    for row in rows:
+        sheet.append([row.get(key) for key, _, _ in columns])
+
+    sheet.freeze_panes = 'A2'
+    sheet.auto_filter.ref = (
+        f'A1:{get_column_letter(len(columns))}{max(sheet.max_row, 1)}'
+    )
+
+    _write_summary(workbook.create_sheet(SUMMARY_SHEET), summary, scope_label)
+    return workbook
+
+
+def _write_summary(sheet, summary, scope_label):
+    sheet.column_dimensions['A'].width = 34
+    sheet.column_dimensions['B'].width = 18
+
+    def heading(row, text):
+        cell = sheet.cell(row=row, column=1, value=text)
+        cell.font = Font(bold=True)
+
+    row = 1
+    heading(row, 'Stock on hand')
+    row += 1
+    if scope_label:
+        sheet.cell(row=row, column=1, value='Scope')
+        sheet.cell(row=row, column=2, value=scope_label)
+        row += 2
+
+    if not summary:
+        return
+
+    sheet.cell(row=row, column=1, value='Plants')
+    sheet.cell(row=row, column=2, value=summary.get('plants', 0))
+    row += 1
+    sheet.cell(row=row, column=1, value='Total grow price (R)')
+    total = sheet.cell(row=row, column=2, value=summary.get('grow_price_total', 0))
+    total.number_format = '#,##0.00'
+    row += 1
+    sheet.cell(row=row, column=1, value='Minimum yield (g)')
+    yield_cell = sheet.cell(row=row, column=2, value=summary.get('yield_total', 0))
+    yield_cell.number_format = '#,##0.00'
+    row += 1
+    # "Late items" is one of the things the cultivator story asks the inventory
+    # screen for by name, so it is on the summary rather than left to be
+    # filtered for.
+    sheet.cell(row=row, column=1, value='Overdue (past estimated harvest)')
+    sheet.cell(row=row, column=2, value=summary.get('overdue', 0))
+    row += 2
+
+    for title, counts in (
+        ('By status', summary.get('by_status') or ()),
+        ('By strain', summary.get('by_strain') or ()),
+    ):
+        heading(row, title)
+        row += 1
+        for label, count in counts:
+            sheet.cell(row=row, column=1, value=label)
+            sheet.cell(row=row, column=2, value=count)
+            row += 1
+        row += 1
+
+
 def read_rows(source):
     """Read a filled-in template. Returns ``(rows, errors)``.
 

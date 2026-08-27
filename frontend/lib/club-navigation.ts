@@ -22,7 +22,9 @@
  * now happened once — `own-profile` — so the claim is tested rather than promised.
  */
 
+import { CATALOGUE_PATH } from './catalogue-routes'
 import { PROFILE_PATH } from './club-roles'
+import { MEMBERS_PATH } from './member-register-routes'
 
 /**
  * Whether there is somewhere to go yet.
@@ -297,13 +299,25 @@ export const CLUB_DESTINATIONS = [
     href: null,
   },
   {
+    /*
+     * The second destination to land, and the first under `administration`. As
+     * with `own-profile`, one entry gained an `href` and changed state and
+     * nothing else in this file moved -- which is the shape doing its job.
+     *
+     * The screens behind it are `/admin/strains` and the three routes under it.
+     * They answer to this permission and not to the role: `role` and
+     * `manage_strain_catalogue` are independent facts, and a suspended
+     * administrator holds the first without the second -- so the pages check the
+     * role for a useful redirect and the API checks the permission for the
+     * actual answer. See `lib/catalogue-routes.ts`.
+     */
     key: 'strain-catalogue',
     label: 'Strain catalogue',
     description: 'The strains every cultivator may list against, platform-wide.',
     permission: 'platform.manage_strain_catalogue',
     section: 'administration',
-    state: 'planned',
-    href: null,
+    state: 'ready',
+    href: CATALOGUE_PATH,
   },
   {
     key: 'product-types',
@@ -324,13 +338,31 @@ export const CLUB_DESTINATIONS = [
     href: null,
   },
   {
+    /*
+     * The third destination to land, and the second under `administration`.
+     * Relabelled rather than added beside: `platform.disable_user` is the only
+     * codename in `roles.py` that names authority over a member's account, and
+     * the register is what exercising it looks like — you open a record to
+     * suspend it. A second entry would have had to invent a codename, and the
+     * contract test below this list reads `roles.py` and refuses one it cannot
+     * find there.
+     *
+     * The description moved with the label because the screen is wider than the
+     * codename: correcting a mistyped address is most of what an administrator
+     * actually does here, and a tile promising only "disable an account" would
+     * send them to the Django admin for the ordinary case.
+     *
+     * Reading, editing and suspending are built. Warnings, expulsions, revoking
+     * access and cancelling a membership are not — the last two hold their own
+     * codenames, which keep their own `planned` entries below.
+     */
     key: 'accounts',
-    label: 'Accounts',
-    description: 'Disable or remove an account when the club has to.',
+    label: 'Members',
+    description: 'The whole register: correct a record, suspend an account, lift a suspension.',
     permission: 'platform.disable_user',
     section: 'administration',
-    state: 'planned',
-    href: null,
+    state: 'ready',
+    href: MEMBERS_PATH,
   },
   {
     key: 'revoke-access',

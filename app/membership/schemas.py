@@ -18,7 +18,12 @@ The frontend has to turn a refusal back into an error against a specific
 checkbox or field, and matching on prose is how that silently stops working.
 So the two refusals a member can act on are named fields.
 """
+from datetime import date, datetime
+from uuid import UUID
+
 from ninja import Schema
+
+from app.common import crypto
 
 
 class ConsentIn(Schema):
@@ -133,3 +138,359 @@ class NicknameRejectedOut(Schema):
     """
 
     detail: str
+
+
+# ----------------------------------------------------------------------
+# The administrator's register
+# ----------------------------------------------------------------------
+# Everything below is read and written by `administration_api`, behind
+# `platform.disable_user`. It is the one part of this project's API where a
+# member's own details cross the wire, and that needs saying out loud.
+#
+# Section 6.6 of `roles-and-permissions.md` makes `display_name` the only name
+# any payload carries, and `strains.schemas.CultivatorOut` is the model citizen:
+# an id and a display name, no address, no status. These schemas are the stated
+# exception, not a lapse. An administrator correcting a mistyped address has to
+# see the address; a register that showed only nicknames would send them to the
+# Django admin for every task, which is precisely what `conflict.md` C5 says the
+# club cannot keep doing.
+#
+# The exception is bounded in three ways, and each is a decision:
+#
+# * **The list carries no identity number at all** -- not even the masked form.
+#   `id_number_masked` decrypts, so a masked column on a list of six hundred
+#   members is six hundred decryptions per page load, and the fact the list
+#   needs is only whether one is on file. `MemberRowOut.has_id_number` reads the
+#   ciphertext column's emptiness and never decrypts.
+# * **The record carries the masked form and never the number.** Reading it in
+#   full is `POST /{id}/identity-number`, which writes an
+#   `accounts.IdentityNumberDisclosure` before it decrypts. See
+#   `administration.disclose_id_number`.
+# * **`read_by` on a disclosure is a `display_name`.** The rule holds where it
+#   costs nothing: who read a number is a question about a colleague, and a
+#   nickname answers it.
+
+
+class MembershipStandingOut(Schema):
+    """Where a member's subscription stands, or nulls when there is none.
+
+    Three fields off `payments.Subscription`, and deliberately not the amount or
+    the gateway token. What this screen answers is "may this person be here" --
+    the money is `platform.refund_transaction` and `platform.cancel_membership`,
+    which C2 puts in the UC tier and this router does not hold.
+
+    Null throughout for a member with no live arrangement: an erased account, a
+    sharing member, or one whose subscription has lapsed or been cancelled.
+    ``Subscription.objects.live()`` is at most one row, so there is no
+    ambiguity about which one this is.
+    """
+
+    status: str | None = None
+    status_label: str | None = None
+    #: How far the membership is paid up. The one column that decides whether an
+    #: account keeps its access, and the only input to ``lapse_overdue``.
+    paid_until: date | None = None
+
+
+class MemberRowOut(Schema):
+    """One member on the administrator's register.
+
+    The facts a decision to open, correct or suspend a record turns on, and
+    nothing else. No identity number, masked or otherwise -- see the section
+    note above on why the list is the one place that would cost something.
+
+    ``status`` and ``role`` come with their labels because the two vocabularies
+    live in ``accounts`` and a second copy in the frontend would drift from the
+    check constraint that enforces them. The raw value is what a filter submits;
+    the label is what a column shows.
+    """
+
+    id: UUID
+    display_name: str
+    first_name: str
+    last_name: str
+    nickname: str
+    #: Null on an erased account -- ``soft_delete`` clears the address and keeps
+    #: the row. The screen shows the account as erased rather than as nameless.
+    email: str | None
+    mobile: str
+
+    status: str
+    status_label: str
+    role: str
+    role_label: str
+
+    membership: MembershipStandingOut
+
+    #: Whether a document is on file, read from the ciphertext column being
+    #: non-empty. Never decrypts. See the section note.
+    has_id_number: bool
+    #: Set when the member asked to be erased. A row that is present, read-only
+    #: and says so, rather than one missing from the register with no
+    #: explanation.
+    erased: bool
+
+    created_at: datetime
+
+    @staticmethod
+    def resolve_status_label(obj):
+        return obj.get_status_display()
+
+    @staticmethod
+    def resolve_role_label(obj):
+        return obj.get_role_display()
+
+    @staticmethod
+    def resolve_erased(obj):
+        return obj.deleted_at is not None
+
+    @staticmethod
+    def resolve_membership(obj):
+        """The live subscription ``administration._live_subscriptions`` attached.
+
+        ``getattr`` rather than a plain attribute read: the prefetch names it
+        ``live_subscriptions``, and a caller that serialised a member fetched
+        some other way should get the empty standing rather than an
+        ``AttributeError``.
+        """
+        live = getattr(obj, 'live_subscriptions', None) or []
+        if not live:
+            return MembershipStandingOut()
+
+        subscription = live[0]
+        return MembershipStandingOut(
+            status=subscription.status,
+            status_label=subscription.get_status_display(),
+            paid_until=subscription.paid_until,
+        )
+
+
+class DisclosureOut(Schema):
+    """One occasion on which staff read this member's identity number.
+
+    ``read_by`` is a ``display_name`` and is null once that account has been
+    deleted outright -- ``SET_NULL``, so the fact that a disclosure happened
+    outlives whoever made it. See ``accounts.IdentityNumberDisclosure``.
+    """
+
+    id: UUID
+    read_by: str | None
+    reason: str
+    created_at: datetime
+
+    @staticmethod
+    def resolve_read_by(obj):
+        return obj.read_by.display_name if obj.read_by_id else None
+
+
+class MemberOut(Schema):
+    """One member in full, as the record screen reads it.
+
+    Everything on the row, plus what only the record needs: the masked identity
+    number, who registered a sharing member, the dates, and the disclosure
+    history.
+
+    ``editable`` is the answer to "may this screen write to this record", and it
+    is sent rather than derived in the browser. The two reasons a record is
+    read-only -- it was erased, or it belongs to a cultivator's sharing member --
+    are rules in ``administration._editable``, and a second copy in the frontend
+    would be a form that offers a save the API then refuses.
+    """
+
+    id: UUID
+    display_name: str
+    first_name: str
+    last_name: str
+    nickname: str
+    email: str | None
+    mobile: str
+
+    status: str
+    status_label: str
+    role: str
+    role_label: str
+
+    membership: MembershipStandingOut
+
+    has_id_number: bool
+    #: All but the last four digits, or ``''`` when none is on file, or
+    #: ``UNREADABLE`` for a row that will not decrypt. See the resolver.
+    id_number_masked: str
+    erased: bool
+    editable: bool
+
+    #: The cultivator who put a sharing member on the register, as a
+    #: ``display_name``. Null for everybody else.
+    registered_by: str | None
+
+    date_of_birth: date | None
+    date_of_birth_verified_at: datetime | None
+    last_login: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    disclosures: list[DisclosureOut] = []
+
+    # The four resolvers `MemberRowOut` also has. Repeated rather than inherited:
+    # the two schemas are not a base and a subclass, they are a list row and a
+    # record, and the day the list drops a column this file should not have to
+    # unpick an inheritance chain to do it. The same argument
+    # `strains.schemas` makes by writing `StrainRowOut` and `StrainOut` out
+    # separately.
+
+    @staticmethod
+    def resolve_status_label(obj):
+        return obj.get_status_display()
+
+    @staticmethod
+    def resolve_role_label(obj):
+        return obj.get_role_display()
+
+    @staticmethod
+    def resolve_erased(obj):
+        return obj.deleted_at is not None
+
+    @staticmethod
+    def resolve_membership(obj):
+        return MemberRowOut.resolve_membership(obj)
+
+    @staticmethod
+    def resolve_registered_by(obj):
+        return obj.registered_by.display_name if obj.registered_by_id else None
+
+    @staticmethod
+    def resolve_disclosures(obj):
+        """The reads recorded against this member, newest first.
+
+        ``administration.member_detail`` prefetches these in order, so reading
+        the relation here is one query for the whole screen rather than one per
+        row. A member serialised without that prefetch still answers correctly,
+        one query later -- which is what makes this safe to reuse as the
+        response body of a suspension.
+        """
+        return list(obj.identity_disclosures.all())
+
+    @staticmethod
+    def resolve_editable(obj):
+        """Mirrors ``administration._editable``, which is the rule.
+
+        Restated here rather than imported, and the duplication is bounded: two
+        conditions, both columns on the row being serialised. Importing the
+        service into the schema module would make the schemas depend on the
+        rules they describe, and this is the only place the answer is needed as
+        a *value* rather than as a refusal.
+        """
+        from app.accounts.models import UserRole
+
+        return obj.deleted_at is None and obj.role != UserRole.SHARING_MEMBER
+
+    @staticmethod
+    def resolve_id_number_masked(obj):
+        """The last four digits behind asterisks, or ``UNREADABLE``.
+
+        ``design/backend.md`` section 10: a row that will not decrypt shows
+        ``UNREADABLE``, surfaced rather than hidden, because it is a key or
+        integrity problem somebody has to look at. Swallowing it into a blank
+        would present unrecoverable data as absent, which is the worst available
+        outcome -- nobody would know to look.
+
+        This is the one place in this app that catches ``DecryptionError``. The
+        full read in ``administration.disclose_id_number`` deliberately does not:
+        there, the exception rolls back the disclosure row.
+        """
+        try:
+            return obj.id_number_masked
+        except crypto.DecryptionError:
+            return 'UNREADABLE'
+
+
+class MemberIn(Schema):
+    """The five details an administrator may correct.
+
+    Every field present on every write. This is a replace, matching
+    ``StrainIn`` and ``ProfileIn``: the screen holds the whole set and sends the
+    whole set, so behaviour does not depend on what a browser chose to omit.
+
+    Absent on purpose, and each absence is a decision recorded in
+    ``administration.WRITABLE_FIELDS``: ``status`` moves through suspend and
+    reinstate, which have rules a field assignment does not; ``role`` is
+    appointed in the Django admin and nowhere else; the identity number is
+    write-only; ``is_active`` is derived; and the date of birth comes off the
+    identity document.
+
+    ``nickname`` may be blank. Clearing one is a legitimate act -- the member
+    simply has none, and ``display_name`` falls back -- and it is not the same
+    as the nickname being taken.
+    """
+
+    first_name: str
+    last_name: str
+    nickname: str = ''
+    email: str
+    mobile: str
+
+
+class IdentityDisclosureIn(Schema):
+    """The reason a member's identity number has to be read in full.
+
+    Required, and required to say something -- see
+    ``administration.MINIMUM_DISCLOSURE_REASON``. It is written to
+    ``accounts.IdentityNumberDisclosure`` before the column is decrypted, and it
+    is the whole value of that row: a disclosure nobody can review afterwards is
+    the same as no disclosure at all.
+    """
+
+    reason: str
+
+
+class IdentityNumberOut(Schema):
+    """A member's identity number, and the record that it was read.
+
+    The disclosure comes back with the number rather than being fetched
+    afterwards, so the screen can show who read it and when in the same paint --
+    and so that a caller cannot receive the number without also receiving the
+    evidence that the read was logged.
+    """
+
+    id_number: str
+    disclosure: DisclosureOut
+
+
+class RegisterFilters(Schema):
+    """The four narrowings the register offers, all optional.
+
+    Blank and absent mean the same thing -- unfiltered -- because a ``select``
+    reset to "any" submits an empty string. The same contract
+    ``strains.schemas.CatalogueFilters`` states.
+
+    ``joined_within`` is a number of days and is what makes the *recent
+    sign-ups* view a filter rather than a screen of its own. Zero means
+    unfiltered, matching the blanks beside it.
+    """
+
+    status: str = ''
+    role: str = ''
+    #: Matched against the name, the nickname and the address -- and, at six
+    #: digits or more, against the identity number's blind index, which is
+    #: exact-match only and so cannot be used to browse. See
+    #: ``administration.register``.
+    search: str = ''
+    joined_within: int = 0
+
+
+class MemberRefusedOut(Schema):
+    """Why a write against a member was refused, per field where it has one.
+
+    The same shape as ``strains.schemas.RefusedOut`` and
+    ``accounts.schemas.ProfileRefusedOut``, deliberately: the frontend already
+    knows how to render that, and a third refusal shape would be a third
+    renderer.
+
+    ``detail`` carries the refusals that belong to no field -- an erased account,
+    a sharing member, an administrator suspending themselves. Those are the
+    common case here, unlike on the catalogue, so a screen that only rendered
+    ``fields`` would show a blank error for the three most likely refusals.
+    """
+
+    detail: str
+    fields: dict[str, list[str]] = {}

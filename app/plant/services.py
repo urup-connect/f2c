@@ -39,16 +39,19 @@ this one, and the half that disagreed would be whichever was used less.
 **Not built here.** The stock-on-hand export, which is a read over
 ``Plant.objects.available_from``; and any notification, which is Block 8.
 """
+from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from app.finished_product.models import FinishedProductType
 from app.strains.models import CultivatorStrainListing, ListingStatus
 
 from .models import Batch, Plant, allocate_serials
-from .spreadsheet import RowError, read_row, read_rows
+from .spreadsheet import RowError, build_export, read_row, read_rows
 
 
 @dataclass
@@ -226,6 +229,151 @@ def write_plants(cultivator, resolved):
             estimated_harvest_date=row['estimated_harvest_date'],
         ))
     return created
+
+
+#: The scopes an export can be taken at. They are the cultivator story's own
+#: two inventory screens -- "My inventory for sale" and "My member-owned
+#: inventory" -- rather than an invented set of filters, and `FOR_SALE` is the
+#: default because that is what "stock on hand" means.
+SCOPE_FOR_SALE = 'for-sale'
+SCOPE_MEMBER_OWNED = 'member-owned'
+SCOPE_ALL = 'all'
+
+SCOPES = {
+    SCOPE_FOR_SALE: 'Unsold — my inventory for sale',
+    SCOPE_MEMBER_OWNED: 'Sold — my member-owned inventory',
+    SCOPE_ALL: 'Everything I am growing',
+}
+
+
+def stock_for_export(cultivator, scope=SCOPE_FOR_SALE):
+    """The plants an export covers. Returns a queryset.
+
+    ``drawio``, cultivator story v1: "Manage inventory — harvest update,
+    add/remove, upload, **SOH imports and exports**". The import half is the Excel
+    upload; this is the other.
+
+    Withdrawn plants are excluded at every scope. A plant somebody disabled is
+    not stock on hand, and a report that includes it overstates the farm.
+    """
+    if scope not in SCOPES:
+        raise ValueError(
+            f'{scope!r} is not a scope. Use one of: {", ".join(SCOPES)}.'
+        )
+
+    plants = Plant.objects.live().filter(listing__cultivator=cultivator)
+    if scope == SCOPE_FOR_SALE:
+        plants = plants.filter(owner__isnull=True)
+    elif scope == SCOPE_MEMBER_OWNED:
+        plants = plants.filter(owner__isnull=False)
+
+    return (
+        plants
+        .select_related('listing__strain', 'listing__cultivator', 'batch', 'owner')
+        .prefetch_related('listing__finished_product_types')
+        .order_by('estimated_harvest_date', 'serial')
+    )
+
+
+def stock_rows(plants, *, today=None):
+    """Flatten plants into rows of plain values for ``spreadsheet.build_export``.
+
+    ``today`` is resolved once for the whole export rather than per row, so the
+    day counts in one file are consistent with each other. A report whose first
+    row was computed a second before midnight and its last a second after is a
+    report with two answers in it.
+
+    **The owner is a nickname and nothing else.** ``member-roles.md`` conceals
+    members behind one, section 6.6 of ``roles-and-permissions.md`` makes that a
+    property of every payload, and C19 is the open question about what a
+    cultivator may see of a member at all. An export is a file that leaves the
+    platform and gets forwarded, so it carries the least that is useful: the
+    nickname, so a cultivator can talk about the plant, and no name, address or
+    contact detail.
+    """
+    today = today or timezone.localdate()
+    rows = []
+
+    for plant in plants:
+        days_to_harvest = plant.days_to_harvest(today=today)
+        rows.append({
+            'serial': plant.serial,
+            'cultivator_plant_id': plant.cultivator_plant_id,
+            'strain': plant.listing.strain.name,
+            'batch': plant.batch.reference if plant.batch_id else '',
+            'status': plant.get_status_display(),
+            'leaf_rating': plant.leaf_rating,
+            'grow_price': plant.grow_price,
+            'minimum_yield_grams': plant.minimum_yield_grams,
+            'planting_date': plant.planting_date,
+            'estimated_bloom_date': plant.estimated_bloom_date,
+            'estimated_harvest_date': plant.estimated_harvest_date,
+            'harvested_on': plant.harvested_on,
+            'days_to_bloom': plant.days_to_bloom(today=today),
+            'days_to_harvest': days_to_harvest,
+            # "Late items", which the cultivator story asks the inventory screen
+            # for by name. A plant past its estimated harvest date and not
+            # harvested is one somebody has to chase, and it is invisible in a
+            # list sorted by date unless it is labelled.
+            'overdue': (
+                'Yes' if days_to_harvest is not None and days_to_harvest < 0
+                else ''
+            ),
+            'finished_product_types': ', '.join(
+                product.name
+                for product in plant.listing.finished_product_types.all()
+            ),
+            'held_by': plant.owner.display_name if plant.owner_id else '',
+        })
+
+    return rows
+
+
+def stock_summary(rows):
+    """Counts for the export's summary sheet, from the rows already flattened."""
+    by_status = Counter(row['status'] for row in rows)
+    by_strain = Counter(row['strain'] for row in rows)
+
+    return {
+        'plants': len(rows),
+        'grow_price_total': sum(
+            (row['grow_price'] for row in rows), Decimal('0.00')
+        ),
+        'yield_total': sum(
+            (row['minimum_yield_grams'] for row in rows), Decimal('0.00')
+        ),
+        'overdue': sum(1 for row in rows if row['overdue']),
+        'by_status': sorted(by_status.items()),
+        'by_strain': sorted(by_strain.items()),
+    }
+
+
+def build_stock_export(plants, *, scope_label='', held_by=None, today=None):
+    """A workbook of stock. Returns an openpyxl ``Workbook``.
+
+    Takes plants rather than a cultivator, so the same writer serves the command
+    (one cultivator, one scope) and the admin action (whatever staff had
+    filtered). ``held_by`` defaults to including the owner column only when some
+    plant actually has an owner — an empty column reads as missing data, and a
+    populated one is a POPIA decision (see :func:`stock_rows`).
+
+    **An export is not a re-import.** Every plant in it already exists, so
+    uploading one back is refused by the duplicate check, correctly — the import
+    half of "SOH imports and exports" is the template, which is for stock that is
+    new. The export carries the platform-generated columns the template
+    deliberately has none of, which is the other half of why the two files are
+    not interchangeable.
+    """
+    rows = stock_rows(plants, today=today)
+    if held_by is None:
+        held_by = any(row['held_by'] for row in rows)
+
+    return build_export(
+        rows,
+        stock_summary(rows),
+        scope_label=scope_label,
+        held_by=held_by,
+    )
 
 
 def template_reference(cultivator):

@@ -13,10 +13,17 @@ registration cannot happen without a published revision of every required
 document. That is the point of ``DocumentsNotReady``, and it means every test
 here has to publish three of them first.
 """
-from datetime import date
+from datetime import date, timedelta
 
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+from django.utils import timezone
+
+from app.accounts.models import UserStatus
+from app.accounts.roles import UserRole
 from app.common.validators import luhn_is_valid
 from app.documents.tests.support import DocumentsTestCase
+from app.payments.models import Subscription, SubscriptionStatus
 
 #: The slugs migration 0002 seeds, in form order.
 REQUIRED_DOCUMENTS = ('club-rules', 'annexures', 'constitution')
@@ -94,3 +101,125 @@ class RegistrationTestCase(DocumentsTestCase):
             label=label,
             content=b'%PDF-1.7\na later revision\n%%EOF\n',
         )
+
+
+User = get_user_model()
+
+
+class RegisterTestCase(TestCase):
+    """Accounts for the administrator's register, and nothing to do with documents.
+
+    Deliberately **not** a ``RegistrationTestCase``. Nothing under
+    ``/api/members/{id}`` publishes or reads a club document, and inheriting
+    three published revisions into every one of these tests would make each of
+    them slower and none of them clearer -- the two halves of ``/api/members``
+    share a URL and no fixtures.
+
+    Four accounts that differ in exactly one way each, following
+    ``strains.tests.support``: building them by hand in every test case is how
+    two of them end up differing in two ways. Active throughout, because
+    ``permissions_for`` empties the set for an account that cannot sign in, so a
+    Pending administrator would be refused for the wrong reason and a test
+    asserting 403 would pass without testing anything about the role.
+    """
+
+    def setUp(self):
+        self.admin = self.account('registrar@example.com', 'Registrar', UserRole.ADMIN)
+        self.cultivator = self.account('grower@example.com', 'Kloof', UserRole.CULTIVATOR)
+        self.member = self.account('thabo@example.com', 'Thabo', UserRole.MEMBER)
+
+    def account(self, email, nickname, role=UserRole.MEMBER, **overrides):
+        """An account holding ``role``, Active unless told otherwise."""
+        return User.objects.create_user(
+            email=email,
+            nickname=nickname,
+            role=role,
+            status=overrides.pop('status', UserStatus.ACTIVE),
+            first_name=overrides.pop('first_name', 'Given'),
+            last_name=overrides.pop('last_name', 'Family'),
+            **overrides,
+        )
+
+    def sharing_member(self, nickname='Held', **overrides):
+        """A stock-holding identity: no address, and a cultivator's attestation.
+
+        Written through the model rather than through
+        ``accounts.services.register_sharing_member``, because these tests are
+        about what the register refuses to do to one, not about how one comes to
+        exist. The four columns ``sharing_member_is_complete`` requires are all
+        set, so the row is one the database accepts.
+        """
+        person = User(
+            nickname=nickname,
+            first_name=overrides.pop('first_name', 'Sipho'),
+            last_name=overrides.pop('last_name', 'Ndlovu'),
+            role=UserRole.SHARING_MEMBER,
+            status=UserStatus.SHARING,
+            registered_by=overrides.pop('registered_by', self.cultivator),
+            sharing_consent_attested_by=self.cultivator,
+            sharing_consent_attested_at=timezone.now(),
+            **overrides,
+        )
+        person.id_number = SECOND_ADULT_ID
+        person.set_unusable_password()
+        person.save()
+        return person
+
+    def subscribe(self, member, status=SubscriptionStatus.ACTIVE, **overrides):
+        """A subscription against ``member``, live by default.
+
+        The columns are set here rather than through
+        ``payments.services.open_subscription``, because these tests care what
+        the register *reports* about a standing and not how one is opened --
+        and ``open_subscription`` always writes ``PENDING``, which is only one
+        of the four states the register has to show.
+
+        ``gateway_token`` is set for an Active row and left blank otherwise,
+        because ``active_subscription_is_paid_up`` says an active subscription
+        is one Payfast has taken money against: it has a token and a paid-up
+        date. A fixture that ignored that would be a fixture the database
+        refuses.
+        """
+        active = status == SubscriptionStatus.ACTIVE
+        return Subscription.objects.create(
+            user=member,
+            status=status,
+            amount=overrides.pop('amount', '150.00'),
+            frequency=overrides.pop('frequency', 3),
+            checkout_expires_at=timezone.now() + timedelta(days=1),
+            gateway_token=overrides.pop(
+                'gateway_token', 'pf-token' if active else ''
+            ),
+            paid_until=overrides.pop(
+                'paid_until', date(2026, 12, 31) if active else None
+            ),
+            **overrides,
+        )
+
+    def joined(self, member, days_ago):
+        """Backdate ``created_at``, which is ``auto_now_add`` and cannot be set.
+
+        A queryset ``update`` rather than a save: ``auto_now_add`` writes the
+        column on insert and ignores it on every write afterwards, so the only
+        way to test the *joined within* filter at all is to go round the model.
+        The row is re-read so the instance and the database agree.
+        """
+        User.objects.filter(pk=member.pk).update(
+            created_at=timezone.now() - timedelta(days=days_ago)
+        )
+        member.refresh_from_db()
+        return member
+
+    def edit(self, **overrides):
+        """A complete, acceptable ``MemberIn`` body.
+
+        Every field present, because the endpoint is a replace and a test that
+        sent a subset would be testing a shape the screen never produces.
+        """
+        return {
+            'first_name': 'Thabo',
+            'last_name': 'Mahlangu',
+            'nickname': 'Thabo',
+            'email': 'thabo@example.com',
+            'mobile': '082 123 4567',
+        } | overrides

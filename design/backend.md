@@ -66,11 +66,22 @@ required fields for both — so there is one list in the code. `upload_plants` r
 database checks and the same write. A second validator for the single-plant form would eventually
 disagree with the first, and the half that disagreed would be whichever was used less.
 
-Three interfaces, none of them an endpoint: `manage.py plant_template` and `manage.py upload_plants`
+Four interfaces, none of them an endpoint: `manage.py plant_template` and `manage.py upload_plants`
 for a batch, `manage.py add_plant` for one, and the admin's add form for one. The admin form
 assembles a row in the reader's own shape and hands it to the same two functions, then maps each
 complaint back onto the field it came from — which is what `RowError.key` is for. Block 9 is where a
 cultivator gets to do any of this themselves.
+
+The other half of the cultivator story's "SOH imports and exports" is
+`manage.py export_stock`, with an admin action beside it for whatever staff have filtered on the
+changelist. Its scopes are that story's own two inventory screens — "my inventory for sale" and "my
+member-owned inventory" — and the default is the first, because that is what stock on hand means. It
+carries the platform-generated columns the template deliberately has none of, and flags the "late
+items" the same story asks for: a plant past its estimated harvest date and not harvested.
+
+**An export is not a re-import**, and the asymmetry is deliberate rather than an omission. Every plant
+in one already exists, so uploading it back is refused by the duplicate check — the import half is the
+template, which is for stock that is new.
 
 The upload is split in two on purpose. `plant/spreadsheet.py` decides whether a *file* is readable and
 touches no model; `plant/services.py` decides whether what it read is *true* and issues every query.
@@ -703,6 +714,18 @@ cache, the proxy logs and anyone's shoulder view for no operational gain. The li
 four digits behind asterisks; a row that will not decrypt shows `UNREADABLE`, surfaced rather than
 hidden, because it is a key or integrity problem someone has to look at.
 
+**There is exactly one exception, and it pays for itself with a row.**
+`POST /api/members/{id}/identity-number` — the administrator's register, not this admin — returns
+the whole number, and writes an `accounts.IdentityNumberDisclosure` naming the member, the reader,
+the time and a stated reason *before* it decrypts anything. The write and the decrypt are one
+transaction, so a read that happened is a read that is recorded, and a column that will not decrypt
+rolls the row back rather than leaving evidence of something that did not occur. The reason is
+required and has a minimum length: a disclosure nobody can review afterwards is worth no more than
+the masked default, which is free. The ledger is not editable and has no delete, for the reason the
+consent ledger below is not either — a row staff can type into is not evidence of anything. It is a
+`POST` rather than a `GET` because a `GET` is cacheable, prefetchable and logged by every proxy in
+between, and because a `GET` has no body to carry the reason.
+
 **Erasure is an explicit action, not the delete button.** Hard delete is superusers only and
 cascades into everything referencing the member. The routine answer to "please delete my account" is
 the Erase action.
@@ -735,7 +758,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | --- | --- |
 | Runner | Django test runner |
 | Layout | A `tests/` package per app, one module per layer |
-| Tests | 1157 |
+| Tests | 1191 |
 | Command | `.venv\Scripts\python.exe manage.py test` |
 | Backend | SQLite locally; **MySQL 8.4 in CI**, which is where the constraints are proven — section 8.6 |
 
@@ -775,6 +798,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `plant/tests/test_spreadsheet.py` | The template round-tripping through its own reader; the ambiguous date that is refused rather than guessed; the price refused rather than rounded; duplicates inside one file; that there is no cultivator column and none for anything the platform generates |
 | `plant/tests/test_upload.py` | That one bad row stops the file and consumes no serial; that another cultivator's listing is invisible; the C18 column confirming and never overriding; batches shared across two uploads; every refusal the commands make |
 | `plant/tests/test_capture.py` | That a single capture is refused by the same rules as a workbook row and shares its serial counter and plant-ID namespace; that errors arrive keyed by field; and that the admin allocates a serial on add |
+| `plant/tests/test_export.py` | That stock on hand means unsold; that a withdrawn plant is in no scope and another cultivator's stock in none of them; the overdue flag; that every row shares one "today"; and that the owner column is a nickname, absent when nothing is owned |
 
 The suite is written around a specific idea: **test what is invisible when it breaks.** An encrypted
 column that stops round-tripping loses data with no error. A denormalised `is_active` that drifts
