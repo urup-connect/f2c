@@ -13,12 +13,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-& ".venv\Scripts\python.exe" -m uvicorn cultivatorscollective.asgi:application `
+& ".venv\Scripts\python.exe" -m uvicorn f2c.asgi:application `
     --host $HostName `
     --port $Port `
     --reload `
-    --reload-dir cultivatorscollective `
-    --reload-dir accounts `
-    --reload-dir authn `
-    --reload-dir common `
-    --reload-dir documents
+    --reload-dir f2c `
+    --reload-dir app

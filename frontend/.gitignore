@@ -1,7 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+# Unrooted, so both applications are covered: npm hoists to frontend/node_modules, but a workspace
+# can end up with one of its own for a version it cannot share.
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -11,14 +13,16 @@
 !.yarn/versions
 
 # testing
-/coverage
+coverage/
 
 # next.js
-/.next/
-/out/
+# Unrooted for the same reason as node_modules: each application builds into its own directory —
+# frontend/club/.next and frontend/market/.next — and a rooted pattern matched neither.
+.next/
+out/
 
 # production
-/build
+build/
 
 # misc
 .DS_Store

@@ -9,12 +9,12 @@ Sign-up now stores what it collects. That reverses what this document used to sa
 the most important fact in it.
 
 A completed submission creates a `User` at status **Pending payment**, with their three club
-document agreements, in one transaction. `POST /api/members/register` is the write; `app/membership`
+document agreements, in one transaction. `POST /api/members/register` is the write; `app/club/membership`
 owns it. The account cannot sign in: Django derives `is_active` from `status`, a check constraint
 holds the two together in SQL, and every sign-in route resolves an address through
 `User.objects.active_by_email`. There is no path by which registering produces an account that can
 log in. What moves an account from Pending payment to Active is a payment, and **the payment gateway
-is now built** — `app/payments` opens a subscription in the same transaction as the member, hands
+is now built** — `app/core/payments` opens a subscription in the same transaction as the member, hands
 them to Payfast, and activates the account when Payfast's server-to-server notification arrives. A
 member of staff in the admin remains the route for somebody who paid another way. See
 [payments.md](payments.md).
@@ -239,7 +239,7 @@ ordering, the one-message-per-field rule, the error summary and the no-JavaScrip
 without a second implementation.
 
 **Django owns the documents.** The file, the version and the wording used to be constants in
-`frontend/lib/club-documents.ts`. They are now rows: `ClubDocument` is a document's identity,
+`frontend/club/lib/club-documents.ts`. They are now rows: `ClubDocument` is a document's identity,
 `DocumentVersion` is one revision of it, and `DocumentConsent` is one member's agreement to one
 revision. Staff upload a PDF in the Django admin, publish it, and the next member to open `/signup`
 reads that revision. Revising a document no longer needs a deployment — which is the point, because a
@@ -567,7 +567,7 @@ is what turns "it broke" into something support can trace.
 | 8 | The sentence a member ticks is no longer covered by the plain-language compliance checks: it comes from the API, and staff own it in the admin. | Accepted — see section 5, *What was given up* |
 | 9 | Nothing verifies that the PDF at a revision's address still hashes to the digest recorded for it. The digest is stored and compared per agreement, and the admin flags a mismatch, but no job re-fetches the file to check. | Open — needs a periodic check |
 | 10 | A document published in the admin with an id the frontend does not know is silently not shown. Django only refuses when a `required_at_signup` document has no revision, so a fourth document is invisible rather than blocking. | Accepted — deliberate, so a publish cannot take sign-up down |
-| 11 | A registered member sits at Pending payment with nothing that can move them to Active: **the payment gateway is not built**. Until it is, only a member of staff in the admin can activate an account, and a member who registers can never sign in on their own. | **Closed.** `app/payments` activates an account on a Payfast notification — see [payments.md](payments.md). Two gaps remain, recorded there rather than here: nothing schedules the lapsing command (its risk 2) and no real email provider exists, so the emailed payment link reaches nobody (its risk 3) |
+| 11 | A registered member sits at Pending payment with nothing that can move them to Active: **the payment gateway is not built**. Until it is, only a member of staff in the admin can activate an account, and a member who registers can never sign in on their own. | **Closed.** `app/core/payments` activates an account on a Payfast notification — see [payments.md](payments.md). Two gaps remain, recorded there rather than here: nothing schedules the lapsing command (its risk 2) and no real email provider exists, so the emailed payment link reaches nobody (its risk 3) |
 | 12 | The registration endpoint is unauthenticated and has no CSRF check. It cannot have a useful one: the caller is a Next.js server action, so there is no browser cookie to forge with and a token would be one this application issues to itself. A per-IP rate limit of 5/minute is the control instead, and it is the only thing bounding bulk creation of member rows. | Accepted — see `membership/throttles.py` |
 | 13 | Four validation rules now exist twice, in TypeScript and in Python — names, email, mobile, nickname — joining the identity number at risk 5. Each pair is correct in both places for different reasons, but they must be read together, and a change to one is easy to make in isolation. | Open — documented rather than unified |
 | 14 | The mobile number is a unique identity key, so a member with no phone of their own cannot give a partner's or a parent's. Because duplicates are never disclosed, they are refused with a confirmation screen and never learn why. There is no route for staff to make an exception short of editing the other account. | Accepted, by decision — the club's rule is one handset, one member |

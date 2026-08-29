@@ -7,7 +7,7 @@ into an account that can sign in.
 
 **A payment is now what activates a membership.** Before this, `POST /api/members/register` left a
 member at `pending_payment` and nothing moved them off it but a member of staff in the Django
-admin. `app/payments` closes that gap: registration opens a subscription in the same transaction
+admin. `app/core/payments` closes that gap: registration opens a subscription in the same transaction
 that writes the member, the member is handed to Payfast, and the server-to-server notification
 Payfast sends back is what calls `User.activate()`.
 
@@ -47,7 +47,7 @@ merchant that needs no onboarding call, against PayGate PayWeb3's three-step ini
 and a merchant account that has to exist before anything can be tested. The two are separate
 products despite Payfast having acquired PayGate in 2021, and nothing here is shared between them.
 
-`app/payments/gateway.py` is the only module that knows the Payfast protocol. Swapping gateways
+`app/core/payments/gateway.py` is the only module that knows the Payfast protocol. Swapping gateways
 means writing a second one of it; nothing in `services`, `models` or `api` names Payfast except
 where it names the notification endpoint.
 
@@ -145,7 +145,7 @@ This section records a decision that reverses part of `features/sign-up.md`.
 
 **The rule as it stood.** `register_member` answers a submission naming an address, identity number
 or mobile already on file exactly as it answers a new registration, and writes nothing. The reason
-is in that document and in `app/membership/services.py`: the alternative turns the sign-up form into
+is in that document and in `app/club/membership/services.py`: the alternative turns the sign-up form into
 a way to ask whether a named person is a member of a cannabis club, which in South Africa is
 sensitive information about a private individual.
 
@@ -160,7 +160,7 @@ neutral confirmation screen and email the outstanding payment link to the addres
 **What is still identical.** The status code, the `status`, and the `detail` sentence. Nothing is
 written. No name, join date, account status or outstanding amount comes back. The response differs
 in exactly one field — `checkout_token` is null — and `DuplicateTests` in
-`app/membership/tests/test_api.py` asserts that field-by-field rather than asserting the bodies
+`app/club/membership/tests/test_api.py` asserts that field-by-field rather than asserting the bodies
 match, so the size of the disclosure is pinned by a test rather than described here and trusted.
 
 **What leaks.** One bit, to whoever submitted the form: *this address may already be on file*. Not

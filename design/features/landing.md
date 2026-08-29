@@ -78,7 +78,7 @@ reader of `cdnBaseUrl` in the application, and `lib/site.ts` records that.
 | --- | --- | --- |
 | `controls` | present | The reader decides when it plays |
 | `autoplay` / `loop` | **absent** | See below |
-| `poster` | `…/26-cultivatorscollective.webp` | The still frame, from the same CDN |
+| `poster` | `…/26-f2c.webp` | The still frame, from the same CDN |
 | `preload` | `metadata` | Fetches the header, not 7 MB |
 | `playsInline` | present | Stays in the page on a phone |
 | `width` / `height` | 1920 x 1080 | From the manifest |
@@ -98,7 +98,7 @@ range request instead of reaching past 7 MB to find it. The reader sees how long
 before deciding to spend the rest.
 
 **The poster fills the box until then.** 1201x675, 34 KB, WebP, on the same host under
-`/media/26-cultivatorscollective.webp`. It is declared in the manifest as its own path rather than
+`/media/26-f2c.webp`. It is declared in the manifest as its own path rather than
 derived from the film's — the two are different file types on a host neither this application nor
 Django controls, and deriving it would turn a renamed asset into a silently broken image. Its ratio
 is 16:9 to within a pixel of the film's, asserted by test, so the box letterboxes imperceptibly
@@ -181,7 +181,7 @@ the check the product actually performs. The age gate remains the only surface e
 
 The supplied copy also named the club **"F2C Cannabis Club"**. The product is Cultivators Collective
 throughout — hero, footer, metadata and logo alt text, all test-asserted — and the film's own
-filename is `26-cultivatorscollective.mp4`, so the name was treated as a paste from a sibling brand
+filename is `26-f2c.mp4`, so the name was treated as a paste from a sibling brand
 and corrected. A test asserts the published body names Cultivators Collective and not F2C.
 
 **Two exemptions exist, both narrow, both stated where they are taken.**
@@ -246,7 +246,7 @@ exists.
 | --- | --- | --- |
 | 1 | **The page describes an unbuilt members area in the present tense.** Cultivation offers, my plants, swap zone and subscriptions are named as things membership gives a member; none exists, and Sign Up still leads to a form that stores nothing. The softening note was removed on the client's instruction. A visitor who signs up today finds nothing there. | **Open — client decision, taken 2026-08-25** |
 | 2 | The compliance patterns are broad by design and will refuse legitimate copy. `market` blocks "marketing", `health` blocks "healthy soil". The intended remedy is rewording, not widening the pattern. | Accepted — exercised in section 4 |
-| 3 | The film had no poster frame. | **Closed** — `26-cultivatorscollective.webp` supplied and wired in |
+| 3 | The film had no poster frame. | **Closed** — `26-f2c.webp` supplied and wired in |
 | 4 | **The film carries a soundtrack and no captions.** WCAG 1.2.2 (Captions, Prerecorded) is Level A, so this is a conformance failure on the one page the product permits to be indexed. A `.vtt` exists on the CDN but is a placeholder template, is served as `text/plain` rather than `text/vtt`, and the host sends no CORS header — all three must be fixed, and the content first. See section 3. | Open — real captions and two host settings needed |
 | 5 | The legal compliance section is a summary, not the club's terms, and there is no terms page to link it to. The four points paraphrase the Constitutional Court ruling and the Cannabis for Private Purposes Act; the wording has not been through an attorney. | Open — legal review needed |
 | 6 | `Log In` leads to a placeholder. See `authentication.md` section 8. | Open |

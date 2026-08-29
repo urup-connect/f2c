@@ -16,14 +16,19 @@
 #
 #   * `makemigrations --check` fails the build on a model changed without a
 #     migration. Nothing else notices until somebody deploys.
-#   * `migrate` against an empty MySQL exercises the hand-written backfills in
-#     accounts/0007 and payments/0002. Those refuse to run when the data already
-#     holds duplicates, which is a failure path, and a failure path nothing
-#     executes is a failure path that is probably wrong.
+#   * `migrate` proves the migrations apply to an empty MySQL as a real
+#     deployment would -- including the two hand-written `RunPython` seeds, in
+#     `plant/migrations/0001_initial.py` (the plant serial sequence) and
+#     `documents/migrations/0001_initial.py` (the three club documents). The
+#     test runner migrates its own database too, so this is not the only place
+#     they execute; what it adds is the named database rather than `test_`-
+#     prefixed one, and a failure reported as a migration failure rather than as
+#     a collapse of the whole suite.
 #
 # `migrate` also runs Django's `database`-tagged system checks, so the guards in
-# `common/checks.py` are exercised against real MySQL here as a side effect --
-# including the one that would refuse this very server if it were too old.
+# `app/core/common/checks.py` are exercised against real MySQL here as a side
+# effect -- including the one that would refuse this very server if it were too
+# old.
 
 name: CI
 
@@ -61,8 +66,8 @@ jobs:
           # sense: the container is created for this job, reachable only from
           # it, and destroyed with it.
           MYSQL_ROOT_PASSWORD: ci-root
-          MYSQL_DATABASE: cultivatorscollective
-          MYSQL_USER: cultivators
+          MYSQL_DATABASE: f2c
+          MYSQL_USER: f2c
           MYSQL_PASSWORD: ci-password
         ports:
           - 3306:3306
@@ -77,7 +82,14 @@ jobs:
           --health-start-period=30s
 
     env:
-      DJANGO_SETTINGS_MODULE: cultivatorscollective.settings
+      # The project package is `f2c/`, renamed from `cultivatorscollective/`
+      # because it is the platform rather than one of its two storefronts --
+      # design/verticals.md section 7. Set explicitly rather than left to
+      # `manage.py`: its `setdefault` does not override a variable already in
+      # the environment, so a stale value here silently wins over the correct
+      # default, and the two bare `django.setup()` steps below have no
+      # `manage.py` to fall back on at all.
+      DJANGO_SETTINGS_MODULE: f2c.settings
 
       # Django refuses to start without all three, by design: a backend that
       # boots with encryption misconfigured writes plaintext or crashes at the
@@ -95,8 +107,8 @@ jobs:
       # written for.
       DJANGO_DB_HOST: 127.0.0.1
       DJANGO_DB_PORT: '3306'
-      DJANGO_DB_NAME: cultivatorscollective
-      DJANGO_DB_USER: cultivators
+      DJANGO_DB_NAME: f2c
+      DJANGO_DB_USER: f2c
       DJANGO_DB_PASSWORD: ci-password
 
     steps:
@@ -175,8 +187,8 @@ jobs:
           for attempt in range(1, 31):
               try:
                   MySQLdb.connect(
-                      host='127.0.0.1', port=3306, user='cultivators',
-                      passwd='ci-password', db='cultivatorscollective',
+                      host='127.0.0.1', port=3306, user='f2c',
+                      passwd='ci-password', db='f2c',
                   ).close()
               except MySQLdb.Error as error:
                   print(f'Attempt {attempt}: {error}', flush=True)
@@ -215,9 +227,10 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
 
       - name: Migrate
-        # Against an empty MySQL, so the hand-written backfills in
-        # accounts/0007 and payments/0002 actually run. Also runs the
-        # `database`-tagged system checks, which is `common/checks.py`.
+        # Against an empty MySQL, so every migration -- the two hand-written
+        # `RunPython` seeds in `plant` and `documents` included -- is applied the
+        # way a deployment applies it. Also runs the `database`-tagged system
+        # checks, which is `app/core/common/checks.py`.
         run: python manage.py migrate --noinput
 
       - name: System checks
@@ -259,6 +272,9 @@ jobs:
         # reason a lock file is committed.
         run: npm ci
 
+      # Each of these fans out across the workspaces -- `club` today, `market`
+      # when it exists -- through `--workspaces --if-present`. An application
+      # that does not define a script is skipped rather than failing the job.
       - name: Lint
         run: npm run lint
 

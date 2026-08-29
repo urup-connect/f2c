@@ -10,6 +10,12 @@ rather than restated.
 Detailed, statused work items are in [`todo.md`](todo.md). This document is the shape and the
 sequencing; that one is the list.
 
+> **A second storefront is now in scope, and it changes the sequencing below.** The produce
+> categories C3 excluded are a public market, not six future sites. What the two storefronts share,
+> what they do not, and the revised block order are in [`verticals.md`](verticals.md), recorded in
+> the register as **C26**, **C27** and **C28**. Sections 4 and 5 of this document describe the
+> club-only sequence and are superseded by section 4.1.
+
 ---
 
 ## 1. What the platform is
@@ -25,6 +31,11 @@ Three commercial mechanics carry it:
 | Membership subscription | Recurring, monthly, Payfast | **Built** |
 | Plant purchase with grow service | Per order, split with the cultivator | Not built. Settlement unspecified — C10 |
 | Plant subscription — a repeating monthly plant order | Recurring, per cultivator and strain | Not built |
+
+A fourth mechanic is now in scope and is not costed here: a **public produce market** where farming
+organisations list vegetables, fruit, biltong, nuts, dried goods and honey, and anybody with an
+account buys by quantity. It takes a commission on each order, needs no membership, and carries none
+of the club's regulatory load. See [`verticals.md`](verticals.md).
 
 The swap zone earns nothing directly. It exists so a member who buys a seedling can get product
 sooner, and so the four-flowering-plant statutory limit can be managed by trading down rather than
@@ -108,23 +119,31 @@ None of that was built. **C1** records the divergence; this is what exists.
 | `f2c.co.za` | Public landing, intro, membership information, terms, rules, cost, sign-up CTA | Yes, in production only |
 | `f2c-cannabis.co.za` | Age gate, sign-up, sign-in, and everything behind the gate | No |
 
-Only the cannabis category is in scope. The six other categories in the member story — Biltong,
-Fruit, Vegetables, Nuts, Dried, Honey — are recorded in `conflict.md` and planned for nothing.
+The six other categories in the member story — Biltong, Fruit, Vegetables, Nuts, Dried, Honey —
+were recorded in `conflict.md` and planned for nothing. **That is no longer true.** They are the
+catalogue of the produce market, which is a third host and a second Next.js application over the
+same API. See C26 and [`verticals.md`](verticals.md) section 8 for what separate registrable domains
+cost in passkeys and sessions.
 
 ### Roles
 
-**C2.** Five roles, one per account, enforced as a column with a check constraint.
+**C2.** Four roles today, one per account, enforced as a column with a check constraint: `admin`,
+`cultivator`, `member`, `sharing_member`.
 
-| Role | Is | Granted by |
+**That column is being retired — C28.** One person may be a market customer, a club member, a
+farmer's appointed staff member and a club administrator at once, and a column cannot hold that.
+A role is read from the relationship instead:
+
+| Read from | Is | Granted by |
 | --- | --- | --- |
-| `uc_admin` | Platform operator. Money, administrator accounts, escalations | `createsuperuser`, or another UC administrator |
-| `admin` | Club administrator. Runs the club day to day | A UC administrator |
-| `cultivator` | A grower with stock, listings and pricing | An administrator |
-| `member` | Buys, owns and swaps plants | Every completed registration |
-| `sharing_member` | Holds flowering plants so the swap zone is not empty. Never signs in | A cultivator, on their attestation |
+| `User.is_staff` | The UC operator. Money, refunds, administrator accounts, escalations. **Django admin only, no Next.js surface** — C29 | `createsuperuser` |
+| `StorefrontStaff` | An administrator of the club or of the market. Runs it day to day | The UC operator |
+| `ClubMembership` | A paying member. Buys, owns and swaps plants | Every completed registration |
+| `ProducerMembership` | A cultivator or farmer, primary or appointed staff | An administrator, or the producer's primary |
+| `ClubMembership`, sharing | Holds flowering plants so the swap zone is not empty. Never signs in | A cultivator, on their attestation |
 
-The fifth role is new work. Today there is one `admin` tier holding the whole administrative
-catalogue, and splitting it carries a migration nobody can automate — see C2.
+`uc_admin` was to be a fifth value in the column and is never built: the UC tier is `is_staff`, and
+the Django admin over accounts, documents, subscriptions and payments already exists. See C29.
 
 ---
 
@@ -165,6 +184,45 @@ across every endpoint.
 unbuildable as specified: C7 asks whether allocating four flowering plants to a named adult is
 lawful and whether a swap is a sale in substance. Scheduling it last means an opinion can be
 obtained without blocking anything else, and a negative answer costs no rework.
+
+### 4.1 Revised sequence — two storefronts
+
+**This supersedes the order above.** The reasoning is in [`verticals.md`](verticals.md) section 10;
+the change is that most of what remains unbuilt turns out to be shared between the club and the
+market, and building it inside the club means building it twice.
+
+```
+Block 0    Production blockers            ── unchanged
+Block 0.5  Identity decomposition         ── User / ClubMembership / ProducerMembership,
+                                             the role column retired, CultivatorProfile
+                                             generalised to Producer.  C27, C28.
+                                             Everything below waits on it
+Block A    Commerce spine                 ── catalogue, listing, search, cart, order,
+                                             payment intent, review, settlement.
+                                             Absorbs old Blocks 1, 4, 5, 7. Pulls C10 forward
+Block B    Market vertical                ── produce types, units, stock, delivery
+Block C    Club vertical                  ── plant, batch, ownership, harvest, fulfilment
+                                             (old Blocks 3 and 6)
+Block D    Notifications, admin, support  ── old Blocks 8, 9, 11. Two administration
+                                             areas, one per storefront. No UC tier — C29
+Block E    Swap zone, subscriptions       ── old Blocks 10 and 12. Still gated on C7
+```
+
+Two things drive it.
+
+**Block 0.5 is not optional and is not deferrable.** `is_active` is derived from `status` under a
+database check constraint, and `PENDING_PAYMENT` is not `ACTIVE` — so on today's model a produce
+customer cannot sign in at all. Every line of market work written before the split gets written
+again after it. The migration also gets dearer with every member the club signs up, because
+`ClubMembership` has to be populated from live rows carrying encrypted identity numbers.
+
+**The market is the shorter path to a transacting platform.** No ownership chain, no swap zone, no
+statutory ceiling, no age gate, no copy-compliance corpus, no outstanding legal opinion. It
+exercises the same spine the club needs while carrying a fraction of the regulatory load, and it
+does not delay the club, because Blocks 0.5 and A are the club's work as much as the market's.
+
+**What it costs.** Settlement — C10 — stops being a Block 12 concern. The market pays a farmer on
+every order from the first day it trades.
 
 ---
 
@@ -315,6 +373,18 @@ Refunds and partial reversals with fee withholding — **C11**. Sales, review an
 | **R6** | Block 10 | Swap zone, if C7 permits |
 | **R7** | Blocks 11–12 | Support, plant subscriptions, settlement, reporting |
 
+Against the revised sequence in section 4.1 the releases become:
+
+| Release | Contents | Gate |
+| --- | --- | --- |
+| **R0** | Block 0 | A member can sign in on QA |
+| **R1** | Block 0.5 | One person can hold an identity, a club membership and a producer role at once |
+| **R2** | Block A | Anything can be listed, found, bought, paid for, settled and reviewed |
+| **R3** | Block B | **The market trades. First order revenue, no legal opinion required** |
+| **R4** | Block C | A member buys a plant and receives product. The club's loop closes |
+| **R5** | Block D | Each storefront is run from its own administration area. The UC tier stays in the Django admin — C29 |
+| **R6** | Block E | Swap zone, if C7 permits. Plant subscriptions and reporting |
+
 ---
 
 ## 7. Minimum viable product
@@ -325,6 +395,10 @@ ordering is built, and those two are the whole product.
 
 **MVP is R3.** A member joins, pays a subscription, browses strains and cultivators, and buys a
 plant with a grow service. That is the first version that takes money for the thing the club sells.
+
+**Under the revised sequence, MVP moves to R3 there — the market.** It is the first version that
+takes money for something, it needs no legal opinion, and it is built entirely out of work the club
+needs anyway. The club's own MVP follows at R4 and is not delayed by it.
 
 **R4 is the first version that delivers anything.** Between R3 and R4 a member has paid for a plant
 and has nothing to show for it. The gap between those two releases is a real commercial exposure, not
@@ -342,7 +416,7 @@ Full detail in [`conflict.md`](conflict.md). These block the block named.
 | C7 | Is the sharing-member scheme lawful — **legal opinion** | Block 10 entirely |
 | C8 | Is a courier fee payable at harvest | Block 6 |
 | C9 | When is the grow price paid, and what happens on crop failure | Block 5 |
-| C10 | How are cultivators settled | Block 12, and a launch blocker for cultivators |
+| C10 | How are cultivators settled — **and how farmers are paid** | Now Block A. The market pays a producer on every order |
 | C11 | How do partial refunds work | Block 12 |
 | C13 | Object-level permissions | Blocks 4–9 — sequenced into Block 2 |
 | C15 | Household and dried-weight limits | Block 10, and the club rules |
@@ -351,3 +425,7 @@ Full detail in [`conflict.md`](conflict.md). These block the block named.
 | C18 | Where finished product types are selected | Block 1 |
 | C19 | What a cultivator sees of a member | Block 6 |
 | C20 | Membership fee on a copy-compliance-governed page | Block 0 or Block 1, whenever the fee goes on the landing page |
+| C26 | Two storefronts on one platform — **decided**, see `verticals.md` | Restructures every block below Block 0 |
+| C27 | Splitting `User` into identity and membership — **decided** | Block 0.5, and everything after it |
+| C28 | Retiring the single role column — **decided** | Block 0.5, and every permission test |
+| C29 | UC tier is `is_staff` in the Django admin — **decided** | Shrinks Block D. Removes three catalogue actions |

@@ -1,16 +1,21 @@
-# Cultivators Collective
+# Cultivators Collective and Farm to Consumer
 
-Django 6.1 on Python 3.14 (ASGI, Uvicorn) serving a JSON API, with a Next.js 16
-frontend that renders every page.
+Django 6.1 on Python 3.14 (ASGI, Uvicorn) serving a JSON API, with **two** Next.js 16
+applications that render every page — one per storefront. The club is Cultivators
+Collective; the produce market is Farm to Consumer (F2C).
 
 ## Architecture
 
 ```
-Browser ──> Next.js :3000            Django :8000
-            (App Router, SSR/RSC) ──> /api/...   JSON API (django-ninja)
-                                      /api/docs  OpenAPI (DEBUG only)
-                                      /admin/    Django admin
+Browser ──> Next.js :3000  the club  ┐          Django :8000
+            Next.js :3001  the store ┴────────> /api/...   JSON API (django-ninja)
+            (App Router, SSR/RSC)               /api/docs  OpenAPI (DEBUG only)
+                                                /admin/    Django admin
 ```
+
+One API, one database, two storefronts on separate registrable domains. Which storefront
+a request belongs to is a property of the host it arrived on, not of the member — see
+[Two mail servers, one per storefront](#two-mail-servers-one-per-storefront).
 
 Django renders no user-facing pages. Authentication is Django's own session
 cookie: signing in sets an HttpOnly `sessionid`, the browser returns it on every
@@ -21,18 +26,33 @@ who is signed in.
 Members sign in with a passkey, falling back to a code emailed to them. See
 [Authentication](#authentication).
 
-The Django side is one app per feature. Each owns its own models, admin, schemas and router;
-the routers are mounted on a single API instance in `cultivatorscollective/api.py`, which is the
-only module that knows about all of them. Adding a feature means adding one `add_router` line.
+The Django side is one app per feature, grouped by what each feature serves. The routers are
+mounted on a single API instance in `f2c/api.py`, which is the only module that knows about all of
+them. Adding a feature means adding one `add_router` line.
+
+```
+app/core/       accounts  authn  common  storefronts  documents  payments
+app/commerce/   producers
+app/club/       membership  strains  finished_product  plant
+app/market/     nothing yet
+```
 
 | App | Owns |
 | --- | --- |
-| `accounts/` | The member record (`User`, this project's `AUTH_USER_MODEL`), the four roles, a member's own profile and photograph, registering a sharing member, and the admin over all of it |
-| `authn/` | Passkeys, emailed codes, sessions, rate limits — how a member proves who they are |
-| `documents/` | Club documents, their revisions, and the agreements members give |
-| `membership/` | Turning a sign-up submission into a member. Owns no models |
-| `common/` | Field encryption, RSA ID checks. No models, no endpoints |
-| `cultivatorscollective/` | Settings, URLs, and the API root the features mount on |
+| `core/accounts/` | The identity (`User`, this project's `AUTH_USER_MODEL`), the permission catalogue over it, a member's own profile and photograph, and the admin |
+| `core/authn/` | Passkeys, emailed codes, sessions, rate limits — how somebody proves who they are |
+| `core/storefronts/` | The club and the market, who administers one, and which storefront a request is for |
+| `core/documents/` | Documents, their revisions, and the agreements given — scoped per storefront |
+| `core/payments/` | The subscription, Payfast, and what a payment does to a membership |
+| `core/common/` | Field encryption, RSA ID checks. No models, no endpoints |
+| `commerce/producers/` | The farm as a record: trading name, appointed people, collection address, bank details |
+| `club/membership/` | Club membership, the nickname, and turning a sign-up submission into a member |
+| `f2c/` | Settings, URLs, and the API root the features mount on |
+
+`core` knows nothing about what is sold; `commerce` is what both storefronts sell through; `club` is
+the cannabis vertical. `market` is the produce vertical and is empty. Every app sets `label`
+explicitly, so the tables are flat — `accounts_user`, not `core_accounts_user` — which is what made
+the grouping a package move rather than a rename of every table.
 
 Dependencies run one way: `authn`, `documents` and `payments` depend on `accounts`, `membership`
 depends on all three, `accounts` depends on `common`, and nothing depends back. The one place that
@@ -41,7 +61,7 @@ there.
 
 | Concern | Lives in |
 | --- | --- |
-| The API root and router mounting | `cultivatorscollective/api.py` |
+| The API root and router mounting | `f2c/api.py` |
 | The member model | `accounts/models.py` (`User`) |
 | Roles and what each may do | `accounts/roles.py` |
 | Registering a sharing member | `accounts/services.py` |
@@ -58,8 +78,11 @@ there.
 | Rate limits | `authn/throttles.py` |
 | Field encryption and blind indexes | `common/crypto.py` |
 | RSA ID number checks | `common/validators.py` |
-| Pages, layout, components | `frontend/app`, `frontend/components` |
-| Everything that calls Django | `frontend/lib/api.ts` (browser), `frontend/lib/server-api.ts` (server) |
+| The club's pages, layout, components | `frontend/club/app`, `frontend/club/components` |
+| The store's pages, layout, components | `frontend/market/app`, `frontend/market/components` |
+| The frontend workspace root | `frontend/` — one lockfile, one `node_modules`, an application per storefront |
+| Everything that calls Django, per application | `<app>/lib/api.ts` (browser), `<app>/lib/server-api.ts` (server) |
+| The store's registration contract, and the endpoint it waits on | `frontend/market/lib/sign-up-api.ts` |
 
 ## First-time setup
 
@@ -93,12 +116,13 @@ address, not a username -- the member model has no username field:
 .venv\Scripts\python.exe manage.py createsuperuser
 ```
 
-Frontend:
+Frontend — one install for both applications, one `.env.local` each:
 
 ```
 cd frontend
 npm install
-copy .env.example .env.local
+copy club\.env.example club\.env.local
+copy market\.env.example market\.env.local
 ```
 
 ## Running
@@ -112,7 +136,7 @@ ASGI (use this by default):
 or directly:
 
 ```
-.venv\Scripts\python.exe -m uvicorn cultivatorscollective.asgi:application --reload
+.venv\Scripts\python.exe -m uvicorn f2c.asgi:application --reload
 ```
 
 The site is then on http://127.0.0.1:8000/ and the admin on http://127.0.0.1:8000/admin/.
@@ -120,6 +144,33 @@ The site is then on http://127.0.0.1:8000/ and the admin on http://127.0.0.1:800
 `manage.py runserver` still works, but Django 6.1 ships a WSGI-only development
 server. Anything that depends on async views, async ORM access, streaming
 responses, or long-lived connections must be tested through Uvicorn.
+
+### The two storefronts
+
+`.
+undev.ps1` starts Django and one or both frontends, each in its own window:
+
+```
+.
+undev.ps1                        # Django + the club on :3000
+.
+undev.ps1 -Storefront market     # Django + the store on :3001
+.
+undev.ps1 -Storefront both       # all three
+```
+
+Or directly, from `frontend/club` or `frontend/market`: `npm run dev`. The ports are set per
+application, so the two never collide.
+
+Sign in at **http://localhost:3000** or **http://localhost:3001**, never at `127.0.0.1`. An IP
+address is not a valid WebAuthn Relying Party ID, and the session cookie needs the frontend and the
+API to share a hostname.
+
+**One local trap worth knowing about the store.** The storefront a request belongs to is resolved from
+the host Django sees, and both applications call it on `localhost:8000`, which is unmapped — so it
+falls back to `DJANGO_DEFAULT_STOREFRONT`, the club. Working on the store's `/legal` page therefore
+means setting that variable to `market`, or expecting the club's documents to appear there. In a
+deployment the two hosts differ and `DJANGO_STOREFRONT_HOSTS` does the work.
 
 ## Tests
 
@@ -139,19 +190,21 @@ Each app tests what it owns, and `manage.py test <app>` runs just that app:
 | `documents/tests/` | 115 | Documents, revisions, agreements, storage, the publish command |
 | `membership/tests/` | 88 | The registration write and the endpoints in front of it |
 | `payments/tests/` | 219 | The Payfast signature and configuration, what a payment does to a membership, both endpoints, the constraints, the two commands, the read-only admin |
-| `cultivatorscollective/tests/` | 12 | The brand skin over the Django admin |
+| `f2c/tests/` | 12 | The brand skin over the Django admin |
 
-Frontend, 1457 tests:
+Frontend, 2270 tests — 1932 in the club and 338 in the store:
 
 ```
 cd frontend
-npm test
+npm test                                  # both applications
+npm test --workspace @f2c/market-web      # just the store
 npm run test:watch
 npm run test:coverage
 ```
 
 Vitest with jsdom and Testing Library, colocated beside what they test. `npm run typecheck` is
-separate and also expected to pass.
+separate and also expected to pass. Both scripts run across the workspaces, so a failure in either
+application fails the command.
 
 ## Design documentation
 
@@ -244,10 +297,40 @@ JavaScript runs on -- the Next.js origin, not Django's. Three consequences:
   `app.example.co.za` and `api.example.co.za` with
   `DJANGO_WEBAUTHN_RP_ID=example.co.za`.
 
+### Two mail servers, one per storefront
+
+The club and the produce market are separate businesses on separate domains with
+separate mailbox providers, so `MAILERS` holds one SMTP mailer per storefront:
+`club` from the `EMAIL_CC_*` variables, `market` from the `EMAIL_F2C_*` ones. The
+aliases are the storefront codes themselves, so routing is
+`.send(using=storefront)` with nothing to look up.
+
+Nothing chooses a mailer directly. `app/core/storefronts/mail.py` is the one
+place that asks, and it resolves three things together -- the server, the `From`
+address and the name in the subject and signature. They have to agree: a sign-in
+code sent through the store's provider but signed "Cultivators Collective" is
+indistinguishable from a phishing attempt.
+
+**The storefront comes from the host, not from the member.** A code requested at
+the store's domain leaves the store's server, whatever the member belongs to --
+`storefront_for_request`, the same signal `webauthn.rp_id` uses. A code has to be
+sendable to an address with no account at all, so there is nothing else to ask.
+Mail that is inherently one storefront's business names it outright instead; the
+membership checkout link is always the club's.
+
+There is deliberately **no fallback to the other storefront's server**. With
+`DEBUG=False` a blank `EMAIL_*_HOST` or `EMAIL_*_FROM` refuses to start, because
+the alternative sends successfully -- nothing looks wrong, and a storefront's
+members are receiving mail from a provider that has no business holding their
+address. `storefronts/checks.py` catches the same class of fault in code: a
+storefront added to `Storefront` without a mailer fails `manage.py check` rather
+than quietly borrowing the club's.
+
 ### Emailed codes in development
 
-`MAILERS` uses the console backend, so codes are printed to the terminal
-running Uvicorn rather than sent. Look for the message body in that output.
+Leave both `EMAIL_*_HOST` blank and every storefront falls back to the console
+backend, so codes are printed to the terminal running Uvicorn rather than sent.
+Look for the message body in that output.
 
 Django 6.1 has no async email API, so sending -- and password hashing, which is
 deliberately slow -- runs in a worker thread rather than on the event loop.
@@ -372,7 +455,13 @@ documents every variable.
 | `DJANGO_WEBAUTHN_RP_ID` | When `DEBUG=False` | Registrable domain of the frontend. Not a URL, not an IP. Defaults to `localhost` when `DEBUG=True`. |
 | `DJANGO_WEBAUTHN_RP_NAME` | No | Name the authenticator shows the member. |
 | `DJANGO_WEBAUTHN_ORIGINS` | When `DEBUG=False` | Full frontend origins allowed to present credentials. Defaults to `localhost:3000` when `DEBUG=True`. |
-| `DJANGO_DEFAULT_FROM_EMAIL` | No | Sender address on sign-in code emails. |
+| `DJANGO_DEFAULT_FROM_EMAIL` | No | Fallback sender, used only where a storefront names none of its own. |
+| `EMAIL_CC_HOST` | When `DEBUG=False` | The club's SMTP server. Blank means the console backend. |
+| `EMAIL_CC_PORT` | No | Defaults to 587 with TLS, 465 with SSL. |
+| `EMAIL_CC_USER` / `EMAIL_CC_PASSWORD` | With a host | SMTP credentials. |
+| `EMAIL_CC_USE_TLS` / `EMAIL_CC_USE_SSL` | No | STARTTLS on 587, or implicit TLS on 465. Mutually exclusive; TLS defaults on. |
+| `EMAIL_CC_FROM` | When `DEBUG=False` | The address club mail is sent as. Normally must be one the provider is authorised to send for. |
+| `EMAIL_F2C_*` | Same as above | The store's server and sender. Same five variables, same rules. |
 | `DJANGO_CDN_BASE_URL` | With a container | Public prefix the documents are served from. Https outside local development, and its path must match the container. |
 | `DJANGO_DOCUMENT_STORAGE_CONTAINER` | No | The blob container the CDN fronts. Blank means uploads go to `MEDIA_ROOT` and are served by runserver. |
 | `DJANGO_DOCUMENT_STORAGE_ACCOUNT` | With a container | Storage account name. Not needed if a connection string is set. |
@@ -409,7 +498,7 @@ their versions.
 ## Payments
 
 A member registered through sign-up sits at **Pending payment** and cannot sign
-in. What moves them to Active is a Payfast payment, and `app/payments` owns it.
+in. What moves them to Active is a Payfast payment, and `app/core/payments` owns it.
 
 Registration opens a `Subscription` in the same transaction that writes the
 member, and hands back a checkout token. The frontend turns that into a form POST
@@ -574,7 +663,7 @@ is discarded, which is the one piece of EXIF that matters; dropping it without
 acting on it turns every portrait upload on its side.
 
 The browser crops before it uploads, and none of that is trusted. The crop
-geometry is pure and tested in `frontend/lib/image-crop.ts`, and it holds one
+geometry is pure and tested in `frontend/club/lib/image-crop.ts`, and it holds one
 invariant on every pan and zoom: the square is always inside the image. Only the
 square is uploaded -- the rest of the frame never leaves the browser.
 

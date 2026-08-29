@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+/*
+  Farm to Consumer — store design tokens.
+
+  Derived from the store logo: design/F2C_new_logo-removebg-preview - Edited 1.png. Every hex below
+  was sampled off that file region by region — the leaf body, the brown arc and stem, the wordmark
+  black, the cream ground, the tan baseline bar — rather than picked by eye. The three values the
+  logo does not supply (a hover green, a text-safe accent, an error red) are named as derived where
+  they appear, and each sits on a hue the logo already uses.
+
+  The structure is unchanged from the placeholder palette it replaces: the same semantic aliases,
+  the same type roles, the same three radii. No component was touched to land this, and the same
+  holds for whatever the brand ratifies next.
+
+  Contrast is stated per token, measured against the ground each one is actually used on. Anything
+  without a ratio is decorative and must not carry text.
+
+  KNOWN TENSION. The placeholder palette was chosen to sit far from the club's forest green and
+  cream so a shopper on the wrong storefront could see it before reading a word. The real logo is
+  forest green and cream, so that distance is now gone and the two storefronts read as siblings.
+  That is the brand's call, not a bug in this file. If the two need pulling apart again, the store's
+  warm accent and its baseline tan are the levers — not the green.
+*/
+
+/*
+  The store has no dark palette yet, so the dark variant is scoped to an opt-in `.dark` class rather
+  than the OS preference. Without this, `dark:` utilities would fire from prefers-color-scheme and
+  render an unreviewed colour scheme. The club does the same, for the same reason.
+*/
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Palette — sampled from the logo. Contrast ratios are against white unless stated. */
+
+  /* The leaf body. 12.4:1 on white, 10.1:1 on paper. Headings, primary controls, the signed-in bar. */
+  --color-leaf: #0B3D1C;
+  /* Derived, not sampled: the leaf darkened for hover and active. 16.6:1 on white. */
+  --color-leaf-deep: #06240F;
+  /* Derived: the leaf lifted to a mid green. 4.0:1 — borders and decoration on light grounds, never text. */
+  --color-leaf-bright: #4E8C57;
+  /* The leaf's own vein highlight. Tints, badges and quiet grounds. */
+  --color-leaf-pale: #CFE0C8;
+
+  /* The arc over the wordmark and the stem through the C. 13.9:1 on white. */
+  --color-bark: #4A2109;
+  /* The lit half of the baseline bar. 2.5:1 — rules and ornament only. */
+  --color-wheat: #CC9C60;
+  /*
+    Derived: the one warm accent, placed on the bark-to-wheat ramp at the lightest value that still
+    carries text. 6.2:1 on white, 5.1:1 on paper. A price, a delivery window, an active state.
+  */
+  --color-amber: #8E5216;
+
+  /* Grounds. The logo's own cream, and a half-step below it. */
+  --color-paper: #F0E7D8;
+  --color-paper-cool: #E7DECD;
+  --color-white: #FFFFFF;
+
+  /* The wordmark black — warm, not neutral. 15.5:1 on paper. Body text. */
+  --color-ink: #12100A;
+  /* Derived: the wordmark black lifted. 6.3:1 on paper, and the lightest value permitted to carry text. */
+  --color-ink-muted: #5A5147;
+  /* Derived from the cream. Hairlines and input borders. Never text. */
+  --color-stone: #D6CCB8;
+
+  /* Derived: the logo has no error colour, so this is the bark hue pulled to red. 6.6:1 on paper. Refusals only. */
+  --color-berry: #96261F;
+
+  /* Semantic aliases — prefer these in screens, so intent survives a palette change */
+  --color-background: var(--color-paper);
+  --color-foreground: var(--color-ink);
+  --color-muted-foreground: var(--color-ink-muted);
+  --color-surface: var(--color-white);
+  --color-surface-muted: var(--color-paper-cool);
+  --color-primary: var(--color-leaf);
+  --color-primary-foreground: var(--color-paper);
+  --color-accent: var(--color-amber);
+  --color-border: var(--color-stone);
+  --color-error: var(--color-berry);
+
+  /*
+    Typography. The families come from next/font in the root layout; the generic tail is appended
+    here because next/font's own value stops at its metric-matched fallback.
+
+    Still placeholders — the logo settles colour, not type. Fraunces for display and Inter for text,
+    chosen to be unmistakably not the club's Playfair and DM Sans. The logo's own wordmark is a heavy
+    grotesque, so a face in that family is the obvious next change here.
+  */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* Display type is set tight; small uppercase labels are set loose. */
+  --tracking-display: -0.02em;
+  --tracking-label: 0.12em;
+
+  /* Shape — the same three roles as the club, one step less rounded. */
+  --radius-card: 0.875rem;
+  --radius-control: 0.625rem;
+  --radius-pill: 9999px;
+}
+
+@layer base {
+  /*
+    next/font sets these two on <html> through a generated class; nothing else declares them.
+    Declaring them here keeps every reference resolvable for static analysis and leaves a usable
+    stack if a webfont fails to load. next/font still wins: its rule is unlayered and
+    class-specific, both of which outrank an element selector inside a layer.
+  */
+  html {
+    --font-inter: ui-sans-serif, system-ui, sans-serif;
+    --font-fraunces: ui-serif, Georgia, serif;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  /*
+    Headings carry the display face by default. Tracking is only tightened from the size where it
+    needs tightening, so small headings keep their default spacing.
+  */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: var(--tracking-display);
+  }
+
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+  }
+}

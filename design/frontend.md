@@ -4,6 +4,12 @@ Next.js 16.3.2 on React 19.2.8, App Router, TypeScript throughout. Every page a 
 rendered here. The application holds no database and no session store of its own: state that
 outlives a request lives in Django, and the one exception is documented in section 5.
 
+**There are now two applications.** Sections 1 to 10 describe the club, `frontend/club`, which is
+where every convention in this document was established. Section 11 describes the store,
+`frontend/market`, in terms of where it follows those conventions and where it departs from them —
+which is the useful way to read it, because the departures are all consequences of the identity split
+in `verticals.md` rather than choices made twice.
+
 ## 1. Executive summary
 
 The frontend is organised in three layers, and the layering is the design. Pure logic modules hold
@@ -142,7 +148,7 @@ leaves the site.
 instruction (`roles-and-permissions.md` section 12): a role-to-ability map in this bundle would be a
 second copy of `accounts/roles.py` and would drift from the one the API enforces. `lib/club-navigation.ts`
 holds the catalogue of destinations, each keyed to a `platform.*` codename, and a contract test reads
-`app/accounts/roles.py` as text and refuses a codename Django does not grant — so a renamed action
+`app/core/accounts/roles.py` as text and refuses a codename Django does not grant — so a renamed action
 cannot quietly empty a menu.
 
 Almost every destination is marked `planned` and renders as inert text with a "Not built yet" badge,
@@ -303,3 +309,153 @@ Two specific gaps behind the gate:
 | 5 | 1,305 tests take about sixty seconds, most of it jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
 | 6 | `app/api/nickname/availability/route.test.ts` asserts an eight-character random hex reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex, so the test fails on roughly one run in thirty. Predates this work. | Open — a one-line fix, not yet taken |
 | 7 | `CDN_BASE_URL` is read while `/` is prerendered, so the club film's address is fixed at build time — as `SITE_URL` already is, through the root layout's `metadataBase`. A promoted artefact serves the film from the wrong host. Same class as risk 2. Making the one indexable page dynamic would cost more than it saves; the remedy is a build per environment. | Open |
+
+---
+
+## 11. The store application
+
+`frontend/market`, the produce market storefront, filling the npm workspace slot
+`frontend/package.json` has declared since Block 0.5. Same stack, same three layers, same testing
+approach; 338 unit tests. It runs on port 3001 so both applications can run at once.
+
+What follows is only what differs from sections 1 to 10. Everything not mentioned is the same.
+
+### 11.1 What it is for, and what it therefore does not have
+
+A store customer is a `User` with no row in `ClubMembership`, `StorefrontStaff` or
+`ProducerMembership` — `verticals.md` section 6. Almost every difference below is that sentence
+having consequences.
+
+| The club | The store | Why |
+| --- | --- | --- |
+| Two gates: is this anybody, and is the club open to them | **One gate: is this anybody** | A customer has nothing to pay for and no membership to be behind on. `lib/session.ts` |
+| Three homes, chosen by role | **One account area** | Every customer is the same kind of customer |
+| Menu derived from the `platform.*` permission catalogue | **A fixed menu of two destinations** | A customer holds *no* codenames — `permissions_for` grants from a membership or an appointment, and a shopper has neither. A permission-derived menu would render empty for every customer the store has. `lib/navigation.ts` |
+| Age gate, identity number, nickname, consents at sign-up | **Four fields: two names, an address, an optional mobile number** | POPIA minimisation. An identity number asked for because another storefront needs one is exactly what the principle refuses |
+| One indexable route | **Two: `/` and `/legal`** | A store's public pages are meant to be found. `lib/seo.ts` |
+| `APP_ENV`, `SITE_URL`, `CDN_BASE_URL` | **`APP_ENV`, `SITE_URL`** | Nothing in the store is served from the static host; a document's address comes from Django, which owns its revisions |
+| `copy-compliance.ts` over all member-facing copy | **No compliance corpus** | Those are cannabis rules. A market that could not name a price would not be a market — `verticals.md` risk 6 |
+
+The last row is enforced rather than merely intended: `lib/store-content.test.ts` flattens every fixed
+string in the application and asserts that none of them names the club, its produce or its
+vocabulary — with one deliberate exception, the sentence on the security screen explaining that
+passkeys do not cross a registrable domain.
+
+### 11.2 Routes
+
+| Route | Rendering | Purpose |
+| --- | --- | --- |
+| `/` | Server, dynamic | The front door. Indexable. Says plainly that the store is not trading yet |
+| `/legal` | Server, dynamic | Terms, privacy and data, from `GET /api/documents/published`. Indexable |
+| `/sign-in` | Server | Identifier-first sign-in. Sends an already-signed-in visitor to `/account` |
+| `/sign-up` | Server + server action | Create an account. See 11.4 |
+| `/account` | Server | The signed-in home. Guarded |
+| `/account/details` | Server | Name and mobile number. Guarded |
+| `/account/security` | Server | Passkeys. Guarded |
+| `/robots.txt`, `/sitemap.xml` | Dynamic | Read at request time, not build time |
+
+`/sign-in` and `/sign-up` sit in an `(auth)` group; the three account routes sit in an `(account)`
+group whose layout holds the session check. Both groups follow the club exactly, including the reason
+the gate is in a layout and not in `proxy.ts`: a proxy sees a cookie, and a cookie is not a session.
+
+There is **no route handler** in this application. The club has one, for the sign-up form's live
+nickname check; the store's form asks Django nothing while it is being typed, so there is nothing to
+proxy.
+
+### 11.3 Where the store's own logic lives
+
+| Concern | Module |
+| --- | --- |
+| The session gate, and the name to greet somebody by | `lib/session.ts` |
+| Sign-in rules — safe `next`, the code, what a failure says | `lib/sign-in.ts` |
+| Sign-up rules, the form reader, and the API's refusals narrowed | `lib/sign-up.ts` |
+| The registration call, and the contract it is written against | `lib/sign-up-api.ts` |
+| The details form's rules | `lib/profile.ts` |
+| The three states of the legal index | `lib/documents.ts` |
+| What is offered, and what is described but not built | `lib/navigation.ts` |
+| The name, and the fact that the brand is a placeholder | `lib/brand.ts` |
+| Design tokens | `app/globals.css` |
+
+Four modules are **verbatim copies** of the club's, with their test suites: `env.ts`,
+`person-name.ts`, `sa-mobile-number.ts` and `email-address.ts`. They are platform rules and belong in
+`packages/`, and they are duplicated on purpose for the reason `frontend/README.md` records — the
+seams are drawn once, against a second consumer, and drawing them file by file while writing that
+consumer would mean drawing them from one side. Copying the tests with them is what makes a
+divergence a failing test rather than a refusal only one storefront makes.
+
+### 11.4 What is not built, and is not pretending to be
+
+**Sign-up cannot complete, because the endpoint does not exist.** Django's only registration endpoint
+is `POST /api/members/register`, which registers a *club member*: identity number, document consents,
+a `ClubMembership`, and a checkout token for a subscription. None of that belongs to a produce
+customer, and calling it would enrol shoppers in a cannabis club.
+
+`lib/sign-up-api.ts` is therefore the one place the store's registration contract is written down, and
+it is written against the endpoint the API will have:
+
+```
+POST /api/customers/register        auth=None
+  { first_name, last_name, email, mobile }
+  201     -> the store has the details. The SAME answer for an address already on file
+  409/422 -> { "detail": ..., "fields": { "email": ["email-malformed"] } }
+```
+
+Today that call gets a 404, which the module reports as `unavailable` and the screen renders as
+"accounts are not open yet". Nothing is faked, nothing is stubbed, and no local state pretends an
+account was made. When the endpoint lands, that one file changes: the form, its rules, its refusals
+and its confirmation screen are already written and tested against the outcome union.
+
+The success answer is deliberately identical for a fresh address and one already registered, which is
+the same disclosure decision `RegistrationOut` records on the Django side and the same one that makes
+`/api/auth/login/start` answer `otp` for an address with no account. A sign-up screen that
+distinguished the two would be a way of asking whether somebody shops here.
+
+Also absent, each for a stated reason:
+
+- **No catalogue, cart, order, delivery or produce type.** That is the market vertical —
+  `todo.md` Block B — and it is backend work first.
+- **No documents.** The store's terms, privacy notice and data policy are not written. `/legal` says
+  so, and distinguishes "nothing published" from "could not be read": telling a shopper the store has
+  no privacy notice on a day when it has one and the network was down is an untrue statement about a
+  legal obligation.
+- **No avatar.** The three endpoints work for any account; what is missing is a reason, since a
+  shopper's photograph is shown to nobody. Adding it is one API module, a cropper and one card.
+- **No administration area.** `StorefrontStaff` carries the market appointment and there is no
+  `platform.*` codename for it, so there is deliberately no tile: one gated on a codename that does
+  not exist would be gated on `undefined`, and showing every shopper a locked door is worse than
+  showing them nothing. C29.
+
+### 11.5 The brand is a placeholder, and says so
+
+The club's tokens come from a guidelines deck and are documented in `features/brand.md`. The store has
+no deck. What exists is a name — *Farm to Consumer*, shortened to *F2C*, which is what the platform's
+own package and its `EMAIL_F2C_*` configuration already call this storefront — and the club's token
+*structure* filled with a neutral palette: the same semantic aliases, the same two type roles, the
+same three radii, so ratified colour and type arrive as a change to `app/globals.css` and to nothing
+else.
+
+Two consequences are worth recording because they are cheap to keep and expensive to retrofit.
+Nothing outside `lib/brand.ts` spells the name, so a rename is one file. And there is no logo asset:
+the wordmark is set in the display face, so there is nothing to commission now and nothing to remove
+later.
+
+### 11.6 A local-development trap
+
+`GET /api/documents/published` is unauthenticated, so Django resolves the storefront from the host the
+request arrived on. Locally both applications call the same Django on `localhost:8000`, which is not
+in `DJANGO_STOREFRONT_HOSTS`, so it falls back to `DJANGO_DEFAULT_STOREFRONT` — the club. Working on
+`/legal` means setting that variable to `market`, or expecting the club's documents to appear on the
+store. In a deployment the two hosts differ and the mapping does the work.
+
+This is not a fault in either application, and it is recorded here because the symptom — the club's
+rules on the store's legal page — reads like a scoping bug in the frontend when it is configuration.
+
+### 11.7 Risks
+
+| # | Risk | Status |
+| --- | --- | --- |
+| 11.1 | The registration endpoint does not exist, so the store cannot take a single account. Everything in front of it is built and tested; the store is one backend endpoint away from usable, and not usable at all until then. | Open — `todo.md` Block B |
+| 11.2 | The palette and typefaces are unratified placeholders. A ratified brand may cost more than a token swap if it brings a different layout language with it. | Accepted — the structure is shared with the club, so the swap is one file |
+| 11.3 | Four modules are duplicated from the club with their tests. A rule fixed in one and not the other diverges silently between storefronts. | Accepted, with the duplicated tests as the tripwire. Closes when `packages/` is drawn |
+| 11.4 | Risk 2 in section 10 applies here identically: `NEXT_PUBLIC_DJANGO_API_URL` is baked into the client bundle, so one artefact cannot serve two environments. | Open — same remedy, a build per environment |
+| 11.5 | A customer who is also a club member enrols a passkey twice and signs in twice. Surfaced in one sentence on the security screen rather than solved. | Open — `verticals.md` risk 3, which needs a central authentication origin |

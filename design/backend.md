@@ -38,24 +38,45 @@ and unsafe methods carry a CSRF token the frontend reads from a non-`HttpOnly` c
 async views, async ORM access, streaming responses or long-lived connections must be tested through
 Uvicorn — which is everything in `authn/api.py`, since every endpoint there is `async def`.
 
-## 3. One app per feature
+## 3. One app per feature, grouped by what it serves
 
 The Django side is split by feature, not by layer. There is no `api` app holding every endpoint and
 every model; each feature owns its own models, admin, schemas and router.
 
+Since Block 0.5 the apps sit under four packages, and the grouping is the answer to a question the
+flat layout could not express: **which of these serve both storefronts, and which are the club's?**
+
+```
+app/core/       the platform spine. Knows nothing about what is sold
+app/commerce/   what both storefronts sell through
+app/club/       the cannabis club
+app/market/     the produce market. No apps yet
+```
+
 | App | Owns | Depends on |
 | --- | --- | --- |
-| `common` | Field encryption, RSA ID checks. No models, no endpoints | — |
-| `accounts` | The member record, the roles over it, and the admin | `common` |
-| `authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
-| `documents` | Club documents, revisions, agreements | `accounts` |
-| `membership` | Turning a sign-up submission into a member. No models | `accounts`, `documents`, `payments` |
-| `payments` | The membership subscription, the Payfast integration, and what a payment does to an account | `accounts` |
-| `finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
-| `strains` | The strain catalogue, the aroma and effect vocabularies, and each cultivator's listing against a strain. No endpoints | `accounts`, `finished_product` |
-| `cultivators` | The cultivator's public profile. No endpoints | `accounts` |
-| `plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. No endpoints | `accounts`, `strains`, `finished_product` |
-| `cultivatorscollective` | Settings, URLs, and the API root | all of them |
+| `core/common` | Field encryption, RSA ID checks. No models, no endpoints | — |
+| `core/accounts` | The identity, the permission catalogue over it, and the admin | `common` |
+| `core/authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
+| `core/storefronts` | The two storefronts, who administers one, and which storefront a request is for | `accounts` |
+| `core/documents` | Documents, revisions, and the agreements given — per storefront | `accounts`, `storefronts` |
+| `core/payments` | The membership subscription, the Payfast integration, and what a payment does to a membership | `accounts`, `membership` |
+| `commerce/producers` | The producer organisation, its appointed people, and which storefronts it sells into | `accounts`, `storefronts` |
+| `club/membership` | Club membership, its nickname, and turning a sign-up submission into a member | `accounts`, `documents`, `payments` |
+| `club/finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
+| `club/strains` | The strain catalogue, the aroma and effect vocabularies, and each producer's listing against a strain. No endpoints | `producers`, `finished_product` |
+| `club/plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. No endpoints | `producers`, `strains`, `finished_product` |
+| `f2c` | Settings, URLs, and the API root | all of them |
+
+**Every app sets `label` explicitly**, so a table is `accounts_user` rather than
+`core_accounts_user`. That is what made the move a package rename and nothing more: no table
+changed name, `AUTH_USER_MODEL` is still `accounts.User`, and no migration dependency moved. The one
+app that *was* renamed is `cultivators` → `commerce/producers`, and that was the point of it — a
+farmer growing carrots is the same record as a cultivator growing cannabis.
+
+The boundary earns its keep by what it forbids. `club/plant` importing from `club/strains` is
+ordinary; `commerce/producers` importing from `club/strains` would be the commerce spine learning
+about cannabis, and the directory is what makes that visible in a diff.
 
 `plant` is Block 3 and the spine of the product: everything the club sells is a row in its table. The
 model layer is built — plant, batch, serial allocation, ownership history, the leaf rating — and so is
@@ -103,7 +124,7 @@ about strains, listings or plants — the platform defines the catalogue and doe
 it — and `strains` reaches into it by string reference. That is C18's three levels expressed as an
 import direction: platform catalogue, then the cultivator's listing, then the plant.
 
-The routers are mounted on one `NinjaAPI` instance in `cultivatorscollective/api.py`. That module
+The routers are mounted on one `NinjaAPI` instance in `f2c/api.py`. That module
 belongs to the project rather than to any app, because it is the only one that has to know about all
 of them; adding a feature is one `add_router` line. The alternative — a single app owning the whole
 API surface — was rejected once `documents` arrived: it had already been built as its own app, and a
@@ -445,7 +466,7 @@ and this section exists because most of them are silent.
 
 ### 8.0 How the connection is configured
 
-`cultivatorscollective/database.py` reads `DATABASES` from the environment, as a pure function of a
+`f2c/database.py` reads `DATABASES` from the environment, as a pure function of a
 mapping — the same shape as the two storage readers and `payfast_config`, and for the same reason:
 every branch and every refusal is testable with no database server involved.
 
@@ -782,7 +803,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `authn/tests/test_otp.py` | Code generation, hashing at rest, expiry, attempt burn, superseding |
 | `authn/tests/test_webauthn.py` | Challenge expiry, single use, ceremony key separation, option contents |
 | `authn/tests/test_throttles.py` | Each limit as a client meets it, and that the scopes count separately |
-| `cultivatorscollective/tests/test_admin_branding.py` | The brand skin over the admin: palette drift, template overrides, assets |
+| `f2c/tests/test_admin_branding.py` | The brand skin over the admin: palette drift, template overrides, assets |
 | `documents/tests/test_models.py` | File digests, immutability after publish, delete refusals |
 | `documents/tests/test_services.py` | Failing closed on a missing revision, re-acceptance, stale versions |
 | `documents/tests/test_api.py` | The payload contract, the 503, idempotent agreement |

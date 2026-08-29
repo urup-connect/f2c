@@ -1,6 +1,6 @@
 Hi {{ name }},
 
-Your Cultivators Collective sign-in code is:
+Your {{ brand }} sign-in code is:
 
     {{ code }}
 
@@ -9,4 +9,4 @@ It expires in {{ minutes }} minutes and can be used once.
 If you did not try to sign in, you can ignore this email. Nobody can use the
 code without access to this mailbox.
 
--- Cultivators Collective
+-- {{ brand }}

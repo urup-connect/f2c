@@ -18,8 +18,8 @@ Every endpoint that takes an email address answers an unknown address exactly as
 one.
 
 **Status:** complete and tested, and reachable from the browser. A member signs in at `/login` and
-lands in their own area. The one thing still missing is an email provider, without which the code
-fallback does not work on a deployed environment — see section 8.
+lands in their own area. Each storefront now sends its own mail through its own server — see section
+7 — and what is still missing is the credentials for each deployed environment.
 
 ## 2. The two credentials
 
@@ -145,10 +145,28 @@ on — the Next.js origin, not Django's. Three consequences, all of which have b
 | `DJANGO_WEBAUTHN_ORIGINS` | When `DEBUG=False` | Full frontend origins, scheme and port included. |
 | `DJANGO_WEBAUTHN_RP_NAME` | No | The name the authenticator shows the member. |
 
-## 7. Emailed codes in development
+## 7. Which server the code is sent from
 
-`MAILERS` uses the console backend, so codes are printed to the terminal running Uvicorn rather than
-sent. Look for the message body in that output.
+**Two SMTP servers, one per storefront.** `MAILERS` holds a `club` mailer built from `EMAIL_CC_*` and
+a `market` mailer built from `EMAIL_F2C_*`; the aliases are the storefront codes, so routing is
+`.send(using=storefront)`. `app/core/storefronts/mail.py` resolves the storefront into all three of
+the server, the `From` address and the name in the subject and signature, because those three have to
+agree — a code from the store's provider signed "Cultivators Collective" reads as a phishing attempt,
+which is the one thing a member must be able to rule out about a one-time code.
+
+The storefront is the **host's**, through `storefront_for_request`, not the member's. `login/start`
+and `otp/start` have to answer an address with no account at all, so there is nothing else to ask,
+and a member of both storefronts signing in at the store should be answered by the store. What has
+*not* changed is the code's scope: `EmailOtp` is not storefront-scoped, so a code issued at one
+storefront still verifies at the other. Only the envelope moved. See `design/verticals.md` section 8.
+
+There is no fallback to the other storefront's server. With `DEBUG=False` a blank `EMAIL_*_HOST` or
+`EMAIL_*_FROM` refuses startup, because the alternative sends successfully and looks fine.
+
+### In development
+
+Leave both `EMAIL_*_HOST` blank and every storefront falls back to the console backend, so codes are
+printed to the terminal running Uvicorn rather than sent. Look for the message body in that output.
 
 Django 6.1 has no async email API, and password hashing is deliberately slow, so both run in a
 worker thread rather than on the event loop.
@@ -184,12 +202,13 @@ feature, while an incapable one briefly offered the button gets a refusal it can
 
 ### What is still not built
 
-**No email provider is configured.** Until one is, no member can sign in on a deployed environment
-at all, because the code is printed to a server console nobody is reading. This is the single thing
-between the feature and a working sign-in on QA.
+**The mail servers are configurable but each environment still has to be given credentials.** The
+per-storefront plumbing exists — see section 7 — and Django now refuses to start with `DEBUG=False`
+until both storefronts have a host and a sender, so this fails loudly at deploy rather than quietly
+at the first sign-in. Filling in `EMAIL_CC_*` and `EMAIL_F2C_*` on QA is what remains.
 
 **Nothing enrols a passkey without a code first.** By design — see section 5 — but it means the
-email provider gates passkeys too, not only the fallback.
+mail configuration gates passkeys too, not only the fallback.
 
 **Staff password sign-in is still unrestricted.** `POST /api/auth/login` is not offered by the
 frontend and is not limited to staff either. See risk 5.
@@ -220,7 +239,7 @@ unreachable from the browser too, so no manual testing would have found it eithe
 | # | Risk | Status |
 | --- | --- | --- |
 | 1 | Rate limits are per worker with the default cache, so a multi-worker deployment multiplies every limit — including the one bounding outbound email. | Open — blocks production |
-| 2 | No email provider. The only route into a new account does not work on a deployed environment. | Open — blocks production |
+| 2 | No email provider. The only route into a new account does not work on a deployed environment. | Partly closed — two per-storefront SMTP mailers are configurable and required outside `DEBUG` (section 7). Each environment's credentials are still outstanding |
 | 3 | `login/start` reveals which addresses have a passkey. Inherent to identifier-first flows. | Accepted |
 | 4 | The authenticated components are untested and unrouted. Wiring them up without tests moves that debt into the member-facing product. | Closed — rewritten to the component conventions with tests, and routed. See section 8 |
 | 5 | Staff password sign-in remains at `POST /api/auth/login`. It is not offered by the frontend but it is not restricted to staff either — an Active member with a usable password could use it. Members are created with an unusable password, so this is currently unreachable rather than closed. | Open — worth an explicit `is_staff` check |

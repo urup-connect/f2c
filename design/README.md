@@ -16,12 +16,14 @@ is deliberately unbuilt, it is recorded as unbuilt rather than omitted.
 | [features/payments.md](features/payments.md) | The membership subscription, the Payfast integration, and what a payment does to an account |
 | [features/landing.md](features/landing.md) | The public landing page, its copy governance and its indexing rules |
 | [features/brand.md](features/brand.md) | Colour, typography, logo artwork, photography and the design tokens behind them |
+| [migrations.md](migrations.md) | How a migration is written here, and what the cleared set encoded that the models do not |
 
-Three further documents describe what is *planned* rather than what exists, and are the exception to
+Four further documents describe what is *planned* rather than what exists, and are the exception to
 the rule above:
 
 | Document | Covers |
 | --- | --- |
+| [verticals.md](verticals.md) | The second storefront: what the club and the produce market share, what they do not, and the restructure both need before either can be built |
 | [plan.md](plan.md) | The roadmap: what the platform is, where the work stands, and the order the remaining blocks can be built in |
 | [todo.md](todo.md) | Every outstanding item from the brief and the design set, in build order, each marked built, partial, not built, or blocked |
 | [conflict.md](conflict.md) | Where the brief in `twp-tasks/` disagrees with what is built, with itself, or with the older plan — and what should be done about each |
@@ -31,7 +33,8 @@ story diagrams. It is the statement of intent. Where it and the built system dis
 holds the disagreement rather than either side silently winning.
 
 Read `frontend.md` and `backend.md` for the shape of the system. Read a feature document for the
-reasoning behind one part of it.
+reasoning behind one part of it. Read `verticals.md` before starting anything new — it resequences
+every remaining block.
 
 ## Where the boundary between the two halves sits
 

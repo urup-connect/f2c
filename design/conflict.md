@@ -60,7 +60,7 @@ administrators with different reach:
 | Administrator accounts | Not listed | **CRUD** |
 | Escalation | **Escalates to** UC Administrator | **Receives** escalations from Club Administrator |
 
-`app/accounts/roles.py` has one `admin` role holding the whole administrative catalogue.
+`app/core/accounts/roles.py` has one `admin` role holding the whole administrative catalogue.
 
 **Decision.** Adopt the two-tier model. The Club Administrator runs the club day to day; the UC
 Administrator is the platform operator, holds the money and the administrator accounts, and is where
@@ -78,6 +78,12 @@ What this changes:
 
 **The migration risk is named here so it is not discovered later:** every account currently holding
 `admin` is a club administrator under the new reading, and at least one has to be promoted by hand.
+
+**Amended by C29.** The two tiers stand. The mechanism does not: the UC tier is not a fifth value in
+the role column and has no Next.js surface. It is `is_staff` in the Django admin. `platform.
+manage_administrators`, `platform.refund_transaction` and `platform.cancel_membership` therefore
+never enter the catalogue, and `createsuperuser` needs no role argument. The migration risk above
+also disappears — see C27 on the database being rebuilt.
 A data migration cannot guess which.
 
 ### C3 — Two domains, one application
@@ -97,6 +103,9 @@ What this changes: `SITE_URL` becomes two values, the `robots` and canonical rul
 sign-up flow sit on the cannabis host.
 
 *In passing: `plan.md` listed a "Billing category page". That was Biltong.*
+
+**Amended by C26.** The two hosts stand. What has changed is the other six categories: they are not
+six future sites, they are the catalogue of a second storefront. See [`verticals.md`](verticals.md).
 
 ### C4 — "Leaf rating" means two different things
 
@@ -141,9 +150,12 @@ does not exist yet. See C13.
 
 ## B. Open — needs a product decision
 
+*An entry here marked **Decided** was resolved after this section was written. It stays in place
+rather than moving, so the reasoning that made it open is still next to the answer.*
+
 ### C6 — What a sharing member actually is
 
-**Status: Open. Blocks the swap zone, and see C7.**
+**Status: Decided — a placeholder, not a person. The mechanics are deferred to the swap zone.**
 
 `twp-tasks/member-roles.md` says two things that do not sit together:
 
@@ -171,7 +183,51 @@ around a fiction. If they are real people, the machinery is right and C7 is a li
 **Recommendation.** Decide before any swap-zone work starts. The build has already committed to
 "real people", and unwinding it later means a migration that deletes identity numbers.
 
+**Decision — the right-hand column.** A sharing member is a placeholder that exists so flowering
+stock can be put into the swap zone. It is not a person, collects no identity number, and consents
+to nothing.
+
+**Taken now rather than with the swap zone, and the timing is the point.** The recommendation above
+warns that unwinding "real people" later means a migration that deletes stored identity numbers.
+That cost does not exist today — Block 0.5 dropped the database and cleared every migration — and it
+returns the moment the attestation columns are written into the new initial schema. Deleting them
+was free exactly once. Adding columns back to a defined feature is ordinary work.
+
+What went, in `membership.ClubMembership`:
+
+- `sharing_consent_attested_by`, `sharing_consent_attested_at` and `sharing_consent_version`. A
+  placeholder consents to nothing and is given no collection notice, so an attestation over one
+  recorded a ceremony around a fiction.
+- The `sharing_member_is_complete` constraint, which required the attestation and a nickname, is now
+  `sharing_member_has_a_cultivator` and requires only the cultivator whose stock it holds. Orphaned
+  stock was always the real failure; the rest belongs to the swap zone and can be tightened there.
+- The erasure exemption, and the `erased_at` column that carried it. A placeholder has no personal
+  data to erase, so the whole interaction disappears.
+- The identity number is no longer collected. The column stays on `User` for the people who do need
+  one — C27 — and `accounts.services.register_sharing_member` stops asking for it.
+
+What stays: `registered_by`, naming the cultivator the placeholder was created under, and the
+nickname the swap zone displays. `UserStatus.NON_AUTHENTICATING` also stays, named for the fact
+rather than the concept.
+
+**What is deferred, deliberately.** Everything about how a placeholder behaves in the swap zone:
+whether it holds plants directly or by allocation, how many, who may move stock on and off it,
+whether it appears to members at all. That is the swap zone's to define and it is not guessed at
+here. See risk 4 below.
+
+**Risk 4 — the four-plant allocation now belongs to nobody.** Under "real people" a placeholder
+consumed a named adult's statutory allowance. Under this decision the club holds the stock itself,
+which is a different legal exposure rather than none — see C7, which this decision changes and does
+not resolve.
+
 ### C7 — Whether the sharing member scheme is lawful as described
+
+**Changed by C6, not resolved.** The question was whether allocating four flowering plants to a
+named adult who never consented is lawful, and whether a swap is a sale in substance. With the
+placeholder decision the first half becomes a different question: nobody is being allocated
+anything, and the club is holding the stock itself, above whatever ceiling applies to it. The legal
+opinion is still required and the swap zone is still gated on it — the brief for that opinion just
+changed.
 
 **Status: Legal. Blocks the swap zone.**
 
@@ -265,6 +321,12 @@ What has to be decided before it can be specified:
 **Recommendation.** Treat as its own discovery item with the finance owner. It is a launch blocker
 for cultivators even though no member-facing screen depends on it.
 
+**Escalated by C26.** This was a Block 12 concern because the club can demonstrate everything else
+without it. The market cannot: it pays a farmer on every order from the first day it trades. With
+the market sequenced ahead of the club's own commerce, settlement moves onto the critical path.
+Every question above applies unchanged to a farmer, and one is added — whether the platform is the
+seller of record or the agent, which is a VAT question as much as a commercial one.
+
 ### C11 — Refunds are required and are not built
 
 **Status: Open.**
@@ -311,7 +373,15 @@ enforce them:
 | A cultivator manages **their own** listings, stock and pricing | `member-roles.md` | Ownership on every one of those models |
 | A cultivator manages **the sharing members they registered** | `member-roles.md` | `registered_by` exists; nothing checks it |
 | A member views **their own** inventory | `member-roles.md` | Ownership on the plant |
-| Club administrator versus UC administrator reach | C2 | Tier comparison at every administrative endpoint |
+| Club administrator versus UC administrator reach | C2 | ~~Tier comparison at every administrative endpoint~~ — **struck by C29.** The UC tier is is_staff in the Django admin, so no endpoint compares tiers |
+
+**Largely resolved by C28.** The role column was what left these with nothing to enforce them: "their
+own" pointed at nothing, so `RoleBackend` refused every object-level question rather than answer one
+wrongly. `cultivators.ProducerMembership` is now a row per person per producer, and the first rule
+above — only the primary appoints staff and creates sharing-member placeholders — is enforced in
+`permissions_for` off `ProducerMembership.is_primary`. The rest are joins against the same rows, to
+be written in the services that own each record rather than in the catalogue. What stays open here
+is that work, not the design question.
 
 This is risk 9 in `features/roles-and-permissions.md`, marked "must be resolved with the cultivator
 organisation, not after". This register agrees, which is why `todo.md` puts the cultivator
@@ -463,8 +533,8 @@ club advertising a price is a different legal object from a club stating a subsc
 `frontend.md` section 9 says "Nothing is editable. `platform.manage_own_profile` has no screen and
 no endpoint". `roles-and-permissions.md` section 13 lists it among the unbuilt.
 
-It is built: `frontend/app/(club)/profile/page.tsx`, `app/accounts/profile.py`,
-`app/accounts/avatars.py`, and four endpoints — `GET`/`PUT /api/accounts/me/profile`,
+It is built: `frontend/club/app/(club)/profile/page.tsx`, `app/core/accounts/profile.py`,
+`app/core/accounts/avatars.py`, and four endpoints — `GET`/`PUT /api/accounts/me/profile`,
 `POST`/`DELETE /api/accounts/me/avatar`. `club-navigation.ts` already marks `own-profile` as the one
 `ready` destination.
 
@@ -492,7 +562,7 @@ counted among the known drift rather than rediscovered.
 
 ### C25 — A test fails roughly one run in thirty
 
-`frontend/app/api/nickname/availability/route.test.ts` asserts an eight-character random hex
+`frontend/club/app/api/nickname/availability/route.test.ts` asserts an eight-character random hex
 reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex. Known,
 one-line fix, not yet taken — `frontend.md` risk 6. Carried into `todo.md` Block 0 so it stops being
 a note.
@@ -512,3 +582,135 @@ anybody without them.
 | P4 | No documented backup or rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every stored identity number | `backend.md` risk 1 |
 | P5 | Staff password sign-in at `POST /api/auth/login` is not restricted to staff | `authentication.md` risk 5 |
 | P6 | `NEXT_PUBLIC_DJANGO_API_URL` is baked in at build time, so one artefact cannot serve two environments | `frontend.md` risk 2 |
+---
+
+## E. The second storefront
+
+Added after the pass above, when the product owner confirmed that the produce categories C3 excluded
+are a single public market rather than six future sites. The reasoning, the target model and the
+sequencing are in [`verticals.md`](verticals.md); what is recorded here is the disagreement with
+what is built.
+
+### C26 — The platform serves two storefronts, not one club
+
+**Status: Decided — one platform, two storefronts, one shared commerce spine.**
+
+Every document in this set, and every model in `app/`, assumes the platform is the club. A second
+storefront is now in scope: a public produce market where farming organisations list what they grow
+— vegetables, fruit, biltong, nuts, dried goods, honey — and anybody with an account buys it by
+quantity, searching on price, availability and the farmer's rating. No membership, no age gate, no
+subscription.
+
+**Decision.** One Django project, one database, one API, two Next.js applications on two domains.
+The two storefronts share identity, the producer organisation, listings, search, cart, order,
+payment, settlement, reviews, notifications and support. They do not share what is sold: the club's
+plant, batch, serial, ownership, swap and harvest against the market's units, stock, perishability
+and delivery.
+
+The line between them is what is sold, not who the customer is. The club sells a serialised,
+individually-owned asset with a service attached; the market sells fungible stock by quantity.
+
+What this changes is in `verticals.md` sections 6 to 10. In summary: the app layout splits into
+`core`, `commerce`, `club` and `market`; `CultivatorProfile` becomes a general `Producer`; the block
+sequence in `plan.md` is rebuilt around a shared spine; and C27 and C28 below become blocking.
+
+**What was rejected.** A tenancy column on every row, which the six-site reading of C3 would have
+required. With two storefronts and one shared producer population it would be a fiction maintained
+by hand — which storefront a listing appears in is already implied by what it lists. Also rejected:
+a generic `Product` model unifying strains and produce. The abstraction that earns its place is the
+listing, not the item listed.
+
+### C27 — `User` conflates identity with club membership
+
+**Status: Decided — split it, before either storefront is built.**
+
+`User.status` carries `PENDING_PAYMENT`, and `is_active` is derived from `status` and held to it by
+the `user_is_active_matches_status` check constraint (`app/core/accounts/models.py:481`). Exactly one
+status value grants access and reaching it means paying for a club membership. **A produce customer
+therefore cannot sign in.** The RSA identity number sits on `User` for the same reason, so a person
+buying carrots would be asked for one — which POPIA's minimisation principle refuses.
+
+**Decision.** `User` keeps identity and account state — active, suspended, erased. A new
+`ClubMembership` takes member status, the subscription, the nickname, the document consents and the
+verification flags. A new `ProducerMembership` takes appointed staff and their rights.
+`id_number_encrypted` and `id_number_hash` stay on `User` and become optional: identity verification
+is plausibly platform-level, since paying a farmer out asks the same question the club asks. What
+moves is the requirement, not the column.
+
+The build anticipated this. The `UserStatus` docstring at `app/core/accounts/models.py:70` says
+`PENDING_PAYMENT` is a status value rather than a membership row *"on purpose, for now"*, and names
+the payment gateway as the event that would change it. The second storefront is that event arriving
+early.
+
+**There is no data migration.** The product owner has confirmed the development database can be
+dropped, every `migrations/` folder cleared and the schema rebuilt from the new models. No
+`ClubMembership` backfill, no check constraint to lift and replace, no encrypted columns to move.
+
+What it costs instead is **test support data**: the five `app/*/tests/support.py` builders and the
+two modules under `frontend/club/test-support/` are written against today's `User` and have to be
+rewritten. Cost the block by the test suite, not by the models.
+
+**The window closes.** The same change against a club with real members is a data migration over
+encrypted identity numbers, live subscriptions and consent records that cannot be re-run. Taking it
+now is free; taking it after launch is not.
+
+### C28 — One role per account cannot express one person's three relationships
+
+**Status: Decided — retire the column, keep the catalogue.**
+
+`User.role` (`app/core/accounts/models.py:362`) is a single value under a check constraint, and C2 adds a
+fifth value to it. On the market one person may be a customer, a farming organisation's appointed
+staff member and a club member at once. A column cannot hold that.
+
+**Decision.** The action catalogue in `app/core/accounts/roles.py` and the resolving backend in
+`app/core/accounts/backends.py` survive unchanged in shape. What changes is where a role is read from: an
+administrator role from `StorefrontStaff`, a member role from `ClubMembership`, a producer role from
+`ProducerMembership`. No role stays on `User` — the UC tier is `is_staff`, per C29.
+
+A club administrator is `StorefrontStaff`, not `ClubMembership`. Today an administrator is
+`role='admin'` on a `User` whose status must be `ACTIVE`; under the split that would have meant
+issuing them a club membership they never pay for. Administration and membership are different
+relationships and get different tables, and the market's administrator is the same table with a
+different storefront.
+
+**This is most of the answer to C13.** Object-level rules were a retrofit because "their own" had
+nothing to point at. Once a membership row exists, "their own listings" is a join rather than a
+special case, and `RoleBackend` refusing object-level questions stops being a gap.
+
+**What it costs.** `roles.py`, `backends.py` and their suites are among the better-tested parts of
+the build and all of them assume a column. Every permission test is touched. Accepted: those tests
+are the reason the change is safe to make at all.
+
+### C29 — The UC tier is `is_staff` in the Django admin, not a role in the catalogue
+
+**Status: Decided — no UC administration in Next.js.**
+
+C2 decided the platform has two administrative tiers and added `uc_admin` to the role column. C5
+decided the administrative portal is Next.js "with the Django admin retained as the operator's
+tool". Read together those two left an unanswered question: which tier gets which surface.
+
+**Decision.** Next.js carries two administration areas, one per storefront — the club's and the
+market's — and no third. Everything the UC tier does is done in the Django admin, gated by
+`is_staff` exactly as Django gates it already: money, refunds, subscription cancellation,
+administrator accounts, escalations, and any operation that reaches across both storefronts.
+
+What this changes:
+
+- **`uc_admin` never exists.** It was to be a fifth value in `User.role`; that column is being
+  retired entirely under C28, and the UC tier does not reappear in `StorefrontStaff`.
+- **The permission catalogue shrinks.** `platform.manage_administrators`,
+  `platform.refund_transaction` and `platform.cancel_membership` are Django admin operations and
+  need no catalogue entry, no endpoint and no tier comparison. C13's "tier comparison at every
+  administrative endpoint" line is struck.
+- **`createsuperuser` needs no role argument.** It creates a staff account, which is the whole of
+  what the UC tier is.
+- **The escalation queue survives** as a model, raised in the club or market administration area and
+  worked in the Django admin. It is not a Next.js destination for the receiving side.
+
+**Why this is the right trade.** A third administrative front end would be a month of work
+reproducing what `django.contrib.admin` already does, on the one surface whose entire audience is a
+handful of trusted staff. The Django admin over accounts, documents, subscriptions and payments is
+already built and already tested.
+
+**What it costs.** The UC tier gets no branded interface and no mobile-friendly one, and anything a
+UC operator needs that the Django admin cannot express becomes a management command. Accepted.
