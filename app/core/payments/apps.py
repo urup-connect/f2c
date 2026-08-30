@@ -10,3 +10,10 @@ class PaymentsConfig(AppConfig):
     # of every table, every migration dependency and `AUTH_USER_MODEL`.
     label = 'payments'
     verbose_name = 'Payments'
+
+    def ready(self):
+        # Registers the deploy check in `checks.py`, which warns when the
+        # notification endpoint will read the proxy's address instead of
+        # Payfast's. `deploy=True`, so importing this costs nothing until
+        # `manage.py check --deploy` asks for it.
+        from . import checks  # noqa: F401

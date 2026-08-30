@@ -222,6 +222,11 @@ The landing page is the only route the product ever permits to be indexed, and n
 than Production permits any indexing at all. See `frontend.md` section 7 for the three independent
 mechanisms enforcing that.
 
+**The host is `f2c-cannabis.co.za`** — this application is the club's whole front door, landing page
+and member zone together, and `f2c.co.za` is the produce store rather than a marketing site in front
+of it. See `conflict.md` C30. Everything indexed here is built from this deployment's own
+`SITE_URL`, so the rules are per host without needing to be told which host.
+
 `robots.txt` in Production pairs `Allow: /$` with `Disallow: /`, which permits the home page and
 nothing below it. The `$` anchor is an extension to the original exclusion standard rather than part
 of it — honoured by Google and Bing, not guaranteed elsewhere — which is exactly why the root layout

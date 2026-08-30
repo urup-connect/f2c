@@ -7,9 +7,11 @@ import { newErrorReference } from '@/lib/error-reference'
  * The only route handler in the product, and it exists for reasons that are all about what the
  * browser is allowed to know.
  *
- * **Django's address stays out of the bundle.** The browser posts to this origin. Nothing in a
- * client component has to know where the API lives, and `NEXT_PUBLIC_DJANGO_API_URL` is not made a
- * requirement of the sign-up page.
+ * **Django's address stays out of the bundle.** The browser posts to this origin, so nothing in a
+ * client component has to know where the API lives. That argument was originally about keeping
+ * `NEXT_PUBLIC_DJANGO_API_URL` off the sign-up page; the address is no longer inlined into the
+ * bundle at all (`lib/api-address.ts`), so what this now buys is one fewer cross-origin request
+ * on the page a visitor meets first, and the logging below.
  *
  * **The cause is logged where the member cannot read it.** A failure is answered with an opaque
  * reference and nothing else: no status code from Django, no `detail`, no exception text. The line

@@ -32,12 +32,28 @@ Source citations: `stock-upload` means `twp-tasks/cultivator-stock-upload.md`, `
 Nothing below this block can be demonstrated to anybody until these are done. **A member cannot sign
 in on a deployed environment today.**
 
+- [x] **`.gitignore` was excluding both frontends' `lib/` directories — 133 TypeScript modules,
+      never committed.** A bare `lib/` from GitHub's Python template matches at any depth, so
+      `frontend/club/lib` and `frontend/market/lib` were silently untracked: `api.ts`, `site.ts`,
+      every domain rule and every one of their tests. Nothing reports this — `git status` is clean
+      and `git add` says nothing. Found while checking that the P6 work could be committed. The
+      packaging patterns are now anchored to the repository root. **`backend.md` risk 12 said the
+      project was not under version control and C23 closed it; a third of the frontend genuinely
+      was not.** The 133 files still need adding in a commit of their own
+
 - [ ] Configure a real email provider. `MAILERS` is the console backend, so sign-in codes and the
       duplicate-registration payment link reach nobody — P1
 - [ ] Schedule `manage.py lapse_memberships`. Until something runs it, an unpaid membership keeps
       access indefinitely — P2
-- [ ] Shared cache backend. `LocMemCache` makes every rate limit per worker, including the one
-      bounding outbound email — P3
+- [x] Shared cache backend. **Decided and built: Azure Managed Redis in QA and production, a
+      `redis:7-alpine` container locally** (`compose.yaml`). `f2c/cache.py` reads
+      `DJANGO_REDIS_URL`, refuses a deployed environment that names none, and refuses `redis://`
+      where the Azure access key would travel in clear. `LocMemCache` survives only as the
+      no-configuration fallback, which is what keeps the suite runnable with no servers.
+      `DatabaseCache` on the existing MySQL was tried and cannot serve this — django-ninja checks
+      throttles synchronously inside an async operation and the database cache is `@async_unsafe`,
+      so it raised `SynchronousOnlyOperation` on the first throttled request and turned 82 tests
+      into errors. Verified against a real Redis over TCP: the same 635 tests pass — **C31** — P3
 - [ ] Document backup and rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every
       stored identity number with no recovery path — P4
 - [ ] Restrict `POST /api/auth/login` to `is_staff`. Unreachable today only because `create_user`
@@ -45,15 +61,80 @@ in on a deployed environment today.**
       door**: accounts used to be created at `PENDING_PAYMENT`, which `aauthenticate` refused on its
       own, and they are created `ACTIVE` now. The endpoint's own docstring says it is retained for
       staff; nothing enforces it — P5
-- [ ] Move the API address to runtime configuration. `NEXT_PUBLIC_DJANGO_API_URL` is baked into the
-      bundle at build time, so a promoted artefact carries the wrong address — P6
+- [x] Move the API address to runtime configuration — P6. **Done.** `NEXT_PUBLIC_DJANGO_API_URL` is
+      gone; `DJANGO_API_PUBLIC_URL` is read per request by `lib/api-address.ts`, rendered into the
+      document by the root layout, and read from there by `lib/api.ts`. Neither Dockerfile takes it
+      as a build argument any more. **Verified by building once with a deliberately wrong address
+      and serving that single build under two others**: the build-time value appears nowhere in
+      `.next/static` or `.next/server`, and two containers served two different addresses from the
+      same bundle. Omitting it answers 500 on the first request naming the variable, rather than
+      defaulting to localhost as the old code did. Cost: both root layouts are `force-dynamic`,
+      which moved `/_not-found` and the club's two static sign-up confirmations off the static path
+      and nothing else — every other route already read cookies — **C31**
 - [ ] Grant the founding administrators their authority by hand — `is_staff` for the UC tier, and a
       club `StorefrontStaff` row for each club administrator. **No migration can guess which
       accounts belong in which tier**, and until somebody does it a deployed environment has nobody
       who can administer it. This was Block 2's *promote the existing administrator accounts*; C29
       turned it from a role change into a deployment step
-- [ ] Choose a hosting target and provision PostgreSQL. `uuid7` keys were chosen anticipating it
-- [ ] Run `manage.py check --deploy` and clear it
+- [x] Choose a hosting target and provision the database. **Decided, and not as written**: the
+      database is MySQL 8.4 and was already built that way — `f2c/database.py`, `app/common/checks.py`
+      and the CI job — while this line still said PostgreSQL. `uuid7` needed neither. The target is
+      Azure in West Europe: three Container Apps, a managed MySQL, a Function App for the timer —
+      **C31**
+- [ ] Provision the Azure resources for the above: two Container Apps for `frontend/market` and
+      `frontend/club`, one for the API, an Azure Database for MySQL Flexible Server 8.4, an **Azure
+      Managed Redis**, a Container Registry, a storage account for media, and a Log Analytics
+      workspace. West Europe throughout. Provision Managed Redis rather than Azure Cache for Redis —
+      the Basic, Standard and Premium tiers retire on 30 September 2028
+- [x] Write the two Next.js Dockerfiles. Both configs now set `output: 'standalone'` and
+      `outputFileTracingRoot` to the workspace root — the applications share a hoisted
+      `node_modules` one level up, so tracing from the application directory produces output that
+      points outside its own tree. `frontend/club/Dockerfile` and `frontend/market/Dockerfile` build
+      from the `frontend/` context, refuse a build with no `SITE_URL` or
+      `SITE_URL`, and run non-root. Both builds were run and the assembled runtime layout was served
+      locally: `/` at 200, stylesheet at 200, `robots.txt` generated. `SITE_URL` and `APP_ENV` are
+      still build arguments — `lib/site.ts` evaluates them during prerendering — so an image is
+      still specific to an environment even though the API address no longer is
+- [ ] Set `DJANGO_BEHIND_PROXY=true` on the API container. **Without it every Payfast notification
+      is rejected and no membership ever activates** — Container Apps ingress is a reverse proxy, so
+      `REMOTE_ADDR` is Envoy and `verify_notification` refuses the source address. The single
+      highest-consequence variable in the deployment — C31.
+      **Forgetting it no longer reaches production.** It is one variable now rather than two —
+      Django's `SECURE_PROXY_SSL_HEADER` and the Payfast source check are the same deployment fact —
+      `payments.W001` fires on `manage.py check --deploy`, the container entrypoint runs that check
+      at `--fail-level WARNING` so the revision never starts, and a notification rejected from a
+      private address says in the log that the address is the proxy
+- [x] Write the API container. `Dockerfile` builds `mysqlclient` in a build stage and ships
+      `libmariadb3` and the CA roots in the runtime stage, non-root; `deploy/entrypoint.sh` waits
+      for the database, gates on `check --deploy --fail-level WARNING`, migrates, then serves. The
+      two Next.js images are still to write
+- [x] Set the HTTPS settings `check --deploy` asks for. `SECURE_PROXY_SSL_HEADER`,
+      `SECURE_SSL_REDIRECT` and HSTS all derive from `DJANGO_BEHIND_PROXY`, so a correct deployment
+      sets one variable. `SECURE_HSTS_PRELOAD` is deliberately refused and `security.W021` silenced
+      with the reason recorded in settings — the preload list is close to irreversible and covers
+      subdomains this project does not serve
+- [ ] Pin `min-replicas 1` on the API container. Scale-to-zero plus the four DNS lookups in
+      `payfast_addresses` risks timing out an inbound notification, and a dropped notification is a
+      member who paid and was not switched on — C31
+- [ ] Replace `lapse_memberships`' intended home. Its docstring still says "a daily cron or an Azure
+      App Service WebJob"; the decision is a timer-triggered Function App. That needs a protected
+      endpoint on the API for the Function to call — packaging Django into the Function App instead
+      would mean a second deployment artefact on a preview Python runtime — C31
+- [ ] Disclose the transborder flow. West Europe puts members' identity numbers outside South
+      Africa; lawful under POPIA s72(1)(a), but it has to appear in the privacy notice and the PAIA
+      manual — C31
+- [x] Put the deployed MySQL connection on verified TLS. Flexible Server runs
+      `require_secure_transport=ON` and mysqlclient defaults to `ssl_mode=PREFERRED`, so the
+      connection was coming up **encrypted but unverified** and saying so nowhere. `tls_options`
+      now takes `DJANGO_DB_SSL_CA` and sets `VERIFY_IDENTITY`, or `DJANGO_DB_SSL_DISABLED` for a
+      server with no certificate, and refuses a deployment that names neither — C31
+- [x] Fix the CI job's silent SQLite fallback. `DJANGO_ENV` was never set anywhere — not in
+      `ci.yml`, not in `.env.example` — and `database_config` reads it first, so `dev` was returned
+      and the MySQL job ran against a local file with every MySQL variable set and ignored. Only the
+      `connection.vendor` assertion caught it. Now set to `qa` in the workflow and documented
+- [x] Run `manage.py check --deploy` and clear it. Cleared, and it is now enforced rather than
+      remembered: `deploy/entrypoint.sh` runs it at `--fail-level WARNING` before uvicorn starts, so
+      a warning is a failed revision and Container Apps keeps the previous one serving
 - [ ] Fix `frontend/club/app/api/nickname/availability/route.test.ts` — it asserts a random hex string
       does not contain `500`, `503`, `429` or `422`, all valid hex, so it fails about one run in
       thirty — C25
@@ -61,16 +142,41 @@ in on a deployed environment today.**
       profile editing is unbuilt, and it is built — C21. Close `backend.md` risk 12, which says the
       project is not under version control — C23
 
-### Two domains — C3
+### Two domains — C3, C30
 
-- [ ] Split `SITE_URL` into a public host and a member-zone host. It is a **frontend** value read by
-      `frontend/club/lib/site.ts`, not a Django setting, and it is still one host. Block 0.5 built
-      per-host resolution for a *different* axis — `DJANGO_STOREFRONT_HOSTS` and
-      `app.core.storefronts.resolution` map a host to club or market — so there is machinery to build
-      on, but public versus member zone is untouched by it
-- [ ] Apply the `robots` and canonical rules per host rather than per environment
-      (`features/landing.md` §5)
-- [ ] Deploy and index `f2c.co.za` (public) and `f2c-cannabis.co.za` (member zone) separately
+**The assignment is fixed and it is not what C3 assumed** — see **C30**. `f2c.co.za` is the
+**market** (`frontend/market`), `f2c-cannabis.co.za` is the **club** (`frontend/club`), landing page
+and age gate included. There is no separate marketing site. The API answers on
+`backend.f2c.co.za` and `backend.f2c-cannabis.co.za`: one Django deployment, two hostnames, paired
+so each frontend calls an API inside its own registrable domain and `SameSite=Lax` survives
+untouched.
+
+- [x] Split `SITE_URL` into a host per storefront. **Closed by Block 0.5 rather than by work of its
+      own**, and it went unnoticed: splitting the frontend into two applications split the value with
+      it. `frontend/club/lib/site.ts` and `frontend/market/lib/site.ts` each read their own
+      `SITE_URL` from their own deployment — C30
+- [x] Apply the `robots` and canonical rules per host rather than per environment
+      (`features/landing.md` §6). Also closed by the two-application split: each application derives
+      `robots`, `sitemap` and `metadataBase` from its own `SITE_URL`, so the rules are per host by
+      construction. `APP_ENV` still gates indexing on top of that, and should — it is what keeps QA
+      out of the index — C30
+- [ ] Set the deployment configuration for both domains. Every variable exists and none has a
+      production value. `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`,
+      `DJANGO_CORS_ALLOWED_ORIGINS` and `DJANGO_WEBAUTHN_ORIGINS` each carry both sides. Two are
+      easy to get backwards and worked examples are now in `.env.example` — C30:
+      - `DJANGO_STOREFRONT_HOSTS` takes the **API** hosts, because `storefront_for_request` reads
+        Django's host and never sees the frontend's:
+        `backend.f2c.co.za=market,backend.f2c-cannabis.co.za=club`
+      - `DJANGO_WEBAUTHN_RP_IDS` takes the **frontend** domains, because a credential is bound to the
+        origin the JavaScript runs on: `club=f2c-cannabis.co.za,market=f2c.co.za`
+      - `SESSION_COOKIE_DOMAIN` stays **unset**. One deployment on two registrable domains cannot
+        name one cookie domain, and host-only cookies per API host are what the pairing needs
+- [ ] Provision DNS and TLS for four names — `f2c.co.za`, `backend.f2c.co.za`,
+      `f2c-cannabis.co.za`, `backend.f2c-cannabis.co.za` — and route both `backend.*` names to the
+      one Django deployment. A SAN certificate per domain, or one covering all four
+- [ ] Decide apex versus `www` per domain and set the redirect. No consequence in the codebase
+      provided the canonical one is what `SITE_URL` names — C30
+- [ ] Deploy and index `f2c.co.za` (store) and `f2c-cannabis.co.za` (club) separately
 
 ### Public landing page
 

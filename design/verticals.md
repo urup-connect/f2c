@@ -425,17 +425,33 @@ in the catalogue before it can be gated on one.
 
 ## 8. Domains and sign-in
 
-The two storefronts sit on separate registrable domains. Two consequences follow and neither is
-optional.
+The two storefronts sit on separate registrable domains. **C30 fixes which is which**, and the API
+answers on a subdomain of each:
 
-**Passkeys do not cross a registrable domain.** `WEBAUTHN_RP_ID` is a single value
-(`f2c/settings.py:375`) read by `rp_id()` at `app/core/authn/webauthn.py:38`. A
-credential enrolled on the club's domain cannot be presented on the market's. Each storefront enrols
-its own passkey; the emailed code works anywhere. `rp_id()` taking the request's storefront rather
-than one global setting is a small change today and a large one after Block 9.
+| Host | Serves |
+| --- | --- |
+| `f2c.co.za` | The produce market — `frontend/market` |
+| `backend.f2c.co.za` | The API, for the market |
+| `f2c-cannabis.co.za` | The club, landing page and age gate included — `frontend/club` |
+| `backend.f2c-cannabis.co.za` | The API, for the club |
+
+One Django deployment answers on both `backend.*` names. Two consequences follow from the split
+domains and neither is optional.
+
+**Passkeys do not cross a registrable domain.** A credential enrolled on the club's domain cannot
+be presented on the market's. Each storefront enrols its own passkey; the emailed code works
+anywhere. `rp_id()` at `app/core/authn/webauthn.py:37` takes the request's storefront and reads
+`WEBAUTHN_RP_IDS` (`f2c/settings.py:549`), falling back to the single `WEBAUTHN_RP_ID` for anything
+unlisted — so the value follows the storefront rather than the deployment. Under C30 the mapping is
+`club=f2c-cannabis.co.za,market=f2c.co.za`: the domain each **frontend** is served from, not the
+API's.
 
 **Sessions do not cross either.** Give each storefront its own API hostname so `SameSite=Lax` and
-the present cookie posture survive untouched. One identity, two sessions, two passkeys.
+the present cookie posture survive untouched. One identity, two sessions, two passkeys. That is what
+the `backend.*` pairing above buys: a club frontend calling the market's API host would be
+cross-site, needing `SameSite=None`, and Safari's ITP and Chrome's third-party cookie posture would
+drop the cookie regardless. It also means `SESSION_COOKIE_DOMAIN` stays unset — one deployment on
+two registrable domains cannot name a single cookie domain.
 
 **Nor does outbound email.** Separate domains mean separate mailbox providers, and a provider will
 refuse a `From` it does not own — so `MAILERS` holds one SMTP mailer per storefront, keyed by the
@@ -445,8 +461,10 @@ signature, because those three have to agree: a sign-in code from the store's pr
 "Cultivators Collective" is indistinguishable from a phishing attempt, and a one-time code is
 exactly the thing a member is taught to distrust on that basis.
 
-Which storefront is decided by the **host**, through `storefront_for_request` — the same signal
-`rp_id()` reads, and for the same reason. It cannot be decided by what the member belongs to: the
+Which storefront is decided by the **host** Django was reached on — `backend.f2c.co.za` or
+`backend.f2c-cannabis.co.za`, never the frontend's name, which Django never sees — through
+`storefront_for_request`, the same signal `rp_id()` reads, and for the same reason. It cannot be
+decided by what the member belongs to: the
 address may have no account at all, and a member of both signing in at the store should be answered
 by the store. Note what this does *not* change — the code itself is still not storefront-scoped, so
 one issued at the club is verifiable at the market. Only the envelope moved.
@@ -475,6 +493,7 @@ here as **risk 3** so that it stays a decision rather than becoming a discovery.
 | **C27** | New — `User` conflates identity with club membership |
 | **C28** | New — one role per account cannot express one person's three relationships |
 | **C29** | New — the UC tier is `is_staff` in the Django admin, not a role in the catalogue |
+| **C30** | New — `f2c.co.za` is the market and `f2c-cannabis.co.za` is the club; the API answers on `backend.` of each. Closes the `SITE_URL` split, which the two-application layout had already done |
 | **C5** | Reinforced. The Django admin is not merely retained as the operator's tool, it *is* the operator's tier |
 
 ---

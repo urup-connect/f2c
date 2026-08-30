@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Fraunces, Inter } from 'next/font/google'
 import './globals.css'
 import { STORE_BRAND } from '@/lib/brand'
+import { API_BASE_META_NAME, publicApiBaseUrl } from '@/lib/api-address'
 import { SITE_CONFIG } from '@/lib/site'
 
 /*
@@ -57,12 +58,31 @@ export const viewport: Viewport = {
   themeColor: '#0B3D1C',
 }
 
+/**
+ * Rendered per request, never prerendered.
+ *
+ * The `<meta>` tag below carries `DJANGO_API_PUBLIC_URL`, and a statically prerendered page would
+ * bake whatever that variable said at **build** time into its HTML — which is the build-time
+ * coupling this whole arrangement exists to remove (`design/todo.md` Block 0 P6). The cost is
+ * small and was measured: every route that matters here was already dynamic before this line,
+ * because every page reads cookies. What becomes dynamic is `/_not-found` alone.
+ */
+export const dynamic = 'force-dynamic'
+
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html
       lang="en-ZA"
       className={`${inter.variable} ${fraunces.variable} h-full antialiased`}
     >
+      <head>
+        {/*
+         * The API address the browser uses, handed over at request time. React hoists this into
+         * <head>; `lib/api.ts` reads it there. See `lib/api-address.ts` for why it is not a
+         * NEXT_PUBLIC_ variable.
+         */}
+        <meta name={API_BASE_META_NAME} content={publicApiBaseUrl()} />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   )

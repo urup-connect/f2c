@@ -36,6 +36,7 @@ this application where an attacker chooses the input and the outcome is an
 active membership.
 """
 import hashlib
+import ipaddress
 import socket
 import urllib.error
 import urllib.request
@@ -367,8 +368,17 @@ def payfast_config(environ, debug=False):
             'DJANGO_MEMBERSHIP_SUBSCRIPTION_DESCRIPTION',
             'Cultivators Collective membership subscription',
         ),
-        behind_proxy=value('DJANGO_PAYFAST_BEHIND_PROXY').lower()
-        in {'1', 'true', 'yes', 'on'},
+        # **One deployment fact, one variable.** Django has to know it is behind
+        # a proxy too -- SECURE_PROXY_SSL_HEADER and SECURE_SSL_REDIRECT depend
+        # on it -- and two independent switches for the same fact is a footgun
+        # whose failure mode is setting one of them. So DJANGO_BEHIND_PROXY
+        # answers both, and the Payfast-specific spelling stays as an override
+        # for the deployment where the two genuinely differ: an edge that
+        # terminates TLS but appends to X-Forwarded-For rather than overwriting
+        # it is safe for the first and not for the second.
+        behind_proxy=(
+            value('DJANGO_PAYFAST_BEHIND_PROXY') or value('DJANGO_BEHIND_PROXY')
+        ).lower() in {'1', 'true', 'yes', 'on'},
     )
 
 
@@ -493,6 +503,28 @@ def source_is_payfast(ip, addresses=None):
     if addresses is None:
         addresses = payfast_addresses()
     return ip in addresses
+
+
+def address_is_private(ip):
+    """Whether ``ip`` is on a private network, and therefore cannot be Payfast.
+
+    Only ever used to explain a rejection. A notification whose source address
+    is private did not come from the internet, which in a deployment means it
+    came from the ingress proxy -- so ``DJANGO_PAYFAST_BEHIND_PROXY`` is unset
+    and ``notification_source_ip`` is reading ``REMOTE_ADDR``. That is the
+    single most likely cause of a rejected notification and the hardest to guess
+    from the log line without this, because "source address is not Payfast" is
+    equally what an attacker looks like.
+
+    Never a decision: it widens nothing and admits nobody. ``source_is_payfast``
+    has already said no by the time this is asked.
+    """
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        # Not an address at all -- an empty REMOTE_ADDR, or a header carrying
+        # something that is not one. Nothing useful to say about it.
+        return False
 
 
 def amount_matches(posted_amount, expected):

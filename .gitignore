@@ -13,20 +13,32 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+#
+# **Anchored to the repository root, and that is not cosmetic.** These come from
+# GitHub's Python template, where they mean the packaging directories `setup.py`
+# writes beside itself. Unanchored, a bare `lib/` matches a directory of that
+# name at ANY depth -- and this repository has two: `frontend/club/lib` and
+# `frontend/market/lib`, 133 TypeScript modules between them, every one of them
+# silently untracked. `api.ts`, `site.ts`, the domain rules and their tests were
+# all excluded, and nothing reports it: `git status` is clean, `git add` says
+# nothing, and the files simply are not in any commit.
+#
+# So each pattern below starts with `/`. `build/` and `dist/` are anchored for
+# the same reason -- both are ordinary names in a JavaScript workspace.
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+/share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg

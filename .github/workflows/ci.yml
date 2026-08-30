@@ -81,6 +81,23 @@ jobs:
           --health-retries=10
           --health-start-period=30s
 
+      redis:
+        # The throttle counters live here, and `DJANGO_ENV: qa` below refuses to
+        # start without a cache server -- deliberately, because a per-process
+        # cache turns a published rate limit into that limit times the replica
+        # count with nothing to show for it. Running the real backend here is
+        # also the only place the throttle tests exercise what QA and production
+        # actually use; on LocMemCache they prove the limit holds inside one
+        # process, which was never the part in doubt.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     env:
       # The project package is `f2c/`, renamed from `cultivatorscollective/`
       # because it is the platform rather than one of its two storefronts --
@@ -101,6 +118,26 @@ jobs:
       # unrecoverable. If a future job needs real credentials, it needs its own
       # environment with its own review.
       DJANGO_DEBUG: 'True'
+
+      # `database_config` reads this BEFORE the host, and `dev` -- what an unset
+      # value means -- returns SQLite no matter what else is configured. So
+      # without this line every variable below is read and ignored, the job runs
+      # green on a local file, and the `connection.vendor` assertion below is
+      # the only thing that notices.
+      DJANGO_ENV: qa
+
+      # The MySQL service container has no certificate of its own, so the
+      # verified-TLS path cannot apply here. Said explicitly because a deployed
+      # connection with no TLS decision is refused -- see f2c/database.py.
+      DJANGO_DB_SSL_DISABLED: 'true'
+
+      # The Redis service container above. `DJANGO_ENV` is `qa` here so the job
+      # exercises the deployed backends, and qa requires rediss:// -- because
+      # the Azure access key travels inside that URL. This URL carries no key
+      # and never leaves the runner's loopback, so the job opts out explicitly
+      # rather than the rule being weakened for every deployment that uses it.
+      DJANGO_REDIS_URL: redis://127.0.0.1:6379/0
+      DJANGO_CACHE_ALLOW_PLAINTEXT: 'true'
 
       # Points `database_config` at the service container above. Without a host
       # it would fall back to SQLite and this job would test nothing it was

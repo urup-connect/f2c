@@ -146,8 +146,27 @@ def payfast_notify(request):
         # Logged with the reason, answered without it. The address is logged
         # because a rejected notification is either an attempt or a
         # misconfiguration, and both need to be traceable to a source.
+        #
+        # A private source address is named as the misconfiguration it almost
+        # certainly is. Payfast is on the internet, so a notification arriving
+        # from 10.x or 172.16.x came from the ingress proxy in front of Django
+        # and DJANGO_PAYFAST_BEHIND_PROXY is unset -- which fails every
+        # notification identically and activates no membership. Without this
+        # line the log says only that the source is not Payfast, which is also
+        # exactly what a genuine attempt looks like.
+        misconfigured = (
+            not services.config().behind_proxy
+            and gateway.address_is_private(source_ip)
+        )
         logger.warning(
-            'payments: notification from %s rejected: %s', source_ip, rejected.reason
+            'payments: notification from %s rejected: %s%s',
+            source_ip,
+            rejected.reason,
+            (
+                ' -- that is a private address, so this is the proxy and not '
+                'Payfast. DJANGO_PAYFAST_BEHIND_PROXY is unset.'
+                if misconfigured else ''
+            ),
         )
         return 400, {'detail': 'This notification was not accepted.'}
     except services.NotificationUnconfirmed as unconfirmed:

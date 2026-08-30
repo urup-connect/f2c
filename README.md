@@ -713,5 +713,6 @@ The frontend adds two requirements. Serve both halves under one registrable
 domain (`app.example.co.za` and `api.example.co.za`) so the `SameSite=Lax`
 session cookie still reaches the API; a genuinely cross-site split needs
 `SameSite=None` plus HTTPS. And set `DJANGO_API_URL` to the internal address
-Next.js can reach and `NEXT_PUBLIC_DJANGO_API_URL` to the public one — the
-latter is baked into the client bundle at build time.
+Next.js can reach and `DJANGO_API_PUBLIC_URL` to the public one. Both are read
+at request time: the second is rendered into the document by the root layout and
+read from there by `lib/api.ts`, so one image serves any environment.

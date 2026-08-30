@@ -22,6 +22,7 @@ from app.core.accounts.storage import avatars_storage_config
 from app.core.documents.storage import documents_storage_config
 from app.core.payments.gateway import payfast_config
 
+from .cache import cache_config
 from .database import database_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -102,14 +103,73 @@ CORS_ALLOW_CREDENTIALS = True
 # so it cannot be HttpOnly. The session cookie stays HttpOnly.
 CSRF_COOKIE_HTTPONLY = False
 
-# 'Lax' is enough while frontend and API share a parent domain in production.
-# Cross-site deployment (different registrable domains) needs 'None' + HTTPS.
+# 'Lax' is enough because each frontend calls an API host inside its own
+# registrable domain -- the store at f2c.co.za calls backend.f2c.co.za, the club
+# at f2c-cannabis.co.za calls backend.f2c-cannabis.co.za. That pairing is the
+# whole reason there are two API hostnames: cross the domains and the cookie
+# needs 'None', which Safari's ITP and Chrome's third-party cookie posture drop
+# anyway. See design/conflict.md C30 and design/verticals.md section 8.
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+# SESSION_COOKIE_DOMAIN is deliberately unset. One deployment answering on two
+# registrable domains cannot name a single cookie domain, and host-only cookies
+# per API host are what the pairing above needs.
 
 # Cookies must never travel in cleartext outside local development.
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+
+# HTTPS, and what Django is allowed to believe about it
+
+# **One variable for one deployment fact.** Every container deployment has
+# something terminating TLS in front of Django -- Container Apps ingress, a load
+# balancer, a CDN -- and three separate things need to know: Django, so it does
+# not redirect a request that already arrived over HTTPS into a loop; the
+# Payfast notification endpoint, so it reads the caller's address rather than
+# the proxy's; and HSTS, which is meaningless on a connection Django thinks is
+# plain. `payfast_config` reads this same variable, which is why there is one
+# and not two: two switches for one fact fail by having one of them set.
+BEHIND_PROXY = env_bool('DJANGO_BEHIND_PROXY')
+
+# Only consulted when BEHIND_PROXY says the edge is trustworthy. The header is
+# client-supplied like any other, so believing it in front of nothing lets a
+# caller declare their own plain-HTTP request secure -- and Django would then
+# set a Secure cookie on it and skip the redirect.
+SECURE_PROXY_SSL_HEADER = (
+    ('HTTP_X_FORWARDED_PROTO', 'https') if BEHIND_PROXY else None
+)
+
+# Off in development, and off when nothing in front of Django is known to speak
+# HTTPS -- switching it on without SECURE_PROXY_SSL_HEADER is the redirect loop
+# this pairing exists to avoid.
+SECURE_SSL_REDIRECT = env_bool(
+    'DJANGO_SECURE_SSL_REDIRECT', default=not DEBUG and BEHIND_PROXY
+)
+
+# A year, and only outside development. Deliberately not `preload`: the preload
+# list is close to irreversible and covers every subdomain of a registrable
+# domain, which here would include hosts this project does not serve.
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(
+    os.environ.get('DJANGO_SECURE_HSTS_SECONDS') or 31_536_000
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    'DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS', default=not DEBUG
+)
+
+# `security.W021` asks why SECURE_HSTS_PRELOAD is not set, and the answer is
+# that it is not wanted. Submitting to the browser preload list is close to
+# irreversible -- removal takes months and reaches users only as they update --
+# and it applies to the whole registrable domain including subdomains this
+# project does not serve and may not always control. HSTS itself is on above,
+# which is the part that protects members.
+#
+# Silenced rather than left to be re-read every deploy, because the container
+# entrypoint runs `check --deploy --fail-level WARNING`: an accepted warning
+# left in place would mean the gate could never pass, and a gate that cannot
+# pass gets removed. The list is for decisions, never for things not yet fixed.
+SILENCED_SYSTEM_CHECKS = ['security.W021']
 
 
 # Storefronts
@@ -136,6 +196,11 @@ def _storefront_hosts(raw):
     return pairs
 
 
+# These are the hosts *Django* answers on, not the ones the browser shows. The
+# frontend's name never reaches here; `request.get_host()` is the API host. So the
+# production mapping is:
+#
+#   DJANGO_STOREFRONT_HOSTS=backend.f2c.co.za=market,backend.f2c-cannabis.co.za=club
 STOREFRONT_HOSTS = _storefront_hosts(os.environ.get('DJANGO_STOREFRONT_HOSTS'))
 
 # Where an unmapped host lands. The club, because it is the only storefront that
@@ -512,15 +577,16 @@ STOREFRONT_FROM_EMAIL = {
 # Cache
 # https://docs.djangoproject.com/en/6.1/topics/cache/
 
-# Rate limiting for the auth endpoints is enforced through the cache, so in
-# production this must be a shared backend (Redis or Memcached). The per-process
-# default below means each Uvicorn worker would count separately.
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'f2c',
-    }
-}
+# Rate limiting for the auth endpoints is enforced through the cache, so it has
+# to be a backend every process and every replica can see. `LocMemCache` was
+# not: it gave each Uvicorn worker its own counters, which multiplied every
+# published limit by the worker count -- including the one bounding outbound
+# email, whose whole job is to stop `otp/start` being used as a mailbomb relay.
+#
+# Redis in every environment; Azure Managed Redis in QA and production, the
+# container in `compose.yaml` locally. `f2c/cache.py` carries the reasoning,
+# including why the database cache cannot serve this and was reverted.
+CACHES = {'default': cache_config(os.environ)}
 
 
 # Authentication: passkeys (WebAuthn)
@@ -542,7 +608,10 @@ WEBAUTHN_RP_NAME = os.environ.get('DJANGO_WEBAUTHN_RP_NAME', 'Cultivators Collec
 #
 # Same shape as DJANGO_STOREFRONT_HOSTS: `storefront=domain` pairs.
 #
-#   DJANGO_WEBAUTHN_RP_IDS=club=f2c-cannabis.co.za,market=f2c-market.co.za
+#   DJANGO_WEBAUTHN_RP_IDS=club=f2c-cannabis.co.za,market=f2c.co.za
+#
+# The domains here are the FRONTENDS', not the API hosts above -- a credential is
+# bound to the origin the JavaScript runs on.
 #
 # Anything not listed falls back to WEBAUTHN_RP_ID above, which is what keeps a
 # single-storefront deployment configured exactly as it was.

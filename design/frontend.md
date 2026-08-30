@@ -178,7 +178,7 @@ deployment fails on the way up rather than at whichever request first needed the
 | `SITE_URL` | Yes | Absolute origin, http or https, no path, no query, no fragment. |
 | `CDN_BASE_URL` | Yes | Absolute URL, a path is allowed. Plain http refused outside `local`. Validated but no longer read. |
 | `DJANGO_API_URL` | No | Internal address Next.js reaches Django on. Defaults to localhost:8000. |
-| `NEXT_PUBLIC_DJANGO_API_URL` | No | Public address the browser reaches Django on. Baked in at build. |
+| `DJANGO_API_PUBLIC_URL` | No | Public address the browser reaches Django on. Read at request time and rendered into the document; see `lib/api-address.ts`. |
 
 Two details in that table are decisions rather than validation:
 
@@ -303,7 +303,7 @@ Two specific gaps behind the gate:
 | # | Risk | Status |
 | --- | --- | --- |
 | 1 | The authenticated components are untested and diverge from the component conventions. | Closed — rewritten to `Domain/PascalCase.tsx` with colocated tests and pure rules in `lib/`. See section 9 |
-| 2 | `NEXT_PUBLIC_DJANGO_API_URL` is baked into the client bundle at build time, so one artefact cannot serve two environments. A promoted build carries the wrong API address. | Open |
+| 2 | `NEXT_PUBLIC_DJANGO_API_URL` was baked into the client bundle at build time, so one artefact could not serve two environments. | **Closed** — replaced by `DJANGO_API_PUBLIC_URL`, read per request and rendered into the document. Verified: one build served under two addresses without a rebuild. |
 | 3 | The age pass is unsigned. Accepted, because the rule is re-applied on read and there is nothing to protect. Signing arrives free if an `AUTH_SECRET` is ever introduced. | Accepted |
 | 4 | `.next/types/validator.ts` is generated build output that `tsconfig.json` includes. A stale copy referencing deleted routes breaks `npm run typecheck` with errors that point at no real source file. Cleared once; will recur after routes are renamed. | Open |
 | 5 | 1,305 tests take about sixty seconds, most of it jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
@@ -457,5 +457,5 @@ rules on the store's legal page — reads like a scoping bug in the frontend whe
 | 11.1 | The registration endpoint does not exist, so the store cannot take a single account. Everything in front of it is built and tested; the store is one backend endpoint away from usable, and not usable at all until then. | Open — `todo.md` Block B |
 | 11.2 | The palette and typefaces are unratified placeholders. A ratified brand may cost more than a token swap if it brings a different layout language with it. | Accepted — the structure is shared with the club, so the swap is one file |
 | 11.3 | Four modules are duplicated from the club with their tests. A rule fixed in one and not the other diverges silently between storefronts. | Accepted, with the duplicated tests as the tripwire. Closes when `packages/` is drawn |
-| 11.4 | Risk 2 in section 10 applies here identically: `NEXT_PUBLIC_DJANGO_API_URL` is baked into the client bundle, so one artefact cannot serve two environments. | Open — same remedy, a build per environment |
+| 11.4 | Risk 2 in section 10 applied here identically. | **Closed** with it — see risk 2. `SITE_URL` and `APP_ENV` are still evaluated during the build, so an image is still environment-specific; the API address no longer is |
 | 11.5 | A customer who is also a club member enrols a passkey twice and signs in twice. Surfaced in one sentence on the security screen rather than solved. | Open — `verticals.md` risk 3, which needs a central authentication origin |

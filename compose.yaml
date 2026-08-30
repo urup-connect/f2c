@@ -1,0 +1,52 @@
+# Local development services. Nothing here is deployed; QA and production use
+# Azure Database for MySQL Flexible Server and Azure Managed Redis.
+#
+#     docker compose up -d
+#
+# Then in `.env`:
+#     DJANGO_REDIS_URL=redis://localhost:6379/0
+#
+# **Redis is the one that changes behaviour when you start it.** Without it the
+# application falls back to `LocMemCache`, which works and is per-process -- so
+# the throttle counters are correct in a single `runserver` and wrong the moment
+# there is more than one process. Running this container is how the deployed
+# backend gets exercised locally rather than only in QA. See `f2c/cache.py`.
+#
+# MySQL is optional in the other direction: the suite runs on SQLite and only
+# the constraint behaviour in `design/backend.md` section 8 needs a real server.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    # No persistence. The only thing in this cache is throttle counters, which
+    # are disposable by nature -- losing them resets a rate limit window and
+    # nothing else. Matching that here keeps the local instance honest about
+    # what the deployed one is for.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: dev-root
+      MYSQL_DATABASE: f2c
+      MYSQL_USER: f2c
+      MYSQL_PASSWORD: dev-password
+    # utf8mb4 and the 8.0 default collation, pinned to match `f2c/database.py`.
+    # MySQL's default collation is case- and accent-insensitive, which is a real
+    # dev-versus-production difference -- design/backend.md section 8.3.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

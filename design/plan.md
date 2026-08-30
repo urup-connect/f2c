@@ -103,27 +103,35 @@ None of that was built. **C1** records the divergence; this is what exists.
 | --- | --- |
 | Frontend | Next.js App Router, React, TypeScript, Tailwind |
 | API | Django 5, django-ninja, async endpoints |
-| Data | SQLite in development. `uuid7` primary keys chosen anticipating PostgreSQL |
+| Data | MySQL 8.4 in QA and production, SQLite in development. `uuid7` keys need neither — C31 |
 | Identity at rest | AES field encryption plus blind indexes for ID number and email |
 | Authentication | WebAuthn passkeys, emailed six-digit code fallback, Django sessions |
 | Payments | Payfast — hosted checkout, signed server-to-server notification |
 | Email | Console backend. **No provider configured** |
-| Hosting | Not chosen |
+| Cache | `LocMemCache`. **Per worker, so the rate limits do not hold across replicas** — C31 |
+| Hosting | Azure, West Europe. Three Container Apps — market, club, API — and a managed MySQL — C31 |
 
 ### Two domains
 
-**C3.** The public marketing site and the member zone are separately addressed:
+**C3, amended by C30.** Two storefronts, two registrable domains, and the API on a subdomain of
+each:
 
 | Host | Serves | Indexed |
 | --- | --- | --- |
-| `f2c.co.za` | Public landing, intro, membership information, terms, rules, cost, sign-up CTA | Yes, in production only |
-| `f2c-cannabis.co.za` | Age gate, sign-up, sign-in, and everything behind the gate | No |
+| `f2c.co.za` | The produce market — front door, legal pages, catalogue, account | The public pages, in production only |
+| `backend.f2c.co.za` | The API, for the market | No |
+| `f2c-cannabis.co.za` | The club — landing, intro, membership information, terms, rules, cost, sign-up CTA, age gate, and everything behind the gate | The landing page only, in production only |
+| `backend.f2c-cannabis.co.za` | The API, for the club | No |
+
+**There is no separate marketing site.** C3 read `f2c.co.za` as a public brochure in front of the
+club; it is the store. The club's landing page and age gate are the front door of the cannabis host.
 
 The six other categories in the member story — Biltong, Fruit, Vegetables, Nuts, Dried, Honey —
 were recorded in `conflict.md` and planned for nothing. **That is no longer true.** They are the
-catalogue of the produce market, which is a third host and a second Next.js application over the
-same API. See C26 and [`verticals.md`](verticals.md) section 8 for what separate registrable domains
-cost in passkeys and sessions.
+catalogue of the produce market: a second Next.js application over the same API, on the apex domain.
+See C26 and [`verticals.md`](verticals.md) section 8 for what separate registrable domains cost in
+passkeys and sessions, and C30 for why the API answers on two names — each frontend calls an API
+host inside its own registrable domain, which is what keeps the session cookie `SameSite=Lax`.
 
 ### Roles
 

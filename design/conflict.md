@@ -40,10 +40,11 @@ Router frontend, passkeys with an emailed-code fallback written in-house, and Pa
 recorded here rather than in the plan, because a roadmap naming a technology nobody is using sends
 every future reader to the wrong place.
 
-Two things stay open inside this decision and are carried as work rather than as conflict: SQLite is
-the development database and no production database has been provisioned (`uuid7` primary keys were
-chosen anticipating PostgreSQL), and no hosting target has been chosen. Azure remains plausible;
-nothing in the code depends on it.
+**Both of the things this entry left open have since been closed, and neither closed the way it was
+written.** The database is MySQL 8.4, not PostgreSQL — `f2c/database.py`, `app/common/checks.py`
+and the CI job were built against it, and `uuid7` keys turn out not to have needed PostgreSQL after
+all. The hosting target is Azure, in West Europe, as three containers and a managed database. Both
+are recorded in **C31**, which supersedes this paragraph.
 
 ### C2 — One administrator role, or two
 
@@ -106,6 +107,10 @@ sign-up flow sit on the cannabis host.
 
 **Amended by C26.** The two hosts stand. What has changed is the other six categories: they are not
 six future sites, they are the catalogue of a second storefront. See [`verticals.md`](verticals.md).
+
+**Amended by C30.** The two hosts stand; their assignment does not. `f2c.co.za` is the **market**,
+not a marketing shell, and `f2c-cannabis.co.za` is the **club** — landing page, age gate and member
+zone together. The API answers on `backend.f2c.co.za` and `backend.f2c-cannabis.co.za`. See C30.
 
 ### C4 — "Leaf rating" means two different things
 
@@ -546,6 +551,28 @@ The old `todo.md` carried "Create signup/registration process — form built, no
 `membership.services.register_member` writes the member, `POST /api/members/register` is live, and
 `features/sign-up.md` risk 11 is marked closed. Corrected in the rewritten `todo.md`.
 
+### C23a — A third of the frontend was not under version control after all
+
+**Status: Cause fixed; the files still need a commit.**
+
+C23 below closed `backend.md` risk 12 on the grounds that the project is in git. It is — but
+`.gitignore` carried a bare `lib/` from GitHub's Python template, which matches a directory of that
+name **at any depth**, not just beside `setup.py`. This repository has two such directories:
+`frontend/club/lib` (94 modules) and `frontend/market/lib` (39). All 133 were silently untracked —
+`lib/api.ts`, `lib/site.ts`, the sign-in rules, the SA ID number validator, the nickname rules, the
+copy-compliance patterns, and every accompanying test.
+
+**What makes this worth its own entry is that nothing anywhere reports it.** `git status` shows a
+clean tree. `git add frontend/club/lib` succeeds and adds nothing. `git check-ignore -v` is the only
+thing that says so, and nobody runs it unless they already suspect. The files exist on the machine
+that wrote them and in no commit, so the loss is invisible until a fresh clone, at which point both
+applications fail to build.
+
+Found while checking that the P6 work could be committed. The packaging patterns are now anchored
+with a leading `/`, which is what they always meant — `build/` and `dist/` included, both being
+ordinary names in a JavaScript workspace. **The 133 files still have to be added**, and that belongs
+in a commit of its own rather than buried in a feature branch.
+
 ### C23 — `backend.md` risk 12 says the project is not under version control
 
 It is. The repository exists, `.gitignore` covers the Python artefacts, and the work is committed on
@@ -581,7 +608,7 @@ anybody without them.
 | P3 | `LocMemCache` makes every rate limit per worker | `backend.md` risk 2, `authentication.md` risk 1 |
 | P4 | No documented backup or rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every stored identity number | `backend.md` risk 1 |
 | P5 | Staff password sign-in at `POST /api/auth/login` is not restricted to staff | `authentication.md` risk 5 |
-| P6 | `NEXT_PUBLIC_DJANGO_API_URL` is baked in at build time, so one artefact cannot serve two environments | `frontend.md` risk 2 |
+| P6 | ~~`NEXT_PUBLIC_DJANGO_API_URL` is baked in at build time, so one artefact cannot serve two environments~~ **Closed** — now `DJANGO_API_PUBLIC_URL`, read per request | `frontend.md` risk 2 |
 ---
 
 ## E. The second storefront
@@ -714,3 +741,223 @@ already built and already tested.
 
 **What it costs.** The UC tier gets no branded interface and no mobile-friendly one, and anything a
 UC operator needs that the Django admin cannot express becomes a management command. Accepted.
+
+### C30 — Which storefront gets which domain, and where the API answers
+
+**Status: Decided — `f2c.co.za` is the market, `f2c-cannabis.co.za` is the club, and the API answers
+on a subdomain of each.**
+
+C3 read the two hosts as *public marketing site* and *member zone*: `f2c.co.za` would carry seven
+category pages and `f2c-cannabis.co.za` would carry the club behind them. C26 then turned the six
+excluded categories into a second storefront but left the host assignment as C3 wrote it. The
+product owner has now fixed it, and it is not what C3 assumed.
+
+| Host | Serves | Application |
+| --- | --- | --- |
+| `f2c.co.za` | The produce market — the store | `frontend/market` |
+| `f2c-cannabis.co.za` | The club — landing page, age gate, member zone | `frontend/club` |
+| `backend.f2c.co.za` | The API, for the market | Django |
+| `backend.f2c-cannabis.co.za` | The API, for the club | Django |
+
+**There is no separate marketing site.** The landing page, the age gate and the sign-up call to
+action are built in the club application and stay there; the cannabis host is the club's front door
+as well as its member zone. What C3 called the public site is the market, and it is a storefront
+that transacts rather than a brochure that links to one.
+
+**The two API hostnames are one deployment, and they exist for the session cookie.** One Django
+project answers on both. A club frontend at `f2c-cannabis.co.za` calling `backend.f2c.co.za` is
+cross-site — different registrable domains — so the session cookie would need `SameSite=None`, and
+Safari's ITP and Chrome's third-party cookie posture would drop it anyway. Pairing each frontend
+with an API host inside its own registrable domain keeps `SameSite=Lax` and the cookie posture at
+`f2c/settings.py:107` exactly as they are. This is `verticals.md` section 8's "give each storefront
+its own API hostname", made concrete.
+
+**What follows from it, and all of it is configuration:**
+
+- `DJANGO_STOREFRONT_HOSTS` maps the **API** hosts, not the frontend hosts:
+  `backend.f2c.co.za=market,backend.f2c-cannabis.co.za=club`. `storefront_for_request` reads
+  Django's host, and Django is never asked to render the frontend's.
+- `DJANGO_WEBAUTHN_RP_IDS` is `club=f2c-cannabis.co.za,market=f2c.co.za` — the registrable domain
+  each **frontend** is served from. A passkey enrolled at the club cannot be presented at the store,
+  which is `verticals.md` section 8 and is accepted.
+- `SESSION_COOKIE_DOMAIN` stays unset. One deployment serving two registrable domains cannot name a
+  single cookie domain; host-only cookies per API host are what the pairing needs anyway.
+- `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `CORS_ALLOWED_ORIGINS` and `WEBAUTHN_ORIGINS` each carry
+  both sides. The TLS certificate needs both API hosts, so a SAN certificate or two.
+
+**What it closes.** `todo.md`'s "split `SITE_URL` into a public host and a member-zone host" is
+already done and nobody noticed: Block 0.5 split the frontend into two applications, and
+`frontend/club/lib/site.ts` and `frontend/market/lib/site.ts` each read their own `SITE_URL` from
+their own deployment. Two applications, two hosts, two values. The same is true of the per-host
+`robots` and canonical rules — each application computes both from its own `SITE_URL`, so they are
+per host by construction. What is left of that block is deployment configuration, not code.
+
+**What is deliberately left open.** Whether the apex or `www` is canonical on either domain, and
+which way the redirect runs. It is a DNS and reverse-proxy decision with no consequence in the
+codebase, provided whichever is canonical is the one in `SITE_URL`.
+
+### C31 — The deployment target: three containers, managed MySQL, West Europe
+
+**Status: Decided, with one thing reopened by the code — see the cache section below.**
+
+**C1** left two things open: no production database, and no hosting target. Both are now fixed, and
+the database half was already built before it was written down — `f2c/database.py`,
+`app/common/checks.py`, `.env.example` and the CI job all target MySQL, while `plan.md` and
+`todo.md` still said PostgreSQL. That drift is what this entry closes.
+
+| | Decision |
+| --- | --- |
+| Database | **MySQL 8.4** on Azure Database for MySQL Flexible Server. Not PostgreSQL |
+| Region | **West Europe**, all resources |
+| Frontends | Two Azure Container Apps — `frontend/market`, `frontend/club` — Next.js standalone output |
+| API | One Azure Container App — Django on uvicorn — answering on both `backend.*` hostnames |
+| Scheduled work | An Azure Function App on a timer, calling the API |
+| Registry, media, logs | Azure Container Registry Basic, Blob via `django-storages[azure]`, Log Analytics |
+
+**`uuid7` did not need PostgreSQL.** C1 records the keys as "chosen anticipating PostgreSQL", which
+made the database choice look load-bearing. It is not: `uuid.uuid7` is a Python 3.14 standard
+library function and the column is a `char(32)` either way. Nothing in the schema depends on the
+engine except the constraints `app/common/checks.py` already guards — which is why the MySQL work
+could be done without revisiting the key strategy at all.
+
+**Containers rather than Azure Static Web Apps, and the reason is in the frontends.** SWA was the
+first proposal. It cannot serve these applications: both render on the server — 25 `page.tsx`,
+twelve modules reading `next/headers`, three server actions, a `proxy.ts`, and two route handlers in
+the club, with 25 `'use client'` components hydrating on top — so a static export is not on the table
+and SWA's hybrid Next.js support is still in preview, capped at 250 MB, and documents its health
+check against the `middleware.ts` convention that Next 16 renamed to `proxy.ts`. Containers also
+settle `requires-python = ">=3.14"`, which App Service's built-in Python runtime and Azure
+Functions' GA runtimes do not yet offer.
+
+**Scale to zero is available and the API must not use it.** `payfast_addresses` resolves four
+hostnames on every notification and Payfast expects a prompt 200; a cold start on top of DNS
+resolution risks a dropped payment notification, and a dropped notification is a member who paid
+and was not activated. `min-replicas 1` on the API is a correctness setting, not a performance one.
+The frontends may scale to zero in QA and should not in production, because every page is
+server-rendered and a cold start is a blank screen rather than a slow hydrate.
+
+#### The shared cache: the database cannot serve it
+
+This is the part that did not go as decided, and it is worth recording because the obvious answer
+is wrong in a way that only shows up when it is tried.
+
+Block 0 P3 needs a cache backend every process can see, because `LocMemCache` gives each worker its
+own throttle counters. The cheap answer is Django's `DatabaseCache` on the MySQL that already
+exists — no new service, no new cost. **It does not work here.** django-ninja calls
+`_check_throttles` synchronously from inside `AsyncOperation._run_checks`
+(`ninja/operation.py:537`), every endpoint in this project is async, and `DatabaseCache` reaches the
+database through `connection.cursor()`, which Django decorates `@async_unsafe`. The first throttled
+request raises `SynchronousOnlyOperation`. Trying it turns 82 tests across the auth, payments and
+accounts suites into errors, which is how it was found.
+
+There is no async throttle path in django-ninja to route around it. What distinguishes a
+network-backed cache is not that it is faster: Redis and Memcached do blocking *socket* I/O rather
+than ORM I/O, and socket I/O is not decorated `@async_unsafe`, so it is permitted from an async
+context where the database is not.
+
+So the async architecture — decided long before anyone thought about hosting — forces a cache
+server. **Decided: Azure Managed Redis in QA and production, a `redis:7-alpine` container in
+development.** Managed Redis rather than Azure Cache for Redis, whose Basic, Standard and Premium
+tiers retire on 30 September 2028; roughly $25/month at the smallest SKU. The local container is in
+`compose.yaml` and is not decoration — it is how the deployed backend gets exercised before QA,
+because `LocMemCache` is correct in one process and wrong in any other, and that difference does not
+show up as a failure anywhere.
+
+`f2c/cache.py` carries it, in the shape `f2c/database.py` established: a pure function of a mapping,
+`LocMemCache` when nothing is configured, and two refusals. A `qa` or `prod` environment with no
+`DJANGO_REDIS_URL` does not start — the failure it would otherwise produce is a rate limit that
+quietly does not hold. And `redis://` is refused where `rediss://` belongs, because the Azure access
+key travels inside that URL, with `DJANGO_CACHE_ALLOW_PLAINTEXT` as the deliberate way out for CI
+against a container on the runner's own loopback.
+
+**Verified rather than reasoned.** The claim that a network cache is permitted where the database
+one is not was tested against a real Redis over TCP: the 635 tests in `authn`, `payments` and
+`accounts` — the same suites `DatabaseCache` turned into 82 errors — all pass, and the 13 throttle
+tests return real 429s through Redis. Sessions stay in the database regardless; see below.
+
+What was *not* chosen, and why it is worth recording: **accepting per-replica rate limits.** It
+means the published limit is multiplied by the replica count, and the endpoint it matters most for
+is `otp/start`, whose limit is the only thing stopping the API being used to mailbomb a member.
+
+Whichever is chosen, **sessions stay in the database.** `SESSION_ENGINE` is deliberately unset, and
+that is what lets the WebAuthn challenges parked in `authn/webauthn.py` survive a second request
+landing on a different replica. Moving sessions into the cache would make sign-in depend on a
+single-replica Redis with no persistence, which is a much worse trade than the one it looks like.
+
+#### What has to be true in the deployment, and is not yet
+
+- **`DJANGO_PAYFAST_BEHIND_PROXY=true`.** Container Apps ingress is a reverse proxy, so `REMOTE_ADDR`
+  is Envoy and not Payfast. `gateway.py:375` defaults `behind_proxy` to `False` and
+  `verify_notification` rejects on a source-address mismatch, so without this variable **every
+  Payfast notification is rejected** and no membership ever activates. Highest-consequence single
+  line in the deployment — and the worst-shaped failure in it, because nothing upstream of the
+  notification fails: the member signs up, pays, and is returned to a thank-you page, because the
+  return URL is a browser redirect and has nothing to do with the notification. It is a
+  configuration value, so it cannot be closed in code — but it can be made impossible to ship
+  without, and now is. Three things changed. It is **one variable**, `DJANGO_BEHIND_PROXY`: Django
+  needs the same fact for `SECURE_PROXY_SSL_HEADER`, and two switches for one fact fail by having
+  one of them set, so `payfast_config` falls back to it and `DJANGO_PAYFAST_BEHIND_PROXY` survives
+  only as an override for an edge that terminates TLS without overwriting `X-Forwarded-For`.
+  `payments.W001` reports it on `manage.py check --deploy`. And `deploy/entrypoint.sh` runs that
+  check at `--fail-level WARNING` before uvicorn, so the revision fails to start and Container Apps
+  keeps the previous one serving traffic rather than promoting a deployment that takes money and
+  activates nobody. A notification rejected from a private source address also now says so in the
+  log, rather than reporting the same "source address is not Payfast" a genuine attempt produces.
+
+**A correction, because an earlier reading of this was wrong and it changed a conclusion.** These
+applications were described here as having *no* client components, on a search that only covered
+`app/`. Every client component lives in `components/`, and there are **25** — the sign-in form, the
+passkey cards, the admin screens, the profile editor. The case against Static Web Apps is unchanged,
+because it never rested on that: the server-rendered surface above is what a static export cannot
+carry. What it changed is **Block 0 P6**, which has since been closed. `NEXT_PUBLIC_DJANGO_API_URL`
+was genuinely inlined into the browser bundle — it appeared in two chunks under
+`.next/static/chunks` in a real build — so it could not be fixed by dropping the prefix and
+reading it server-side, because a client component has no `process.env` at runtime. It is now
+`DJANGO_API_PUBLIC_URL`: the root layout reads it per request and renders it into the document as
+a `<meta>` tag, and `lib/api.ts` reads it from there. **Verified by building once with a
+deliberately wrong address and serving that one build under two others** — the build-time value
+appears nowhere in `.next/static` or `.next/server`, and the two containers served two different
+addresses from the same bundle. A deployment that omits the variable answers 500 on the first
+request with the variable named, rather than defaulting to localhost as the old code did.
+
+The cost is that both root layouts are now `force-dynamic`. It was measured rather than assumed:
+every route that matters was already dynamic, because every page reads cookies. What became
+dynamic is `/_not-found` in both applications and the club’s two static sign-up confirmations.
+`SITE_URL` and `APP_ENV` are still evaluated during the build, so an image is still specific to
+an environment — but the address a browser talks to is not one of them, and it was the one that
+mattered: a wrong `SITE_URL` shows up in a canonical tag, a wrong API address breaks every
+request after sign-in.
+
+**Two things about the API entrypoint that are not obvious.** `manage.py check` needs a **reachable
+database** on this backend — working out a `UUIDField`'s column type calls
+`has_native_uuid_field`, which asks the server whether it is MariaDB, which connects — so the
+entrypoint waits for the database before it gates, or a container starting seconds ahead of its
+database would fail for a reason unrelated to its configuration. And uvicorn runs **without**
+`--proxy-headers`: it would rewrite the client address from `X-Forwarded-For` before Django saw it,
+which would make `notification_source_ip` correct with `DJANGO_BEHIND_PROXY` unset, make
+`payments.W001` warn about a deployment that worked, and move the trust decision into a component
+with no opinion on whether the edge overwrites the header. One place in this application interprets
+`X-Forwarded-For`, it is opt-in, and it is tested.
+- **`DJANGO_ENV=qa` or `prod`.** Closed in code by this pass, but worth recording as the same class
+  of trap: `database_config` reads it before anything else and an unset value means `dev`, which
+  returns SQLite regardless of how completely MySQL is configured beside it.
+- **`DJANGO_DB_SSL_CA`.** Also closed in code by this pass. Flexible Server runs
+  `require_secure_transport=ON` and mysqlclient defaults to `ssl_mode=PREFERRED`, so a connection
+  with no TLS configuration comes up encrypted, unverified and indistinguishable in any log from one
+  that checked the certificate. A deployed connection that names neither a CA bundle nor an explicit
+  opt-out is now refused rather than defaulted.
+
+#### POPIA
+
+West Europe puts members' personal data — including the AES-encrypted identity numbers and their
+blind indexes — outside South Africa. This is lawful under POPIA section 72(1)(a), the EU's GDPR
+regime being one that provides substantially similar protection, but a transborder flow has to be
+**disclosed in the privacy notice and the PAIA manual**. It is paperwork rather than architecture,
+and it belongs on the Block 0 list rather than being discovered during an information officer's
+first audit.
+
+**What is deliberately left open.** The cache server, above. Whether MySQL runs on a burstable tier
+(no zone-redundant HA, roughly $15–28/month) or General Purpose (HA available, roughly $131/month) —
+West Europe has availability zones, so the upgrade path exists and the decision can wait for real
+traffic. And whether Azure Front Door eventually fronts the three containers, which buys a WAF and
+edge TLS termination that matters more from South Africa than it would from inside the region.
