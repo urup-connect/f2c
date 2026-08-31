@@ -269,9 +269,11 @@ it is touched.
 | `design/features/roles-and-permissions.md` §3.1–3.5 | Records the placeholder decision as settled, and closes risks 4, 5 and 6 on the strength of it |
 | `design/backend.md` §3.6 | Describes the *pre*-C6 build and is therefore closer to this decision than the code is — but names `UserStatus.SHARING` and `sharing_member_never_signs_in`, which no longer exist |
 
-`SHARING_MEMBER_PLANT_ALLOCATION = 4` needs no change and is a stronger rule than it was: under the
-placeholder it was a convention with no obvious owner, and it is now a statutory ceiling attaching to
-a named adult. Enforcing it is C15.
+`SHARING_MEMBER_PLANT_ALLOCATION` is a stronger rule than it was: under the placeholder it was a
+convention with no obvious owner, and it is now a statutory ceiling attaching to a named adult.
+**C15 has enforced it, and in doing so took the number away from this module** — the constant is
+`plant.models.MEMBER_FLOWERING_PLANT_LIMIT`, imported, because a sharing member spends the same four
+every other adult gets and two constants could only drift.
 
 #### What this does not decide
 
@@ -298,9 +300,10 @@ The three questions this entry opened, answered:
 **1. Does allocating four flowering plants to a person consume that person's own statutory allowance?
 — Yes.** Settled by the product owner. This is the answer that costs something: the four is no longer
 a convention the platform may interpret, it is a ceiling attaching to a named adult, and a sharing
-member holding four flowering plants may hold nothing else. It makes C15 (enforce four per member)
+member holding four flowering plants may hold nothing else. It made C15 (enforce four per member)
 and C16 (whether a harvested plant still counts) prerequisites of the swap zone rather than
-refinements of it.
+refinements of it. **C15 is now decided and built**, and it shipped C16's recommendation with it, so
+neither prerequisite is outstanding when Block 10 starts.
 
 **2. Where are the plants physically? — Unresolved, and the weakest leg.** The Act's limit attaches
 to cultivation in a private place. The plants are on the cultivator's premises and the sharing member
@@ -1213,24 +1216,168 @@ pre-empt this decision, and it is now the decision. `todo.md` carries the read.
 
 ### C15 — Household limits and the dried-weight limit are not modelled
 
-**Status: Open.**
+**Status: Decided, and built. Four flowering plants per member, enforced on the write in
+`Plant.transfer_to`. The household limit and the dried-weight limit are accepted risks with a stated
+reason — R-C15.1 and R-C15.2 — and they go into the club rules as the member's own responsibility
+rather than into the code as a check that cannot work.**
 
-`stock-holding-limit.md` states three limits. One is enforced in design; two are not mentioned again
-anywhere:
+`stock-holding-limit.md` states three limits. Where each one now stands:
 
 | Limit | Status |
 | --- | --- |
-| Four flowering plants per adult | `SHARING_MEMBER_PLANT_ALLOCATION = 4`, enforced nowhere yet because there is no plant model |
-| Eight plants per household where two or more adults live | Not modelled. The platform has no concept of a household |
-| 600g dried per person, 1.2kg per household | Not modelled. The platform has no concept of weight held |
+| Four flowering plants per adult | **Enforced.** `MEMBER_FLOWERING_PLANT_LIMIT = 4` in `plant.models`, counted by `PlantQuerySet.flowering_held_by` and refused by `Plant.assert_may_be_held_by` inside `transfer_to`. `accounts.services.SHARING_MEMBER_PLANT_ALLOCATION` is now that same constant, imported |
+| Eight plants per household where two or more adults live | Not modelled, and will not be. **R-C15.1**, accepted. In the club rules |
+| 600g dried per person, 1.2kg per household | Not modelled, and will not be. **R-C15.2**, accepted. In the club rules |
 
-The household limit is *more* permissive than the per-adult one, so ignoring it is safe. The
-dried-weight limit is a genuine gap: a member taking repeated delivery of harvested product could
-exceed it and the platform would not know.
+#### The ruling, from the product owner
 
-**Recommendation.** Enforce four flowering plants per member. Record the other two as accepted risks
-with a stated reason — the platform cannot observe what a member holds off-platform, so any
-enforcement would be theatre. Say so in the club rules rather than pretending to enforce it.
+> Enforce four flowering plants per member. Record the other two as accepted risks with a stated
+> reason — the platform cannot observe what a member holds off-platform, so any enforcement would be
+> theatre. Say so in the club rules rather than pretending to enforce it.
+
+#### Why the four is the only one of the three that a platform can hold
+
+The difference between the enforceable limit and the other two is not difficulty. It is **what the
+platform is a witness to.** Every flowering plant a member holds through this club arrived through
+`transfer_to` and sits in a table with a tenure behind it, so a count of four is a count of something
+the platform actually observed. A household is a fact about where somebody sleeps and who else
+sleeps there; a dried weight is a fact about a jar in a cupboard months after delivery. Neither is an
+event the platform ever sees, and no amount of schema turns an unobserved fact into an enforced one.
+
+**A check that is evaded by not telling the platform is not a control.** It is a filter over the
+honest, and it is worse than nothing, because it produces a record saying the club enforced a limit
+it never enforced. If the scheme is ever tested — and C7 carries the risk that it will be — the club
+is better placed saying *we enforce what we can see and we told members plainly what we cannot* than
+producing a household field that half the register left blank.
+
+**POPIA refuses the household limit before practicality does.** Enforcing eight per household means
+collecting who a member lives with: personal information about a third party who is not a member, has
+no relationship with the club, and gave nobody consent, gathered for a purpose the platform cannot
+achieve anyway. Section 10 minimality does not permit collecting it, and there is no version of this
+control that does not start there. The limit is also *more permissive* than the per-adult one, so the
+platform enforcing four per member never lets a household exceed eight **through this club** — the
+exposure is only ever what the household holds elsewhere, which is R-C15.1 and is off-platform by
+definition.
+
+**The dried-weight limit has no event to hang on.** Weight enters the picture at harvest as a
+minimum yield, is processed into a finished product, and is delivered. What the member then holds
+declines as they use it, at a rate the platform is never told. A "weight held" column would be wrong
+within a week of every delivery and would stay wrong, and a limit computed from cumulative deliveries
+would refuse a member who long ago consumed what they bought. **A control that goes wrong in the
+restrictive direction against honest members, while catching nobody, is the worst available option.**
+
+#### The residual risks, carried by name
+
+Written as C7's are, because they are the same kind of risk and they will be read together.
+
+| | Risk | Position |
+| --- | --- | --- |
+| **R-C15.1** | Two adults in one household could each hold four through the club, and the household could exceed eight once plants held elsewhere are counted | Accepted. The platform cannot observe a household without collecting a third party's personal information for a purpose it cannot achieve — POPIA §10 refuses it. Stated in the club rules as the member's responsibility |
+| **R-C15.2** | A member taking repeated delivery of finished product could exceed 600g dried, and the platform would not know | Accepted. There is no event at which the platform learns what a member still holds, and a cumulative-delivery proxy would refuse honest members while catching nobody. Stated in the club rules |
+| **R-C15.3** | The four is per adult, not per club. A member who grows at home or belongs to a second club can hold four here and be over the statutory limit in fact | Accepted, and it is the one the club rules must say out loud. The same off-platform blindness as the other two, and the reason the rules say *four through this club counts against the same four the law gives you* |
+
+None of the three is mitigated by anything the application does. They are carried because the person
+entitled to carry them has assessed them, which is the same basis C7 stands on.
+
+#### Where the check went, and why there
+
+**`Plant.transfer_to`, and nowhere else.** It is the only place `owner` is written, and a plant's
+status never moves backwards into flowering — so acquiring a plant is the only way a member's
+flowering count can rise. One chokepoint, and every route through it: purchase, swap, allocation to a
+sharing member, and an administrator's adjustment all become the same refusal without any of them
+implementing it.
+
+**One constant, for every kind of member.** `SHARING_MEMBER_PLANT_ALLOCATION` was a second `4` with
+its own comment, and it now imports `MEMBER_FLOWERING_PLANT_LIMIT`. C7 settled that the allocation
+spends the sharing member's own statutory allowance, so two constants could only ever drift apart,
+and a drift there would be the platform quietly deciding a sharing member is a different kind of
+adult under the Act. **Nothing in the check asks what kind of member the holder is** — C33 requires
+that role to stay droppable, and an owner-type branch in a holding check is exactly what would have
+to be found and deleted on the day it is dropped.
+
+**And it cost one import.** `accounts.services` now reaches into `club/plant`, which is the platform
+spine importing from the club — the direction `backend.md`'s app boundary exists to make visible.
+Taken deliberately: the service that registers a sharing member already imports `club/membership` and
+`producers` for the same underlying reason, that a club operation lives in the spine because the
+record it writes is a `User`. The alternative was two constants holding one statutory ceiling. The
+boundary note is in `backend.md` section 3, and the real repair is moving the registration into the
+club package, which belongs to C27 and C33.
+
+**The plant excludes itself from its own count.** A transfer of a plant the member already holds is
+not a fifth plant. Without the exclusion a corrective re-transfer of a member's fourth plant would be
+refused as an overstock, which is the class of bug that only ever appears in production.
+
+**It is a count in Python, not a constraint.** SQL cannot express *at most four rows matching a
+predicate per owner*, so two concurrent transfers to a member holding three could both pass and leave
+five. The race is named in the method and not defended against: a member acquires plants one
+deliberate purchase or swap at a time, and the remedy for a member found holding five is an
+`ADJUSTMENT` tenure. This is the same trade `strains` records for exclusivity and `transfer_to`
+already records for the denormalised `owner` column — risk 16 in `backend.md`, and the service layer
+Block 2 owes closes all three together or none.
+
+#### What this ships of C16, which stays open
+
+The refusal counts `preflowering` and `in_bloom` and nothing at or past harvest, which is **C16's
+recommendation, now built**. C16 is not thereby decided — it keeps its status and its two live cases —
+but it changes character in the same way C18 and C19 did: ratifying it costs nothing, and reversing
+it is now a change to a live refusal rather than to a query nobody calls. The reason to build it this
+way rather than wait is that the alternative is a holding check that refuses the swap `harvest.md`
+explicitly permits, which would have been two briefs refusing one transaction on the day the swap
+zone opened.
+
+#### What the club rules have to say
+
+Drafted here rather than left as a brief, because the whole point of the ruling is that the honest
+statement *is* the control. Block 11's rules and guidelines page carries it; the copy is the club's
+to adjust, and the third and fourth paragraphs are the ones that must not be softened.
+
+> **Four flowering plants.** The law allows you four flowering plants at a time. The club enforces
+> this: while you hold four, you cannot buy or swap for a fifth. Plants that have been harvested no
+> longer count, so you can hold harvested product and four growing plants at the same time.
+>
+> **If you have reached the limit.** Swap one of your flowering plants for a pre-flowering one, or
+> wait until one of yours is harvested. The platform will tell you how many you may still take on.
+>
+> **Plants you hold anywhere else.** The four we enforce is four held *through this club*. If you
+> also grow at home, or belong to another club, those plants count against the same four the law
+> gives you. We cannot see them. Staying within your four is your responsibility, not ours.
+>
+> **Your household.** Where two or more adults live together, the law allows the household eight
+> flowering plants and 1.2kg of dried cannabis in total. We do not ask who you live with and we do
+> not track it, so we cannot enforce a household limit — and we would rather say so than pretend
+> otherwise.
+>
+> **Dried product.** The law allows you 600g of dried cannabis. Once your product has been delivered
+> we have no way of knowing how much of it you still hold. That limit is yours to keep.
+
+#### What this costs elsewhere, and it is accepted
+
+**A member at the limit is refused at checkout, so the browse screens have to say so first.**
+`Plant.objects.flowering_allowance_for(member)` exists for that: it answers *how many more may you
+take on*, floors at zero, and is what a cart or a swap screen reads before a member reaches a payment
+page. A refusal thrown at the moment money moves would be a correct rule delivered at the worst
+possible moment, and Block 5 → Block A carries the item.
+
+**A member can be over the ceiling without the platform having allowed it.** C9's substitution path
+returns a plant to a grower and issues another; a queryset `.update()` walks past every check
+`transfer_to` makes. The allowance read floors at zero rather than reporting a negative, and the
+refusal counts what is actually held rather than what should be — so an over-stocked member is
+blocked from acquiring more and is never told they hold minus one.
+
+#### What this does not decide
+
+- **The trade-down prompt.** `stock-holding-limit.md` asks that a member be *prompted* to swap a
+  flowering plant for a seedling rather than simply refused. The refusal message names the remedy;
+  the screen that offers it is Block 10, and `todo.md` keeps the line.
+- **What happens to a member found holding five.** An `ADJUSTMENT` tenure is the mechanism and
+  nobody has written the procedure — who notices, who decides which plant goes, and whether the
+  member is refunded. It is rare enough to leave until the swap zone exists, and it is not rare
+  enough to leave forever.
+- **C34, which this makes sharper.** A sharing member's four are spent by definition, so a sharing
+  member who wants to join the club properly arrives at sign-up already at the ceiling. That is C34's
+  problem and this entry only supplies the reason it bites.
+- **Anything about the market storefront.** It sells no plants — C26 — so the limit has no second
+  case.
 
 ### C16 — Does a harvested plant count toward the four
 
@@ -1246,6 +1393,14 @@ transaction.
 
 **Recommendation.** Harvested plants do not count toward the flowering limit; the holding check
 counts only `preflowering` and `in_bloom`. This is also the reading the Act supports.
+
+**Built ahead of the ruling, by C15.** The holding check counts `preflowering` and `in_bloom` and
+nothing at or past harvest, which is this entry's recommendation running in `Plant.transfer_to`
+today. That does not decide it — the two cases below are still live and the entry keeps its status —
+but it changes what reversing costs: the alternative reading is now a change to a refusal members
+meet, not to a query nobody calls. The reason it could not wait is that the other reading refuses the
+swap `harvest.md` explicitly permits, and the swap zone would have opened with two briefs refusing
+one transaction.
 
 **Sharpened by C8, not closed by it.** C8 ends swapping at the owner's harvest confirmation, and
 `harvest.md`'s "no swapping after harvest" is now understood as a statement about *paying members* —

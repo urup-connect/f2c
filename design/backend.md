@@ -56,7 +56,7 @@ app/market/     the produce market. No apps yet
 | App | Owns | Depends on |
 | --- | --- | --- |
 | `core/common` | Field encryption, RSA ID checks. No models, no endpoints | — |
-| `core/accounts` | The identity, the permission catalogue over it, and the admin | `common` |
+| `core/accounts` | The identity, the permission catalogue over it, and the admin | `common` — and, in `services` only, `producers`, `club/membership` and `club/plant`. See below |
 | `core/authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
 | `core/storefronts` | The two storefronts, who administers one, and which storefront a request is for | `accounts` |
 | `core/documents` | Documents, revisions, and the agreements given — per storefront | `accounts`, `storefronts` |
@@ -77,6 +77,17 @@ farmer growing carrots is the same record as a cultivator growing cannabis.
 The boundary earns its keep by what it forbids. `club/plant` importing from `club/strains` is
 ordinary; `commerce/producers` importing from `club/strains` would be the commerce spine learning
 about cannabis, and the directory is what makes that visible in a diff.
+
+**`accounts/services.py` is the one place that reaches the wrong way**, and it is worth naming rather
+than leaving to be discovered. The models in `accounts` depend on `common` alone; the *service* that
+registers a sharing member imports `producers`, `club/membership` and — since C15 —
+`club/plant`, for `MEMBER_FLOWERING_PLANT_LIMIT`. Sharing-member registration is a club operation
+living in the spine because the record it writes is a `User`, and every one of those imports is that
+fact showing. The C15 one is deliberate: the alternative is a second `4` in `accounts`, and two
+constants for one statutory ceiling would eventually disagree — which would be the platform quietly
+deciding a sharing member is a different kind of adult under the Act. The import direction is the
+lesser cost, and the real fix is to move the registration into the club package, which is C27 and
+C33's territory rather than this one's.
 
 `plant` is Block 3 and the spine of the product: everything the club sells is a row in its table. The
 model layer is built — plant, batch, serial allocation, ownership history, the leaf rating — and so is
@@ -172,7 +183,8 @@ one row that outlives every transfer.
 
 So stock is a queryset over `Plant`, not a table: stock on hand is the plants a cultivator holds
 unsold, "adjust available plants" is a status change or a row added and removed, and the four-plant
-limit is a count. A model holding quantities would be a denormalised aggregate over another table —
+limit is a count — `flowering_held_by`, which C15 turned from a read into the refusal inside
+`transfer_to`. A model holding quantities would be a denormalised aggregate over another table —
 and section 8.2 is the record of what this project requires of a denormalised column: a specific
 justification, and **a check constraint tying it to its source**. A cross-table count is the one kind
 SQL cannot constrain at all, so it is the one kind this codebase has no way to make safe.
@@ -356,9 +368,11 @@ Four mechanisms carry the weight:
   the POPIA erasure route must never be the thing the database refuses. It replaces the narrower
   `sharing_member_has_a_cultivator` currently in the schema.
 - The **four-plant allocation is the person's own statutory ceiling**, not a platform convention —
-  C7. A sharing member holding four flowering plants may hold nothing else. Enforcement is C15, and
-  it counts plants per member without asking what kind of member, because the role is meant to be
-  droppable later — C33.
+  C7. A sharing member holding four flowering plants may hold nothing else. **C15 has enforced it**,
+  and took the number out of this module while doing so: `SHARING_MEMBER_PLANT_ALLOCATION` imports
+  `plant.models.MEMBER_FLOWERING_PLANT_LIMIT`, so the sharing member's four and every other adult's
+  four are one constant that cannot drift. The count asks who holds a plant and never what kind of
+  member they are, because the role is meant to be droppable later — C33.
 
 `accounts/services.py` is the write. It authorises on the permission rather than the role, checks the
 caller is the primary of *this* producer, refuses a submission with no attestation before validating
@@ -836,7 +850,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `strains/tests/test_admin.py` | The listing form, which is the only thing enforcing C18 on the save that creates a listing; and that the cultivator pickers exclude members, administrators and erased growers |
 | `cultivators/tests/test_models.py` | That the pseudonym is the account's own display name and not a second namespace; publication defaults |
 | `plant/tests/test_leaf_rating.py` | The brief's five worked examples, the undocumented midpoint, and that the result is always a step of 0.5 |
-| `plant/tests/test_models.py` | Serial allocation and the refusal to restart a sequence; the constraints against raw updates; the ownership history and the one gap in it; the four-plant count that excludes a harvested plant |
+| `plant/tests/test_models.py` | Serial allocation and the refusal to restart a sequence; the constraints against raw updates; the ownership history and the one gap in it; the four-plant count that excludes a harvested plant, and the refusal built on it — a fifth flowering plant, the remedy named in the message, the ledger left untouched, and the allowance that never reads negative |
 | `plant/tests/test_spreadsheet.py` | The template round-tripping through its own reader; the ambiguous date that is refused rather than guessed; the price refused rather than rounded; duplicates inside one file; that there is no cultivator column and none for anything the platform generates |
 | `plant/tests/test_upload.py` | That one bad row stops the file and consumes no serial; that another cultivator's listing is invisible; the C18 column confirming and never overriding; batches shared across two uploads; every refusal the commands make |
 | `plant/tests/test_capture.py` | That a single capture is refused by the same rules as a workbook row and shares its serial counter and plant-ID namespace; that errors arrive keyed by field; and that the admin allocates a serial on add |
@@ -913,6 +927,17 @@ and never asks what kind of member the owner is, because C33 requires the sharin
 stay droppable; and the projection carries the nickname and no identity column, because oversight of
 stock needs no identity and the full read of an identity number lives on the member's own record,
 where it writes an `IdentityNumberDisclosure` row before decrypting.
+
+**The four-plant statutory limit is now enforced — C15.** `MEMBER_FLOWERING_PLANT_LIMIT` is `4`,
+`Plant.assert_may_be_held_by` refuses a fifth flowering plant, and `transfer_to` calls it — the only
+place `owner` is written, and a status never moves backwards into flowering, so acquisition is the
+only way a count can rise. It is a count in Python rather than a constraint, because SQL cannot
+express *at most four rows matching a predicate per owner*; the concurrent-transfer race that leaves
+is named in the method and accepted, alongside the same trade already recorded for `owner` itself and
+for strain exclusivity (risk 16). Two limits in the same brief are **not** built and will not be —
+the household limit and the dried-weight limit — and C15 carries them as accepted risks with the
+reason stated in the club rules: the platform cannot observe what a member holds off-platform, and
+enforcing what it cannot see would manufacture a record of a control that never ran.
 
 What is still missing around the plant is a cultivator-facing read. Capture writes stock and nothing
 serves it back: the stock-on-hand export is `manage.py export_stock` and an admin action, and the
@@ -998,3 +1023,7 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 16 | Strain exclusivity spans two tables, so no constraint can express it. `CultivatorStrainListing.clean` is the only thing enforcing it, and a queryset `.create()` walks past it. | Open — closes when Block 2 puts a service in front of the write, as `accounts.services` does for sharing members |
 | 17 | The C18 subset rule is enforced in a model and in an admin form, because a many-to-many is invisible to `Model.clean` until the row exists. `ManyToManyField.set` from a shell bypasses both. | Accepted — one shared `check_offered_types` means the rule exists once, and both callers are tested |
 | 18 | Listing and profile images write to the default storage, which is local disk. `documents` is CDN-fronted but reserved for published club documents, and `accounts` is deliberately private, so public catalogue imagery has nowhere correct to go. | Open — a third, public container. Block 1 leftover |
+| 19 | The household limit — eight flowering plants where two or more adults live — is not modelled and will not be. Two members of one household can each hold four here, and the household can exceed eight once plants held elsewhere are counted. | **Accepted — C15, R-C15.1.** Enforcing it means collecting who a member lives with: a third party's personal information, for a purpose the platform cannot achieve. POPIA §10 refuses it. Stated in the club rules as the member's own responsibility |
+| 20 | The dried-weight limit — 600g per person, 1.2kg per household — is not modelled and will not be. A member taking repeated delivery of finished product could exceed it and the platform would not know. | **Accepted — C15, R-C15.2.** There is no event at which the platform learns what a member still holds, and a cumulative-delivery proxy would refuse honest members while catching nobody. Stated in the club rules |
+| 21 | The four-plant limit is enforced *per member on this platform*. A member who also grows at home or belongs to a second club can hold four here and be over the statutory limit in fact. | **Accepted — C15, R-C15.3.** The same off-platform blindness as 19 and 20, and the one the club rules must state plainly: four held through this club counts against the same four the law allows |
+| 22 | The four-plant check is a count in Python, not a constraint. Two concurrent transfers to a member holding three can both pass and leave five. | Accepted — a member acquires plants one deliberate purchase or swap at a time, and the remedy is an `ADJUSTMENT` tenure. Closes with risk 16 when Block 2 puts a service in front of every plant write, or not at all |

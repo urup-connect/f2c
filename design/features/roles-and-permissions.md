@@ -163,16 +163,26 @@ knowing it is spoken for reveals nothing about who holds it.
 
 ### 3.5 The four plants
 
-`services.SHARING_MEMBER_PLANT_ALLOCATION` is `4` — the same limit members live under, which is why
-it is one number and not two.
+`services.SHARING_MEMBER_PLANT_ALLOCATION` is the same limit members live under, and since C15 it is
+literally the same object: `plant.models.MEMBER_FLOWERING_PLANT_LIMIT`, imported. One number, and now
+one definition — two constants holding the same `4` could drift, and a drift there would be the
+platform quietly deciding that a sharing member is a different kind of adult under the Act.
 
 **C7 settles what that number means: it consumes the sharing member's own statutory allowance.** So a
 sharing member holding four flowering plants may hold nothing else, and the limit is a ceiling
-attaching to a named adult rather than a convention the platform may interpret. It is still enforced
-nowhere, and the enforcement is C15 — a holding check counting flowering plants per member, which
-does not ask what kind of member they are. That last point is deliberate: C33 requires the sharing
-member role to be droppable, and a holding check that branches on owner type would be one of the
-branches that has to be deleted to drop it.
+attaching to a named adult rather than a convention the platform may interpret.
+
+**C15 enforces it, in `Plant.transfer_to`.** That is the only place `owner` is written, so a
+purchase, a swap, an allocation to a sharing member and an administrator's adjustment all meet one
+refusal that none of them implements. The check counts flowering plants per member and **never asks
+what kind of member they are** — deliberate, because C33 requires the sharing member role to be
+droppable, and a holding check that branched on owner type would be one of the branches that has to
+be found and deleted to drop it.
+
+The other two limits in `stock-holding-limit.md` — eight per household, 600g dried — are not enforced
+and will not be. C15 carries them as accepted risks and puts them in the club rules instead: the
+platform cannot observe what a member holds off-platform, and the household version cannot even be
+attempted without collecting a third party's personal information that POPIA §10 does not permit.
 
 ### 3.6 Who may move their plants
 
@@ -701,7 +711,7 @@ govern is not.
 | An admin for the three relationship tables | `ClubMembership`, `StorefrontStaff` and `ProducerMembership` are not registered. Until they are, the only routes are the shell and the services |
 | The nickname in the Django admin | It moved to `ClubMembership` and the accounts page lost the field. It comes back with the membership admin above |
 | Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action yet. The mechanism is tested directly instead |
-| What a sharing member holds in the swap zone | Four flowering plants against their own allowance — C7. Enforcement is C15, and it counts plants per member without asking what kind of member |
+| ~~What a sharing member holds in the swap zone~~ | **Built.** Four flowering plants against their own allowance — C7 — refused in `Plant.transfer_to` by C15, counting plants per member and never asking what kind of member. The swap zone that will meet the refusal is still Block 10 |
 | Any endpoint for registering a sharing member | `register_sharing_member` is reachable from the shell only. It authorises its own caller, so it is the right shape to put a router in front of |
 | The sharing member read-only login | Specified by C6, deliberately not built at launch. It costs the same whenever it is built, while the identity columns beside it do not |
 | The administrator's holdings view | `platform.view_member_inventory` is granted and has no endpoint and no screen — **C14**. The list half exists: the register already filters to sharing members. What is missing is the plants under a nickname, and the `PlantOwnership` trail behind each |

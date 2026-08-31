@@ -58,6 +58,7 @@ from app.core.common.validators import (
 
 from app.commerce.producers.models import ProducerRole
 from app.club.membership.models import ClubMembership, MembershipStatus
+from app.club.plant.models import MEMBER_FLOWERING_PLANT_LIMIT
 
 from .models import User, UserStatus
 
@@ -72,13 +73,21 @@ REGISTER_PERMISSION = 'platform.register_sharing_member'
 #: function decides.
 SHARING_MEMBER_STATUS = UserStatus.NON_AUTHENTICATING
 
-#: How many flowering plants a sharing member may hold. The same limit members
-#: live under, and the number a cultivator allocates when they register one.
+#: How many flowering plants a sharing member may hold, and the number a
+#: cultivator allocates when they register one.
 #:
-#: Stated here and enforced nowhere, because there is no plant to count. It is
-#: the swap service's rule when there is one, and it is written down now so the
-#: number is not re-invented from memory later.
-SHARING_MEMBER_PLANT_ALLOCATION = 4
+#: **The same number as every other member's, and the same object** --
+#: ``plant.models.MEMBER_FLOWERING_PLANT_LIMIT``, imported rather than restated.
+#: C7 settled that the four attaches to the named adult, so this is that
+#: person's own statutory allowance being spent rather than a quota the club
+#: grants; C15 enforces it in ``Plant.transfer_to`` for every holder alike. Two
+#: constants would let the sharing-member figure drift from the members' one,
+#: and a divergence there would be the platform quietly deciding that a sharing
+#: member is a different kind of adult under the Act.
+#:
+#: The name stays because this is what a *registration* returns -- an allocation
+#: is what a cultivator does with the limit. Nothing here branches on it.
+SHARING_MEMBER_PLANT_ALLOCATION = MEMBER_FLOWERING_PLANT_LIMIT
 
 
 class IdentityNumberUnavailable(Exception):

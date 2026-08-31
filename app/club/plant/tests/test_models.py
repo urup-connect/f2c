@@ -17,11 +17,12 @@ tenure in one transaction. A plant with two open tenures has two current owners
 and no way to say which certificate is real, so that half *is* enforced in SQL
 and is asserted through a raw update.
 
-**The four-plant count.** C16 decides that a harvested plant does not count
-toward the statutory limit. Nothing enforces the limit yet — it is Block 10 — but
-the queryset that will be asked is here, and getting it wrong means either
-refusing a swap ``harvest.md`` explicitly permits or letting a member hold five
-flowering plants.
+**The four-plant count, and the refusal built on it.** C16 decides that a
+harvested plant does not count toward the statutory limit, and C15 enforces the
+limit in ``transfer_to`` — the only place ownership is written. Getting the count
+wrong means either refusing a swap ``harvest.md`` explicitly permits or letting a
+member hold five flowering plants, and the second of those is a member in breach
+of the Act because the platform put them there.
 """
 from datetime import timedelta
 from decimal import Decimal
@@ -31,7 +32,10 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
 
+from app.core.accounts.services import SHARING_MEMBER_PLANT_ALLOCATION
+
 from ..models import (
+    MEMBER_FLOWERING_PLANT_LIMIT,
     Batch,
     OwnershipReason,
     Plant,
@@ -609,6 +613,166 @@ class OwnershipTests(PlantTestCase):
 
         self.assertTrue(returned.is_cultivator_held)
         self.assertTrue(returned.is_open)
+
+
+class HoldingLimitTests(PlantTestCase):
+    """C15: four flowering plants per member, enforced on the write.
+
+    Statutory rather than conventional since C7 — the ceiling attaches to the
+    named adult — so these are tests about the platform not putting a member in
+    breach of the Act. The count itself is C16's: preflowering and in bloom, and
+    nothing at or past harvest.
+
+    Nothing here asks what *kind* of member the holder is, and nothing may: C33
+    requires the sharing-member role to stay droppable, and an owner-type branch
+    in a holding check is what would have to be deleted to drop it.
+    """
+
+    def fill_the_allowance(self, member=None):
+        """Four flowering plants in one member's hands."""
+        member = member or self.member
+        for n in range(MEMBER_FLOWERING_PLANT_LIMIT):
+            plant = self.make_plant(cultivator_plant_id=f'POT-{n}')
+            plant.transfer_to(member, reason=OwnershipReason.PURCHASE)
+        return member
+
+    def test_a_member_may_take_on_a_fourth_flowering_plant(self):
+        """The limit is four held, not four minus one."""
+        for n in range(MEMBER_FLOWERING_PLANT_LIMIT - 1):
+            self.make_plant(cultivator_plant_id=f'POT-{n}').transfer_to(
+                self.member, reason=OwnershipReason.PURCHASE
+            )
+        fourth = self.make_plant(cultivator_plant_id='POT-4')
+
+        fourth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertEqual(
+            Plant.objects.flowering_held_by(self.member).count(),
+            MEMBER_FLOWERING_PLANT_LIMIT,
+        )
+
+    def test_a_fifth_flowering_plant_is_refused(self):
+        self.fill_the_allowance()
+        fifth = self.make_plant(cultivator_plant_id='POT-5')
+
+        with self.assertRaises(ValidationError) as refused:
+            fifth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertEqual(
+            refused.exception.error_list[0].code, 'holding_limit_reached'
+        )
+
+    def test_the_refusal_names_the_remedy(self):
+        """`stock-holding-limit.md`: "members can be prompted to swap a flowering
+        plant for a seedling to reduce stock-holding". Block 10 builds the
+        prompt; the refusal must not be a bare no before then."""
+        self.fill_the_allowance()
+        fifth = self.make_plant(cultivator_plant_id='POT-5')
+
+        with self.assertRaises(ValidationError) as refused:
+            fifth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertIn('swap', str(refused.exception).lower())
+
+    def test_a_refused_transfer_leaves_the_ledger_untouched(self):
+        """The refusal comes before the tenure is written, so the plant is still
+        the farm's and the trail has no aborted hop in it."""
+        self.fill_the_allowance()
+        fifth = self.make_plant(cultivator_plant_id='POT-5')
+
+        with self.assertRaises(ValidationError):
+            fifth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        fifth.refresh_from_db()
+        self.assertIsNone(fifth.owner_id)
+        self.assertEqual(fifth.ownerships.count(), 1)
+        self.assertTrue(fifth.ownerships.get().is_cultivator_held)
+
+    def test_a_harvested_plant_does_not_consume_the_allowance(self):
+        """C16, and the case `harvest.md` explicitly permits: a member at the
+        limit may still swap for a harvested plant."""
+        self.fill_the_allowance()
+        harvested = self.make_plant(cultivator_plant_id='POT-5')
+        harvested.mark_harvested(HARVESTS)
+
+        harvested.transfer_to(self.member, reason=OwnershipReason.SWAP)
+
+        self.assertEqual(Plant.objects.held_by(self.member).count(), 5)
+        self.assertEqual(
+            Plant.objects.flowering_held_by(self.member).count(),
+            MEMBER_FLOWERING_PLANT_LIMIT,
+        )
+
+    def test_swapping_a_plant_out_makes_room_for_another(self):
+        """The remedy the refusal names, end to end."""
+        self.fill_the_allowance()
+        alex = self.another_member()
+        Plant.objects.flowering_held_by(self.member).first().transfer_to(
+            alex, reason=OwnershipReason.SWAP
+        )
+        incoming = self.make_plant(cultivator_plant_id='POT-5')
+
+        incoming.transfer_to(self.member, reason=OwnershipReason.SWAP)
+
+        self.assertEqual(
+            Plant.objects.flowering_held_by(self.member).count(),
+            MEMBER_FLOWERING_PLANT_LIMIT,
+        )
+
+    def test_a_withdrawn_plant_does_not_consume_the_allowance(self):
+        """`held_by` is live plants only, and a disabled plant is one the club
+        says no longer exists. Leaving it in the count would strand a member at
+        the ceiling holding three."""
+        self.fill_the_allowance()
+        Plant.objects.flowering_held_by(self.member).first().disable()
+        replacement = self.make_plant(cultivator_plant_id='POT-5')
+
+        replacement.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertEqual(
+            Plant.objects.flowering_held_by(self.member).count(),
+            MEMBER_FLOWERING_PLANT_LIMIT,
+        )
+
+    def test_the_limit_is_per_member_and_not_per_club(self):
+        """Four each, not four between them."""
+        self.fill_the_allowance()
+        alex = self.another_member()
+        theirs = self.make_plant(cultivator_plant_id='POT-5')
+
+        theirs.transfer_to(alex, reason=OwnershipReason.PURCHASE)
+
+        self.assertEqual(Plant.objects.flowering_held_by(alex).count(), 1)
+
+    def test_the_allowance_reads_back_as_a_number_of_plants(self):
+        """What a screen shows before a member is refused."""
+        self.assertEqual(
+            Plant.objects.flowering_allowance_for(self.member),
+            MEMBER_FLOWERING_PLANT_LIMIT,
+        )
+
+        self.fill_the_allowance()
+
+        self.assertEqual(Plant.objects.flowering_allowance_for(self.member), 0)
+
+    def test_an_over_stocked_member_reads_zero_and_never_a_negative(self):
+        """A member can come to be over the ceiling without the platform having
+        allowed it — C9's substitution path returns plants — and "you may take
+        on -1 plants" helps nobody. The update below is the queryset write
+        `transfer_to` names as the way past every check it makes."""
+        self.fill_the_allowance()
+        extra = self.make_plant(cultivator_plant_id='POT-5')
+        Plant.objects.filter(pk=extra.pk).update(owner=self.member)
+
+        self.assertEqual(Plant.objects.flowering_allowance_for(self.member), 0)
+
+    def test_a_sharing_members_allocation_is_the_same_number(self):
+        """C7: the four attaches to the named adult, so a cultivator allocating
+        four to a sharing member spends that person's own allowance. One
+        constant, imported — two would let the figures drift apart."""
+        self.assertEqual(
+            SHARING_MEMBER_PLANT_ALLOCATION, MEMBER_FLOWERING_PLANT_LIMIT
+        )
 
 
 class StockQuerySetTests(PlantTestCase):

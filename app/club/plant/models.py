@@ -50,10 +50,12 @@ costs and what is owed in return.
 
 **What is deliberately not here.** No price history and no promotion: that is
 Block 4, and both are properties of a price *change over time* rather than of a
-plant. No cart, order or allocation: Block 5. No swap: Block 10, and gated on a
-legal opinion. And **no status for a plant that died** -- C9 is open, nobody has
-decided whether a crop failure means substitution, refund or credit, and
-inventing a status for it here would pre-empt that decision in the schema.
+plant. No cart, order or allocation: Block 5. No swap: Block 10 -- ungated
+since C7, though the four-plant holding check that block depends on *is* here,
+because ``transfer_to`` is the only place ownership is written. And **no status
+for a plant that died** -- C9 is open, nobody has decided whether a crop failure
+means substitution, refund or credit, and inventing a status for it here would
+pre-empt that decision in the schema.
 """
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
@@ -249,6 +251,24 @@ HARVESTED_STATUSES = (
     PlantStatus.HARVESTED, PlantStatus.PROCESSED, PlantStatus.SHIPPED
 )
 
+#: How many flowering plants one member may hold at once. C15, off the Cannabis
+#: for Private Purposes Act through `twp-tasks/stock-holding-limit.md`.
+#:
+#: Since C7 this is a statutory ceiling attaching to a named adult rather than a
+#: platform convention, which is why it is counted **per member and never per
+#: kind of member**. C33 requires the sharing-member role to stay droppable, and
+#: an owner-type branch in a holding check is precisely what would have to be
+#: deleted to drop it. `accounts.services.SHARING_MEMBER_PLANT_ALLOCATION` is
+#: this number, imported rather than restated, because a cultivator allocating
+#: four plants to a sharing member is spending that person's own allowance.
+#:
+#: The other two limits in the same brief -- eight plants per household, 600g
+#: dried per person and 1.2kg per household -- are **not** modelled and are not
+#: going to be. C15 records them as accepted risks: the platform cannot observe
+#: what a member holds off-platform, so a check here would be theatre. They are
+#: stated in the club rules instead.
+MEMBER_FLOWERING_PLANT_LIMIT = 4
+
 
 class OwnershipReason(models.TextChoices):
     """Why a plant changed hands. Evidence, on an append-only row.
@@ -381,9 +401,25 @@ class PlantQuerySet(models.QuerySet):
         swap for a harvested one, so counting those would have two briefs
         refusing the same transaction.
 
-        Nothing enforces the limit yet. It is Block 10, and it is gated on C7.
+        Enforced since C15, in :meth:`Plant.assert_may_be_held_by` and through
+        it in :meth:`Plant.transfer_to`. This is the read the refusal counts and
+        the read a screen shows a member who has to swap one out to make room.
         """
         return self.held_by(member).filter(status__in=FLOWERING_STATUSES)
+
+    def flowering_allowance_for(self, member):
+        """How many more flowering plants this member may take on. C15.
+
+        Never negative. A member can legitimately be over the ceiling without
+        the platform having allowed it -- a plant that reverts under C9's
+        substitution path, or an allowance spent before a record was corrected
+        -- and a screen reading "you may take on -1 plants" helps nobody. Zero
+        is the answer that matters, and it is the same answer either way.
+        """
+        return max(
+            MEMBER_FLOWERING_PLANT_LIMIT - self.flowering_held_by(member).count(),
+            0,
+        )
 
     def swappable(self):
         """Plants that may enter the swap zone.
@@ -876,6 +912,43 @@ class Plant(models.Model):
                 code='below_swap_value',
             )
 
+    def assert_may_be_held_by(self, member):
+        """Raise unless this member has room for this plant. C15.
+
+        The Cannabis for Private Purposes Act allows an adult four *flowering*
+        plants, and C7 settled that the four attaches to the named adult rather
+        than to the club -- so a member holding four may take on nothing else
+        that flowers, and a sharing member's allocation spends the same
+        allowance. C16 decides what counts: preflowering and in bloom, never a
+        harvested plant.
+
+        **The plant excludes itself.** A transfer of a plant the member already
+        holds is not a fifth plant, and the count has to say so or a correcting
+        re-transfer of the fourth plant would be refused as an overstock.
+
+        Raises with a code, like :meth:`assert_swappable`, and the message
+        carries the remedy ``stock-holding-limit.md`` asks for: swap a flowering
+        plant out for a pre-flowering one. Block 10 turns that into a prompt;
+        the sentence is here so the refusal is never a bare "no" even before the
+        screen exists.
+        """
+        if not self.is_flowering:
+            return
+        held = (
+            type(self)
+            .objects.flowering_held_by(member)
+            .exclude(pk=self.pk)
+            .count()
+        )
+        if held >= MEMBER_FLOWERING_PLANT_LIMIT:
+            raise ValidationError(
+                f'That member already holds {MEMBER_FLOWERING_PLANT_LIMIT} '
+                'flowering plants, which is the legal limit for one adult. '
+                'They can swap a flowering plant for a pre-flowering one to '
+                'make room.',
+                code='holding_limit_reached',
+            )
+
     # ------------------------------------------------------------------
     # Writes
     # ------------------------------------------------------------------
@@ -894,6 +967,17 @@ class Plant(models.Model):
         The ``filter(...).update(...)`` below needed no change for that, which is
         the argument for having written it against "the open tenure" rather than
         against "the previous member".
+
+        **The four-plant ceiling is enforced here** -- C15 -- because this is the
+        only place ``owner`` is written, and a plant's status never moves
+        *backwards* into flowering, so acquiring one is the only way a member's
+        count can rise. The check is a count in Python and not a constraint: SQL
+        cannot express "at most four rows matching a predicate per owner", and
+        two concurrent transfers to a member holding three could therefore both
+        pass and leave five. That race is worth naming and not worth a table
+        lock -- a member acquires plants one deliberate purchase or swap at a
+        time, and the correction is an ``ADJUSTMENT`` tenure rather than a
+        prosecution.
 
         **The gap this leaves, named.** ``owner`` is a denormalised copy of the
         open tenure's owner, and no check constraint can compare columns in two
@@ -919,6 +1003,7 @@ class Plant(models.Model):
             raise ValidationError(
                 'That member already holds this plant.', code='already_owner'
             )
+        self.assert_may_be_held_by(member)
 
         at = at or timezone.now()
 
