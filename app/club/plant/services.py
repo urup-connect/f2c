@@ -222,6 +222,11 @@ def write_plants(cultivator, resolved):
         # project's derived columns, has no check constraint to catch the
         # omission (see the field). Five hundred inserts in one transaction is a
         # cost worth paying for a column nothing else guards.
+        #
+        # Since C13 `save` also opens the farm's cultivation tenure, so a
+        # `bulk_create` here would load five hundred plants with no owner of
+        # record. Two reasons now, and the second one is an invariant rather
+        # than a stale column.
         created.append(Plant.objects.create(
             serial=serial,
             cultivator_plant_id=row['cultivator_plant_id'],

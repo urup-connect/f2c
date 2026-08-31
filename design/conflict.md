@@ -986,34 +986,125 @@ than with the member-facing catalogue. Recorded in `todo.md` against cultivator 
 
 ### C13 — Object-level rules do not exist, and half the brief needs them
 
-**Status: The design question is answered by C28 — what remains is implementation, not a
-decision.** Kept in this section because the object-level rules themselves are still unwritten
-and `todo.md` still carries them, but **nobody has to decide anything here.** The paragraph
-below is the record.
+**Status: The design question is closed. The product owner has supplied the cultivator
+organisation's structure, and it settles three things the register had been holding open or holding
+wrong. What is left is per-record scoping in two services — work, not a decision — and `todo.md`
+carries it.**
 
-`RoleBackend` refuses object-level questions outright — `has_perm(perm, obj)` returns `False` rather
-than answering from the role. That is correct, and it means these requirements have nothing to
-enforce them:
+#### The structure, as supplied
 
-| Requirement | Source | What it needs |
+> **Cultivator** — the farm business. This is the front identity seen by members.
+> **Cultivator member** (primary) — the owner of the farm. Appoints staff and sharing members.
+> Controls farm identity/profile, offering.
+> **Cultivator staff** — appointed by the cultivator member to action admin functions like stock
+> uploads and transfers to sharing members, as permitted by the primary.
+> **A member views their own inventory** — each plant must always have a verifiable owner. There
+> must be an audit trail of all ownership as the plant is bought and swapped, up until final
+> ownership.
+
+Most of it is already built, and built for the reasons the structure gives — which is the useful
+part of recording it: `producers.Producer` is the farm as a record with its own trading name,
+`ProducerMembership` is a row per person per farm with `primary`, `full` and `limited` rights, one
+primary per farm is a unique index, and `permissions_for` grants appointing staff and registering
+sharing members off `is_primary` alone. **C28** did that work. The whole of it is now written up in
+one place — `features/cultivator-organisation.md`, new with this entry.
+
+Three things did not match, and each is ruled on below.
+
+#### Ruling 1 — the farm's identity is the owner's, and the offering is not
+
+`platform.manage_own_cultivator_profile` sat in `PRODUCER_FULL_PERMISSIONS`, so a full-rights
+appointment could rename the farm, replace its image or take it off the storefront. The structure
+puts *farm identity/profile* with the cultivator member, so **the codename moves to
+`PRODUCER_PRIMARY_PERMISSIONS`**.
+
+**The offering deliberately does not move with it.** The same sentence gives the primary control of
+the "offering", and pricing and strain listings could have gone the same way. They stay with full
+rights, because that is precisely the commercial work "full or limited rights" exists to delegate —
+`member-roles` splits appointed staff into two tiers for a reason, and a farm whose primary is away
+still has to be able to reprice a crop before a promotion ends. The split that results is worth
+stating in one line: **identity is the owner's, offering is delegable, stock is every
+appointment's.**
+
+#### Ruling 2 — "as permitted by the primary" is the tier, not a second permission system
+
+The structure says staff transfer to sharing members *as permitted by* the primary. That could have
+been read as a per-appointment grant — a set of tick-boxes the primary manages per staff member.
+**It is not.** The permission being granted is `ProducerMembership.role`: appointing somebody `full`
+is what permits allocation, `limited` is what withholds it, and
+`platform.allocate_sharing_member_stock` stays in the full-rights set where it already sits.
+
+The reason is not effort. A grant table on the appointment would be a second authorisation system
+standing beside `accounts/roles.py`, which every screen and every service would then have to ask
+twice — and privilege granted in two places that can disagree is risk 1 in
+`roles-and-permissions.md`, closed by removing one of them. Nothing in `twp-tasks/` yet
+distinguishes a staff member who may allocate from one who may price. The day something does, it is
+one column on `ProducerMembership` and one line in `permissions_for`.
+
+#### Ruling 3 — the ownership trail starts at the farm, not at the first sale
+
+This is the half of the structure the build actually contradicted, and it is now fixed rather than
+merely recorded.
+
+`PlantOwnership` opened its first row when a plant was **sold**. Its own docstring defended that:
+the cultivator's holding was "not a tenure", so that "who has this belonged to" would read as a list
+of members rather than one beginning with the grower. Against *each plant must always have a
+verifiable owner*, that argument does not survive. A trail beginning at the sale cannot say who held
+the plant the day before it, and "the farm did, because `Plant.listing.cultivator` says so" is an
+inference from another table rather than a record — which is exactly the distinction this ledger
+exists to make, since it is what a certificate of ownership is evidence from.
+
+So the farm holds a tenure like anybody else. `PlantOwnership.owner` becomes nullable, a nullable
+`producer` arrives beside it with `tenure_has_one_holder` insisting on exactly one of the two, a
+`cultivation` reason is added, and `Plant.save` opens the row on insert. The first transfer closes
+it — `transfer_to` was written against "the open tenure" rather than against "the previous member"
+and needed no change at all. A plant captured, sold and swapped once now reads *Kloof → Sam →
+Alex*: three rows, no gap at the front.
+
+Four details are decisions rather than mechanics, and all four are cheap now and expensive later:
+
+- **The tenure is opened in `Plant.save`, not in the upload service.** The invariant is *every*
+  plant; the service is only the bulk path, and the admin's add form, a management command and a
+  test fixture all create rows too. An invariant three of four creation paths keep is not one.
+- **Two nullable holder columns, not a service account per farm.** One foreign key would have been
+  simpler until the club had accounts nobody signs into holding stock, which every membership rule
+  and every permission check would then have to exclude.
+- **`cultivation` is producer-held and `purchase`, `swap` and `allocation` are member-held, in
+  SQL.** `adjustment` is left free in both directions on purpose: **C9**'s substitution path returns
+  a member's plant to the farm, and that is a correction rather than a second cultivation.
+- **The migration refuses to guess.** Where an existing plant's capture time is not strictly before
+  its first tenure, no cultivation row can be written without inventing the one date the record
+  exists to attest — so those plants keep a trail that starts at the transfer, and the count is
+  reported. Counted, never named: `migrations.md` section 1.
+
+**What this does not close.** `Plant.owner` is still a denormalised copy of the open tenure's
+holder, and no check constraint can compare columns across two tables. `transfer_to` is the only
+thing keeping them in step; a queryset `.update(owner=...)` walks past it, and a test asserts
+exactly that so the gap stays recorded rather than being rediscovered. The ledger, not the column,
+is what a certificate is drawn from.
+
+#### What has not changed, and should not
+
+**`RoleBackend` still refuses object-level questions outright** — `has_perm(perm, obj)` returns
+`False` rather than answering from a relationship that says nothing about one record. That was this
+entry's original complaint and it is now its recorded decision: the catalogue answers *may they at
+all*, and the service that owns the record answers *may they here*. `plant.stock._authorise` is the
+pattern, and `register_sharing_member` is the other one.
+
+#### The original table, brought up to date
+
+| Requirement | Source | State |
 | --- | --- | --- |
-| Only the **primary** cultivator appoints staff and registers sharing members | `member-roles.md` | A cultivator organisation with a primary flag |
-| A cultivator manages **their own** listings, stock and pricing | `member-roles.md` | Ownership on every one of those models. **The stock half is written** — `plant.stock._authorise` asks `platform.manage_plant_stock` and then asks `ProducerMembership` whether the caller is appointed to the farm named in the request. Listings and pricing follow the same shape |
-| A cultivator manages **the sharing members they registered** | `member-roles.md` | `registered_by` exists; nothing checks it |
-| A member views **their own** inventory | `member-roles.md` | Ownership on the plant |
-| Club administrator versus UC administrator reach | C2 | ~~Tier comparison at every administrative endpoint~~ — **struck by C29.** The UC tier is is_staff in the Django admin, so no endpoint compares tiers |
+| Only the **primary** cultivator appoints staff and registers sharing members | `member-roles.md` | **Built.** `permissions_for`, off `ProducerMembership.is_primary` |
+| Only the **primary** controls the farm's identity and profile | The structure above | **Built.** Ruling 1: the codename moved to the primary's set |
+| A cultivator manages **their own** listings, stock and pricing | `member-roles.md` | **Stock is built** — `plant.stock._authorise` asks `platform.manage_plant_stock`, then asks `ProducerMembership` whether the caller is appointed to the farm named in the request. **Listings and pricing are open**, same shape, Block 4 |
+| A cultivator manages **the sharing members they registered** | `member-roles.md` | Open. `registered_by` points at the producer rather than at the person who keyed it in, and nothing checks it yet |
+| A member views **their own** inventory | `member-roles.md` | Open, and now answerable: `owner=request.user` for the holding, `tenure_by_owner` for the history |
+| Every plant has a verifiable owner, with a trail to final ownership | The structure above | **Built.** Ruling 3 |
+| Club administrator versus UC administrator reach | C2 | ~~Tier comparison at every administrative endpoint~~ — **struck by C29.** The UC tier is `is_staff` in the Django admin, so no endpoint compares tiers |
 
-**Largely resolved by C28.** The role column was what left these with nothing to enforce them: "their
-own" pointed at nothing, so `RoleBackend` refused every object-level question rather than answer one
-wrongly. `cultivators.ProducerMembership` is now a row per person per producer, and the first rule
-above — only the primary appoints staff and creates sharing-member placeholders — is enforced in
-`permissions_for` off `ProducerMembership.is_primary`. The rest are joins against the same rows, to
-be written in the services that own each record rather than in the catalogue. What stays open here
-is that work, not the design question.
-
-This is risk 9 in `features/roles-and-permissions.md`, marked "must be resolved with the cultivator
-organisation, not after". This register agrees, which is why `todo.md` puts the cultivator
-organisation in Block 2.
+This was risk 9 in `features/roles-and-permissions.md`, marked "must be resolved with the cultivator
+organisation, not after". That was right, and it is what happened.
 
 ### C14 — Whose sharing members an administrator may touch
 

@@ -42,6 +42,11 @@ Four things are worth reading before the tables:
   those are sequencing rather than nature: **C6** gives them a read-only login, built later. Section
   3 is about that alone.
 
+**The organisation the producer relationship points at is its own document.** The farm as a record,
+the primary and appointed staff, what "as permitted by the primary" grants, and the ownership trail
+behind every plant: `features/cultivator-organisation.md`. This document is the catalogue; that one
+is the structure underneath it.
+
 ## 2. The three relationships that grant
 
 | Relationship | Who it is | How it is granted |
@@ -334,7 +339,6 @@ stock:
 
 | Action | What it permits |
 | --- | --- |
-| `platform.manage_own_cultivator_profile` | Manage the producer's own public profile |
 | `platform.manage_own_pricing` | Set pricing, including promotional pricing |
 | `platform.manage_own_strain_listings` | CRUD the producer's own strain listings |
 | `platform.respond_to_reviews` | View and respond to reviews and ratings |
@@ -348,9 +352,26 @@ stock:
 | `platform.appoint_cultivator_staff` | Appoint other people to this producer, with full or limited rights |
 | `platform.register_sharing_member` | Register a sharing member |
 | `platform.manage_sharing_members` | Read, update and withdraw this producer's sharing members |
+| `platform.manage_own_cultivator_profile` | Manage the farm's public identity: trading name, description, image, published state |
+
+**`manage_own_cultivator_profile` was in the full-rights set and is now the primary's — C13.** The
+cultivator organisation names three things the owner of the farm controls: who is appointed, who the
+sharing members are, and the farm's own identity. The first two were already here; the third was
+not, so a full-rights appointment could rename the farm or take it off the storefront. The
+*offering* deliberately did not move with it — pricing and strain listings are exactly the delegated
+commercial work that full rights exists to delegate, and a farm whose primary is away still has to
+be able to reprice a crop.
 
 The primary holds all three sets. Being the primary is *more than* full rights, not an alternative
 to them.
+
+**The tier is what "as permitted by the primary" means — C13.** The organisation's rule is that
+appointed staff act *as permitted by* the owner: uploading stock, and transferring to sharing members
+where allowed. The permission being granted is `ProducerMembership.role` — appointing somebody `full`
+is what permits allocation, and `limited` is what withholds it. There is no per-appointment grant
+beside the tier, and adding one would be a second permission system next to this catalogue that
+every screen would then have to ask twice. Reversible: a column on the appointment, the day a
+requirement distinguishes a staff member who may allocate from one who may price.
 
 ### 6.4 Membership
 
@@ -635,7 +656,7 @@ govern is not.
 | --- | --- |
 | Plants, strains, batches, listings, pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue names actions with nothing to perform them against |
 | ~~The cultivator organisation~~ | **Partly built.** `ProducerMembership` exists with primary, full and limited rights, and `platform.appoint_cultivator_staff` is exercisable. `CultivatorProfile` is not yet generalised to `Producer` — that is the next section of Block 0.5 |
-| Object-level rules | The person-level half is enforced. "A cultivator's own listings", "a member's own inventory" still need writing in the services that own each record — but they now have `ProducerMembership` rows to join against, which is what they never had |
+| Object-level rules | The person-level half is enforced, and the plant's ownership half is built: every plant carries a verifiable owner and an append-only trail from capture — **C13**. "A cultivator's own listings and pricing" and "a member's own inventory" still need writing in the services that own each record, both the shape of `plant.stock._authorise` |
 | An admin for the three relationship tables | `ClubMembership`, `StorefrontStaff` and `ProducerMembership` are not registered. Until they are, the only routes are the shell and the services |
 | The nickname in the Django admin | It moved to `ClubMembership` and the accounts page lost the field. It comes back with the membership admin above |
 | Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action yet. The mechanism is tested directly instead |

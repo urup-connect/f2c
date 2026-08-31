@@ -498,7 +498,7 @@ here as **risk 3** so that it stays a decision rather than becoming a discovery.
 | --- | --- |
 | **C3** | Amended. The two hosts stand; the six excluded categories become a catalogue on one market rather than six planned-for-nothing sites |
 | **C10** | Escalated. Producer settlement was a Block 12 concern and a launch blocker for cultivators. The market pays a farmer on every order from the first day it trades, so it is now a near-term blocker for the earlier of the two storefronts |
-| **C13** | Largely dissolved. Object-level rules become membership lookups once `ProducerMembership` exists |
+| **C13** | Largely dissolved, and now closed as a design question. Object-level rules became membership lookups once `ProducerMembership` existed; the cultivator organisation's structure, the primary's exclusive hold on the farm's identity, and the ownership trail behind every plant are settled in `features/cultivator-organisation.md`. Two joins remain unwritten — a cultivator's own listings and pricing, a member's own inventory |
 | **C2** | Narrowed. The two administrator tiers stand, but as platform roles on `User`; the club and producer roles leave the column |
 | **C26** | New — the platform serves two storefronts, not one club |
 | **C27** | New — `User` conflates identity with club membership |

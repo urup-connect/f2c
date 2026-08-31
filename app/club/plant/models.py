@@ -32,6 +32,15 @@ there are two identifiers doing two jobs, which is the same split
 is evidence from. The duplication is deliberate and its risk is named in
 ``transfer_to``.
 
+**The history starts at capture, not at the first sale -- C13.** *Each plant must
+always have a verifiable owner*, and the farm is an owner: a cultivation tenure
+held by the ``Producer`` is opened by ``save`` when the row is created, and the
+first transfer closes it. So the trail runs farm → buyer → whoever it was swapped
+to, with no gap at the front and nothing to reconstruct from a listing. ``owner``
+stays null while the farm holds it -- the column answers *which member*, and
+``available()`` stays a one-column filter -- so ``holder`` is what a screen
+asking "who has this" should read.
+
 **The leaf rating is stored, not computed on read.** It is a pure function of
 the grow price, so a property would be the obvious choice -- but Block 10 has to
 *match* plants of equal swap value, and a Python property cannot appear in a
@@ -244,16 +253,34 @@ HARVESTED_STATUSES = (
 class OwnershipReason(models.TextChoices):
     """Why a plant changed hands. Evidence, on an append-only row.
 
+    ``CULTIVATION`` is the farm's own tenure, opened when the plant is captured
+    and closed by the first transfer. It is the only reason held by a *producer*
+    rather than by a person, and it is what makes "every plant has a verifiable
+    owner" true of the ledger rather than only of the sale -- C13.
     ``ALLOCATION`` is a cultivator putting plants into a sharing member's hands
     so the swap zone is not empty -- ``platform.allocate_sharing_member_stock``.
     ``ADJUSTMENT`` is staff correcting a record, and is the one that should be
-    rare enough to notice.
+    rare enough to notice. It is also the only reason a plant may return to the
+    farm under: a member-held plant that reverts is an adjustment, not a fresh
+    cultivation, because the plant was not captured twice.
     """
 
+    CULTIVATION = 'cultivation', 'Held by the cultivator'
     PURCHASE = 'purchase', 'Purchased'
     SWAP = 'swap', 'Swapped'
     ALLOCATION = 'allocation', 'Allocated to a sharing member'
     ADJUSTMENT = 'adjustment', 'Adjusted by staff'
+
+
+#: The reasons a *member* holds a plant under. Every reason but the farm's own
+#: tenure and the correction that can go either way -- see
+#: ``PlantOwnership.tenure_reason_matches_holder``, which is the constraint this
+#: exists for.
+MEMBER_OWNERSHIP_REASONS = (
+    OwnershipReason.PURCHASE,
+    OwnershipReason.SWAP,
+    OwnershipReason.ALLOCATION,
+)
 
 
 class Batch(models.Model):
@@ -525,6 +552,12 @@ class Plant(models.Model):
     # `available()` a one-column filter rather than a join. Written only by
     # `transfer_to`.
     #
+    # **Null is not "no owner" any more -- C13.** The farm holds an open
+    # cultivation tenure from the moment the plant is captured, so the owner of
+    # record is always answerable; this column answers the narrower question
+    # *which member*, which is the one every browse and inventory query asks.
+    # `holder` is the property that answers the wider one.
+    #
     # PROTECT, like every other relation to a member outside `payments`: the
     # routine answer to a departing member is erasure, which keeps the row, and
     # a hard delete must not take somebody's plants with it.
@@ -658,6 +691,16 @@ class Plant(models.Model):
         set by a caller, and a partial save that moves the source has to carry
         the derived value with it. Block 4 will reprice unsold plants, so the
         ``update_fields`` branch is not hypothetical.
+
+        **It also opens the farm's cultivation tenure on insert -- C13.** Here
+        rather than in ``services.write_plants`` because the invariant is that
+        *every* plant has a verifiable owner, and the service is only the bulk
+        path: the admin's add form, a management command and a test fixture
+        create rows too, and an invariant three of four creation paths keep is
+        not an invariant. The same argument the leaf rating makes above.
+
+        ``bulk_create`` walks past this as it walks past the leaf rating.
+        ``write_plants`` refuses to use it and says why.
         """
         self.leaf_rating = leaf_rating_for(self.grow_price)
 
@@ -666,7 +709,29 @@ class Plant(models.Model):
             if 'grow_price' in update_fields:
                 update_fields.add('leaf_rating')
 
-        return super().save(*args, update_fields=update_fields, **kwargs)
+        # Read before the write, because `super().save()` clears it.
+        #
+        # `owner` is `editable=False` and written only by `transfer_to`, so on
+        # insert the farm is always the holder. The `owner_id` half of the test
+        # is here anyway: a fixture setting the column directly must not also get
+        # a farm tenure, or the open-tenure unique index refuses the row with an
+        # IntegrityError nobody could read.
+        opening_a_tenure = self._state.adding and self.owner_id is None
+
+        if not opening_a_tenure:
+            # Every update -- a reprice, a status change, `transfer_to` writing
+            # the owner column -- takes the plain path. No savepoint for a write
+            # that touches one row.
+            return super().save(*args, update_fields=update_fields, **kwargs)
+
+        with transaction.atomic():
+            super().save(*args, update_fields=update_fields, **kwargs)
+            PlantOwnership.objects.create(
+                plant=self,
+                producer_id=self.listing.cultivator_id,
+                acquired_at=timezone.now(),
+                reason=OwnershipReason.CULTIVATION,
+            )
 
     # ------------------------------------------------------------------
     # Derived, per `todo.md` Block 3
@@ -730,6 +795,29 @@ class Plant(models.Model):
         if self.status in HARVESTED_STATUSES:
             return None
         return (self.estimated_harvest_date - (today or timezone.localdate())).days
+
+    @property
+    def holder(self):
+        """Who owns it now: a ``User`` while a member holds it, else the farm.
+
+        The answer to *every plant has a verifiable owner* (C13) at row level,
+        and never null. Read this on a screen or a certificate; read ``owner``
+        when the question is specifically *which member*.
+
+        Derived from the columns rather than from the open tenure, deliberately:
+        the tenure is the record, but a read that has already loaded the plant
+        should not need a second query to name its owner. The two agree because
+        ``transfer_to`` writes both in one transaction.
+        """
+        return self.owner if self.owner_id is not None else self.listing.cultivator
+
+    @property
+    def holder_name(self):
+        """The holder's public name. A nickname or a trading name, never a legal
+        name and never an email address -- C19."""
+        if self.owner_id is not None:
+            return self.owner.display_name
+        return self.listing.cultivator.pseudonym
 
     @property
     def is_available(self):
@@ -797,9 +885,15 @@ class Plant(models.Model):
         """Move the plant to a member, and record the tenure it ends.
 
         The only way ``owner`` is written. Closes the open
-        :class:`PlantOwnership` row if there is one, opens a new one, and updates
-        the column -- all three in one transaction, because a certificate of
-        ownership is evidence and evidence with a gap in it is not evidence.
+        :class:`PlantOwnership` row, opens a new one, and updates the column --
+        all three in one transaction, because a certificate of ownership is
+        evidence and evidence with a gap in it is not evidence.
+
+        Since C13 there is always an open row to close: the first transfer ends
+        the farm's cultivation tenure, and the trail runs unbroken from capture.
+        The ``filter(...).update(...)`` below needed no change for that, which is
+        the argument for having written it against "the open tenure" rather than
+        against "the previous member".
 
         **The gap this leaves, named.** ``owner`` is a denormalised copy of the
         open tenure's owner, and no check constraint can compare columns in two
@@ -877,7 +971,7 @@ class Plant(models.Model):
 
 
 class PlantOwnership(models.Model):
-    """One tenure: a member held this plant from here to there.
+    """One tenure: somebody held this plant from here to there.
 
     ``todo.md`` Block 3: "Ownership, and an ownership history that survives every
     transfer." Append-only. A row is written when a plant changes hands and
@@ -886,10 +980,23 @@ class PlantOwnership(models.Model):
     is not evidence of anything. That is the argument
     ``documents.DocumentConsent`` makes about a member ticking a box.
 
-    The cultivator's own holding is *not* a tenure here. A plant with no owner is
-    stock, and the history starts at the first transfer -- which keeps "who has
-    this belonged to" a list of members rather than a list that begins with the
-    person who grew it.
+    **The cultivator's own holding is a tenure here, and it used to not be --
+    C13.** This class previously said the history starts at the first transfer,
+    on the argument that "who has this belonged to" should read as a list of
+    members rather than one beginning with the grower. The rule it now answers
+    to is stricter: *each plant must always have a verifiable owner, and there
+    must be an audit trail of all ownership until final ownership*. A trail that
+    starts at the sale cannot say who held the plant the day before it, and "the
+    farm did, by implication, because the listing says so" is an inference from
+    another table rather than a record. So the farm gets a row like everybody
+    else, ``Plant.save`` opens it at capture, and the first transfer closes it.
+
+    What that costs: one row per plant that would not otherwise exist, and a
+    holder that is sometimes an organisation and sometimes a person. The second
+    is why there are two nullable holder columns and a constraint over them,
+    rather than a single foreign key to a user with a farm-owned service account
+    standing in for the farm -- an account nobody signs into, holding stock, is a
+    thing the club's own permission rules would then have to exclude everywhere.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
@@ -897,10 +1004,32 @@ class PlantOwnership(models.Model):
     plant = models.ForeignKey(
         Plant, on_delete=models.PROTECT, related_name='ownerships'
     )
+    # **Exactly one of `owner` and `producer` is set** --
+    # `tenure_has_one_holder` below, and `holder` is the property to read rather
+    # than either column. Nullable since C13 for the farm's own tenure; every
+    # member tenure still carries a person here, and `tenure_by_owner` is
+    # unchanged, so "my inventory" and "everything this member has ever held"
+    # read exactly as they did.
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name='plant_ownerships',
+    )
+    # The farm, while the farm holds it. A string reference for the same reason
+    # `membership.ClubMembership.registered_by` uses one: the club vertical must
+    # not import the commerce side at module load.
+    #
+    # PROTECT, like every other holder relation: a producer with tenures in the
+    # ledger cannot be deleted out from under a certificate. Deactivating a farm
+    # is `Producer.is_published`, and the plants it grew keep pointing at it.
+    producer = models.ForeignKey(
+        'producers.Producer',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='plant_tenures',
     )
 
     acquired_at = models.DateTimeField()
@@ -960,15 +1089,83 @@ class PlantOwnership(models.Model):
                     'A tenure cannot end before it began.'
                 ),
             ),
+            # **A tenure has exactly one holder.** Two nullable foreign keys are
+            # two ways to get this wrong -- a row with neither is a tenure
+            # belonging to nobody, which is the gap C13 closed, and a row with
+            # both is two owners of one plant at one time, which is worse than
+            # none. Both null tests are explicit for the reason
+            # `current_for_plant_matches_released_at` gives: a CHECK passes when
+            # its condition is unknown.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner__isnull=False, producer__isnull=True)
+                    | models.Q(owner__isnull=True, producer__isnull=False)
+                ),
+                name='tenure_has_one_holder',
+                violation_error_message=(
+                    'A tenure is held by a member or by a producer, not by '
+                    'both and not by neither.'
+                ),
+            ),
+            # The reason and the holder have to agree. A purchase held by a farm
+            # or a cultivation tenure held by a member is a mis-keyed row that
+            # would read as evidence, and this ledger is evidence.
+            #
+            # `ADJUSTMENT` is deliberately unconstrained: a staff correction
+            # runs in both directions, and a member-held plant reverting to the
+            # farm -- C9's substitution path, unbuilt -- is a producer tenure
+            # under that reason.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        reason=OwnershipReason.CULTIVATION,
+                        producer__isnull=False,
+                    )
+                    | models.Q(
+                        reason__in=MEMBER_OWNERSHIP_REASONS,
+                        owner__isnull=False,
+                    )
+                    | models.Q(reason=OwnershipReason.ADJUSTMENT)
+                ),
+                name='tenure_reason_matches_holder',
+                violation_error_message=(
+                    'A cultivation tenure is held by a producer and a '
+                    'purchase, swap or allocation by a member.'
+                ),
+            ),
         ]
         indexes = [
             models.Index(fields=('plant', '-acquired_at'), name='tenure_by_plant'),
             models.Index(fields=('owner', '-acquired_at'), name='tenure_by_owner'),
+            # Every plant a farm has ever held, which is the farm's own audit
+            # read -- and the only way to ask it, because the cultivation tenure
+            # is the one row in this table that no member appears on.
+            models.Index(
+                fields=('producer', '-acquired_at'), name='tenure_by_producer'
+            ),
         ]
 
     def __str__(self):
-        # `display_name`, never a legal name or an email address.
-        return f'{self.plant_id} → {self.owner.display_name}'
+        return f'{self.plant_id} → {self.holder_name}'
+
+    @property
+    def holder(self):
+        """The ``User`` or ``Producer`` that held the plant. Never ``None`` --
+        ``tenure_has_one_holder`` says so in SQL."""
+        return self.owner if self.owner_id is not None else self.producer
+
+    @property
+    def holder_name(self):
+        """A nickname or a trading name. Never a legal name or an email
+        address -- C19, and this string reaches an export and a certificate."""
+        if self.owner_id is not None:
+            return self.owner.display_name
+        return self.producer.pseudonym
+
+    @property
+    def is_cultivator_held(self):
+        """Whether this is the farm's own tenure, before any sale."""
+        return self.producer_id is not None
 
     def save(self, *args, update_fields=None, **kwargs):
         """Derive the open-tenure marker, then write."""

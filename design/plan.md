@@ -379,7 +379,10 @@ sharing member registration, built as a placeholder under the **superseded** rea
 requiring the identity number, age rule and attestation back.
 
 **C13 and roles risk 9 are closed.** *Only the primary may appoint staff* was an object-level rule
-the catalogue could not express, and it is a column now.
+the catalogue could not express, and it is a column now. C13 closed the rest of the organisation with
+it: the farm's public identity moved from full rights to the primary, "as permitted by the primary"
+is the `full`/`limited` tier and not a second grant table, and the whole structure is written up in
+`features/cultivator-organisation.md`.
 
 Left: `platform.appoint_cultivator_staff` has no endpoint and is exercisable only in the Django
 admin; sharing member read, update and withdraw; the object-level rules that arrive with those
@@ -396,7 +399,10 @@ rather than a string, strain through the listing so the two cannot disagree, gro
 date, estimated bloom and harvest dates, minimum yield, finished product types inherited from the
 listing, and a status moving through preflowering, in bloom, harvested, processed and shipped.
 Derived: cultivator pseudonym, leaf rating, and the day counts as properties rather than columns.
-`PlantOwnership` is the append-only tenure log behind every transfer.
+`PlantOwnership` is the append-only tenure log behind every transfer, and since **C13** it opens at
+capture rather than at the first sale: the farm holds a `cultivation` tenure of its own, so every
+plant has a verifiable owner from the moment it is loaded and the trail runs farm → buyer → whoever
+it was swapped to with no gap at the front.
 
 Individual capture and a per-cultivator Excel batch upload, per `cultivator-stock-upload.md`, sharing
 one write path rather than two. Stock-on-hand export. Disable actions for a plant and for a batch.
@@ -737,6 +743,7 @@ it sits in Block A ahead of both checkouts.
 | C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Made C11 answerable, and C11 then removed the after-release case entirely. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
 | C11 | **A refund exists only while the funds are held.** After release to the cultivator there is none in the application; the remedy is a withholding on the cultivator's payment run and a settlement with the member outside the platform | Deletes the largest unbuilt thing in the register — a post-release partial reversal across two entities, and the member credit ledger that was its fallback. Moves refunds from Block 12 → Block E into **Block A**, beside the hold, and releases them from C10.1. Forces C10 to say the 15% is earned **on release**, and adds an adjustment line to the payment run. Leaves **C11.1** open, and puts a CPA constraint on copy: build it, never publish it as a term |
 | C12 | **A cultivator cannot buy, and does not see another grower’s offers.** Policy rather than an enforced rule — no purchase journey, no membership sold to a grower, and deliberately no constraint, so the club reverses it with a sale rather than a migration. The drawio parenthetical is struck: a cultivator sees **their own** listings, each carrying an above / in line / below indicator against similar products site-wide | Turns a catalogue screen into a scoped one. Adds nothing to the permission catalogue — `browse_catalogue` stays — and everything to C13’s open “their own listings, stock and pricing” row, which now has a second reason to be built. The indicator lands on Block 1’s cultivator listing screen, priced with Block 4 → Block A. Puts a Competition Act s4(1)(b) constraint on how it is computed: a cohort minimum, a band rather than a number, a period average |
+| C13 | **The cultivator organisation, as the product owner states it.** The farm is the front identity; the primary owns it and controls its identity, its staff and its sharing members; staff act as permitted by the primary, which **is** the `full`/`limited` tier; and **every plant must always have a verifiable owner with a trail to final ownership** | Moves `manage_own_cultivator_profile` from full rights to the primary — the offering stays delegable. Rules out a per-appointment grant table as a second authorisation system. Reopens the ownership ledger and closes it differently: a `cultivation` tenure held by the `Producer`, opened at capture by `Plant.save`, closed by the first transfer, with two nullable holder columns and a constraint over them. New document, `features/cultivator-organisation.md` |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |
@@ -749,7 +756,7 @@ it sits in Block A ahead of both checkouts.
 
 | # | Position |
 | --- | --- |
-| C13 | **Object-level permissions: the design question is answered by C28.** "Their own" pointed at nothing while a role was a column, which is why `RoleBackend` refused every object-level question rather than answer one wrongly. `ProducerMembership` is a row per person per producer now, and the primary-appoints-staff rule is enforced off it. The rest are joins against the same rows, written in the services that own each record. What stays open is that work, not a decision |
+| C13 | **Object-level permissions: the design question is answered by C28 and the rest of C13 is ruled on above.** "Their own" pointed at nothing while a role was a column, which is why `RoleBackend` refused every object-level question rather than answer one wrongly. `ProducerMembership` is a row per person per producer now; the primary's actions, the farm's identity and the ownership trail are all enforced off it or off the ledger. What stays open is **two joins nobody has written yet** — a cultivator's own listings and pricing, and a member's own inventory — both the shape of `plant.stock._authorise`, both work rather than decisions |
 
 C21 through C25 are documentation drift in `conflict.md` section C and need no decision. **C25 is the
 exception worth tracking**: a test that fails about one run in thirty, which is a Block 0 line and a

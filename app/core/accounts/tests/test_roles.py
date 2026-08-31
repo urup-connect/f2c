@@ -166,6 +166,30 @@ class CatalogueTests(TestCase):
                 self.assertNotIn(codename, PRODUCER_BASE_PERMISSIONS)
                 self.assertNotIn(codename, CLUB_ADMINISTRATOR_PERMISSIONS)
 
+    def test_the_farms_identity_is_the_primarys_alone(self):
+        """C13. The cultivator organisation's front identity -- what members see
+        and buy under -- belongs to the owner of the farm.
+
+        It sat on full rights until then, so a staff appointment could rename
+        the farm or unpublish it. The *offering* deliberately did not move:
+        pricing and listings are what full rights exists to delegate.
+        """
+        self.assertIn(
+            'platform.manage_own_cultivator_profile', PRODUCER_PRIMARY_PERMISSIONS
+        )
+        self.assertNotIn(
+            'platform.manage_own_cultivator_profile', PRODUCER_FULL_PERMISSIONS
+        )
+        self.assertNotIn(
+            'platform.manage_own_cultivator_profile', PRODUCER_BASE_PERMISSIONS
+        )
+        for codename in (
+            'platform.manage_own_pricing',
+            'platform.manage_own_strain_listings',
+        ):
+            with self.subTest(codename=codename):
+                self.assertIn(codename, PRODUCER_FULL_PERMISSIONS)
+
     def test_no_administrative_action_reaches_a_member(self):
         """The negative half, and the one that matters."""
         self.assertEqual(

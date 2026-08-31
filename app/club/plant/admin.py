@@ -149,18 +149,24 @@ class PlantOwnershipInline(admin.TabularInline):
     model = PlantOwnership
     extra = 0
     can_delete = False
-    fields = ('owner_name', 'reason', 'acquired_at', 'released_at')
+    fields = ('holder_name', 'reason', 'acquired_at', 'released_at')
     readonly_fields = fields
 
     def has_add_permission(self, request, obj=None):
         return False
 
-    @admin.display(description='Owner')
-    def owner_name(self, obj):
-        return obj.owner.display_name
+    @admin.display(description='Held by')
+    def holder_name(self, obj):
+        """A member's nickname or the farm's trading name.
+
+        Reads the model's property rather than `obj.owner.display_name`, which
+        is what it did before C13 and what would now raise on the farm's own
+        cultivation tenure -- the first row of every plant's history.
+        """
+        return obj.holder_name
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('owner')
+        return super().get_queryset(request).select_related('owner', 'producer')
 
 
 @admin.register(Plant)
@@ -332,15 +338,19 @@ class PlantAdmin(admin.ModelAdmin):
         # `roles-and-permissions.md`.
         return obj.listing.cultivator.pseudonym
 
-    @admin.display(description='Held by', ordering='owner__nickname')
+    @admin.display(
+        description='Held by', ordering='owner__club_membership__nickname'
+    )
     def holder(self, obj):
-        """The member holding it, or the cultivator.
+        """The member holding it, or the farm.
 
         Rendered rather than left blank, because an empty column reads as
-        missing data where what it means is "still for sale".
+        missing data where what it means is "still for sale". Since C13 the farm
+        is a named holder rather than a dash: it holds an open cultivation
+        tenure, so there is a trading name to print.
         """
         if obj.owner_id is None:
-            return '— cultivator —'
+            return f'{obj.listing.cultivator.pseudonym} — for sale'
         return obj.owner.display_name
 
     @admin.display(description='Owner')
@@ -460,13 +470,24 @@ class PlantOwnershipAdmin(admin.ModelAdmin):
     editable, because it is evidence.
     """
 
-    list_display = ('plant_serial', 'owner_name', 'reason', 'acquired_at', 'released_at')
+    list_display = ('plant_serial', 'holder_name', 'reason', 'acquired_at', 'released_at')
     list_filter = ('reason', ('released_at', admin.EmptyFieldListFilter))
-    search_fields = ('plant__serial', 'owner__nickname')
+    # The nickname moved to `membership.ClubMembership` with the storefront
+    # split (C27), so `owner__nickname` had stopped resolving; the producer's
+    # trading name joins it because a farm is a holder here since C13.
+    search_fields = (
+        'plant__serial',
+        'owner__club_membership__nickname',
+        'producer__trading_name',
+    )
     date_hierarchy = 'acquired_at'
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('plant', 'owner')
+        return (
+            super()
+            .get_queryset(request)
+            .select_related('plant', 'owner', 'producer')
+        )
 
     def get_readonly_fields(self, request, obj=None):
         return [field.name for field in self.model._meta.fields]
@@ -484,9 +505,10 @@ class PlantOwnershipAdmin(admin.ModelAdmin):
     def plant_serial(self, obj):
         return obj.plant.serial
 
-    @admin.display(description='Owner', ordering='owner__nickname')
-    def owner_name(self, obj):
-        return obj.owner.display_name
+    @admin.display(description='Held by', ordering='owner__club_membership__nickname')
+    def holder_name(self, obj):
+        """The member, or the farm on a cultivation tenure. See the inline."""
+        return obj.holder_name
 
 
 @admin.register(SerialCounter)

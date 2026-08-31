@@ -11,6 +11,7 @@ is deliberately unbuilt, it is recorded as unbuilt rather than omitted.
 | [frontend.md](frontend.md) | The Next.js application: rendering model, routes, module layers, configuration, testing |
 | [backend.md](backend.md) | The Django application: the member record, encryption, API surface, admin, testing |
 | [features/roles-and-permissions.md](features/roles-and-permissions.md) | The three roles, the action catalogue, and where each is enforced |
+| [features/cultivator-organisation.md](features/cultivator-organisation.md) | The farm as a record, the primary and appointed staff, and the ownership trail behind every plant |
 | [features/authentication.md](features/authentication.md) | Passkeys, emailed sign-in codes, sessions, rate limits |
 | [features/sign-up.md](features/sign-up.md) | The age gate, the details a joining member gives, the club document agreements |
 | [features/payments.md](features/payments.md) | The membership subscription, the Payfast integration, and what a payment does to an account |

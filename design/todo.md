@@ -1029,6 +1029,12 @@ rule the catalogue could not express, and it is a column now. What is left of th
 endpoints and the object-level rules that arrive with them. Still a retrofit across every endpoint,
 and still built after the models it scopes.
 
+**C13 also closed the rest of the organisation, and the structure is written up in
+`features/cultivator-organisation.md`.** Three rulings landed: the farm's public identity is the
+primary's alone (`manage_own_cultivator_profile` moved out of the full-rights set), "as permitted by
+the primary" **is** the `full`/`limited` tier rather than a per-appointment grant table, and every
+plant carries a verifiable owner with a trail from capture — the ownership half is in Block 3.
+
 - [x] **Cultivator organisation** model — the farm as a record. `Producer` in
       `app/commerce/producers/models.py`, deliberately **not** cannabis-specific: a farmer supplying
       the produce market is the same record with a different `ProducerStorefront` row, which is why
@@ -1049,8 +1055,13 @@ and still built after the models it scopes.
       every cultivator — `member-roles`
 - [~] **Appointed staff with full or limited rights.** The model is built: `ProducerRole` of
       primary / full / limited, with `has_full_rights` carrying the commercial decisions — pricing,
-      listings and the public profile, as against moving stock — and the primary holding them too,
-      because being the primary is more than full rights rather than an alternative to them.
+      listings and allocation to sharing members, as against moving stock — and the primary holding
+      them too, because being the primary is more than full rights rather than an alternative to
+      them. **The public profile is no longer among them — C13**: the farm's identity moved to
+      `PRODUCER_PRIMARY_PERMISSIONS`, because a staff appointment that can rename the farm or take it
+      off the storefront is a delegation nobody asked for. The tier **is** what "as permitted by the
+      primary" means, and there is deliberately no per-appointment grant beside it — that would be a
+      second authorisation system every screen has to ask twice.
       **There is still no endpoint.** `platform.appoint_cultivator_staff` is in the catalogue and
       held by primaries, and the only way to exercise it is the Django admin
 - [x] Collection address on the farm — `drawio`, cultivator story
@@ -1070,9 +1081,14 @@ and still built after the models it scopes.
         `register_sharing_member` refuses a primary of one farm creating a placeholder for another,
         with a superuser exemption and a test covering both. Read, update and withdraw are not, and
         cannot be until the endpoints below exist
-  - [ ] A member's own inventory
+  - [ ] A member's own inventory. **Now answerable rather than merely unwritten — C13**:
+        `owner=request.user` is the holding and `tenure_by_owner` is everything that member has ever
+        held. Arrives with the member-facing inventory endpoint in Block 9
   - [x] Primary versus appointed staff — the `role` column on the appointment, read in
         `permissions_for`
+  - [x] The farm's own identity — `manage_own_cultivator_profile` is the primary's, so the profile
+        endpoint asks the codename and then asks `ProducerMembership` whether the caller is the
+        primary *of this farm*. **C13**
 - [~] Sharing member registration — `accounts.services.register_sharing_member`. Built **without the
       POPIA attestation** under the superseded reading of C6. **The reversal puts it back**, widened
       to evidence the cultivator's mandate as well as the POPIA basis — C33. The signature
@@ -1128,6 +1144,19 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
       properties, not columns — a stored one is wrong by one every midnight
 - [x] Ownership, and an ownership history that survives every transfer — `Plant.owner` for the reads,
       `PlantOwnership` as the append-only tenure log, both written by `transfer_to` in one transaction
+- [x] **Every plant has a verifiable owner, and the trail starts at the farm — C13.** The ledger used
+      to open at the first sale, so "who held this yesterday" was an inference from
+      `Plant.listing.cultivator` rather than a record. The farm now holds a `cultivation` tenure of
+      its own, opened by `Plant.save` on insert — not by the upload service, because the admin form, a
+      management command and a fixture create plants too — and closed by the first transfer.
+      `PlantOwnership.owner` is nullable with a nullable `producer` beside it, one of the two enforced
+      by `tenure_has_one_holder`, and the reason has to agree with the holder
+      (`tenure_reason_matches_holder`). `adjustment` is free in both directions so **C9**'s
+      substitution can return a plant to the farm. Migration `plant/0003` backfills, and refuses to
+      guess a capture date it cannot place before the first transfer
+- [x] `Plant.holder` and `PlantOwnership.holder_name` — the read a screen, an export or a certificate
+      uses. `owner` answers the narrower question *which member*, which is what keeps `available()` a
+      one-column filter
 
 ### Capture
 

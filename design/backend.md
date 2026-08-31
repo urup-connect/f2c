@@ -897,6 +897,14 @@ question: `platform.manage_plant_stock` is granted by every producer appointment
 asks the codename and then asks `ProducerMembership` whether this caller is appointed to *that*
 farm. That second half is what C13 recorded as having nothing to point at.
 
+**The ownership ledger now opens at capture rather than at the first sale — C13.** *Each plant must
+always have a verifiable owner*, so `PlantOwnership` carries a `cultivation` tenure held by the
+`Producer`, written by `Plant.save` on insert and closed by the first transfer. Two nullable holder
+columns — `owner` for a member, `producer` for a farm — with `tenure_has_one_holder` insisting on
+exactly one, and `tenure_reason_matches_holder` keeping the reason and the holder in agreement. The
+alternative was a user account per farm that nobody signs into, which every membership rule would
+then have to exclude. The structure it serves is `features/cultivator-organisation.md`.
+
 What is still missing around the plant is a cultivator-facing read. Capture writes stock and nothing
 serves it back: the stock-on-hand export is `manage.py export_stock` and an admin action, and the
 browse a cultivator would use is the same queryset Block 5 reads for members. There is also no

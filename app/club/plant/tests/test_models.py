@@ -319,13 +319,63 @@ class HarvestTests(PlantTestCase):
 
 class OwnershipTests(PlantTestCase):
     def test_a_new_plant_is_the_cultivators_stock(self):
-        """No owner, and no tenure. The history is a list of members, not one
-        that begins with the person who grew it."""
+        """No member owner, and the farm holding an open tenure -- C13.
+
+        This test asserted *no tenure at all* until C13: the ledger opened at
+        the first sale. "Each plant must always have a verifiable owner" made
+        that a gap, so the farm holds a row of its own from capture.
+        """
         plant = self.make_plant()
 
         self.assertIsNone(plant.owner_id)
         self.assertTrue(plant.is_available)
-        self.assertEqual(plant.ownerships.count(), 0)
+
+        tenure = plant.ownerships.get()
+        self.assertEqual(tenure.producer, self.cultivator)
+        self.assertIsNone(tenure.owner_id)
+        self.assertEqual(tenure.reason, OwnershipReason.CULTIVATION)
+        self.assertTrue(tenure.is_open)
+        self.assertTrue(tenure.is_cultivator_held)
+
+    def test_every_creation_path_opens_the_farms_tenure(self):
+        """`Plant.save`, not the upload service, which is why a plant written
+        straight through the model gets one too. The invariant is *every*
+        plant."""
+        plant = Plant.objects.create(
+            serial=allocate_serials(1)[0],
+            cultivator_plant_id='POT-9',
+            listing=self.listing,
+            grow_price=Decimal('950.00'),
+            minimum_yield_grams=Decimal('30.00'),
+            planting_date=PLANTED,
+            estimated_bloom_date=BLOOMS,
+            estimated_harvest_date=HARVESTS,
+        )
+
+        self.assertEqual(plant.ownerships.count(), 1)
+
+    def test_the_holder_is_never_nobody(self):
+        """What a screen reads instead of `owner`, which answers the narrower
+        question *which member*."""
+        plant = self.make_plant()
+
+        self.assertEqual(plant.holder, self.cultivator)
+        self.assertEqual(plant.holder_name, 'Kloof')
+
+        plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertEqual(plant.holder, self.member)
+        self.assertEqual(plant.holder_name, 'Sam')
+
+    def test_saving_a_plant_again_does_not_open_a_second_tenure(self):
+        """Only the insert does. A reprice under Block 4 must not put a
+        discontinuity in the ledger."""
+        plant = self.make_plant()
+
+        plant.grow_price = Decimal('1200.00')
+        plant.save(update_fields=['grow_price', 'updated_at'])
+
+        self.assertEqual(plant.ownerships.count(), 1)
 
     def test_a_transfer_sets_the_owner_and_opens_a_tenure(self):
         plant = self.make_plant()
@@ -338,7 +388,11 @@ class OwnershipTests(PlantTestCase):
         self.assertEqual(tenure.reason, OwnershipReason.PURCHASE)
 
     def test_a_second_transfer_closes_the_first_tenure(self):
-        """The history survives every transfer. `todo.md` Block 3."""
+        """The history survives every transfer. `todo.md` Block 3.
+
+        Three rows, not two: the farm's own tenure is the first of them since
+        C13.
+        """
         plant = self.make_plant()
         alex = self.another_member()
 
@@ -347,13 +401,28 @@ class OwnershipTests(PlantTestCase):
 
         plant.refresh_from_db()
         self.assertEqual(plant.owner, alex)
-        self.assertEqual(plant.ownerships.count(), 2)
+        self.assertEqual(plant.ownerships.count(), 3)
         self.assertEqual(
             plant.ownerships.filter(released_at__isnull=True).count(), 1
         )
 
+    def test_the_first_transfer_closes_the_farms_tenure(self):
+        """No gap and no overlap at the front of the trail. The plant belonged
+        to the farm until the moment it belonged to the buyer."""
+        plant = self.make_plant()
+
+        bought = plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        grown = plant.ownerships.get(reason=OwnershipReason.CULTIVATION)
+        self.assertFalse(grown.is_open)
+        self.assertEqual(grown.released_at, bought.acquired_at)
+
     def test_the_whole_chain_of_owners_is_recoverable(self):
-        """What a certificate of ownership is evidence from."""
+        """What a certificate of ownership is evidence from.
+
+        The chain starts at the farm -- C13, and the reason the list below is
+        read through `holder` rather than through `owner`.
+        """
         plant = self.make_plant()
         alex = self.another_member()
 
@@ -361,9 +430,13 @@ class OwnershipTests(PlantTestCase):
         plant.transfer_to(alex, reason=OwnershipReason.SWAP)
 
         held_by = [
-            tenure.owner for tenure in plant.ownerships.order_by('acquired_at')
+            tenure.holder for tenure in plant.ownerships.order_by('acquired_at')
         ]
-        self.assertEqual(held_by, [self.member, alex])
+        self.assertEqual(held_by, [self.cultivator, self.member, alex])
+        self.assertEqual(
+            [tenure.holder_name for tenure in plant.ownerships.order_by('acquired_at')],
+            ['Kloof', 'Sam', 'Alex'],
+        )
 
     def test_transferring_to_the_same_member_twice_is_refused(self):
         """It would close and reopen a tenure for no event, putting a
@@ -407,7 +480,11 @@ class OwnershipTests(PlantTestCase):
         plant = self.make_plant()
         plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
         plant.transfer_to(self.another_member(), reason=OwnershipReason.SWAP)
-        closed = plant.ownerships.filter(released_at__isnull=False).get()
+        # The member's closed tenure, not the farm's -- there are two closed
+        # rows since C13 and this test is about a member's.
+        closed = plant.ownerships.filter(
+            released_at__isnull=False, owner=self.member
+        ).get()
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
@@ -449,6 +526,89 @@ class OwnershipTests(PlantTestCase):
 
         self.assertIn('Sam', str(tenure))
         self.assertNotIn('@', str(tenure))
+
+    def test_the_farms_tenure_string_shows_the_trading_name(self):
+        """The one row whose holder is not a person. `str` used to reach for
+        `owner.display_name` and would raise on it."""
+        plant = self.make_plant()
+
+        self.assertIn('Kloof', str(plant.ownerships.get()))
+
+    def test_a_tenure_held_by_nobody_is_refused_by_the_database(self):
+        """`tenure_has_one_holder`. Two nullable columns, and a row with neither
+        set is the gap C13 closed sitting back down."""
+        plant = self.make_plant()
+        plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                PlantOwnership.objects.create(
+                    plant=plant,
+                    acquired_at=timezone.now() - timedelta(days=2),
+                    released_at=timezone.now() - timedelta(days=1),
+                    reason=OwnershipReason.ADJUSTMENT,
+                )
+
+    def test_a_tenure_held_by_both_is_refused_by_the_database(self):
+        """The other half of `tenure_has_one_holder`, and the worse one: two
+        owners of one plant at one moment."""
+        plant = self.make_plant()
+        plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                PlantOwnership.objects.create(
+                    plant=plant,
+                    owner=self.another_member(),
+                    producer=self.cultivator,
+                    acquired_at=timezone.now() - timedelta(days=2),
+                    released_at=timezone.now() - timedelta(days=1),
+                    reason=OwnershipReason.ADJUSTMENT,
+                )
+
+    def test_a_purchase_cannot_be_held_by_a_farm(self):
+        """`tenure_reason_matches_holder`. A ledger of evidence must not carry a
+        row saying a farm purchased its own plant."""
+        plant = self.make_plant()
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                PlantOwnership.objects.filter(pk=plant.ownerships.get().pk).update(
+                    reason=OwnershipReason.PURCHASE
+                )
+
+    def test_a_cultivation_tenure_cannot_be_held_by_a_member(self):
+        """The mirror image, and the one a mis-keyed allocation would produce."""
+        plant = self.make_plant()
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                PlantOwnership.objects.create(
+                    plant=plant,
+                    owner=self.member,
+                    acquired_at=timezone.now(),
+                    reason=OwnershipReason.CULTIVATION,
+                )
+
+    def test_an_adjustment_may_return_a_plant_to_the_farm(self):
+        """The reason left free in both directions, because C9's substitution
+        path has a member's plant reverting to the grower and the ledger has to
+        be able to say so."""
+        plant = self.make_plant()
+        plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+        plant.ownerships.filter(released_at__isnull=True).update(
+            released_at=timezone.now(), current_for_plant=None
+        )
+
+        returned = PlantOwnership.objects.create(
+            plant=plant,
+            producer=self.cultivator,
+            acquired_at=timezone.now(),
+            reason=OwnershipReason.ADJUSTMENT,
+        )
+
+        self.assertTrue(returned.is_cultivator_held)
+        self.assertTrue(returned.is_open)
 
 
 class StockQuerySetTests(PlantTestCase):

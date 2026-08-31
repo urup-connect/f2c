@@ -129,7 +129,10 @@ ADMINISTRATOR_ACTIONS = {
 #: see ``permissions_for`` and C13.
 PRODUCER_ACTIONS = {
     'platform.manage_own_cultivator_profile':
-        "Manage the cultivator's own profile.",
+        "Manage the farm's public identity: trading name, description, image "
+        'and whether it is published. The primary cultivator only -- the front '
+        'identity members see belongs to the owner of the farm, not to '
+        'appointed staff. C13.',
     'platform.appoint_cultivator_staff':
         'Appoint other cultivator members, with full or limited rights. Held '
         'by the primary cultivator only, which is an object-level rule this '
@@ -255,8 +258,16 @@ PRODUCER_BASE_PERMISSIONS = frozenset({
 })
 
 #: What full rights add: the commercial decisions, as against moving stock.
+#:
+#: **``platform.manage_own_cultivator_profile`` was here and is now the
+#: primary's -- C13.** The farm's structure names three things the owner of the
+#: farm controls: who is appointed, who the sharing members are, and the farm's
+#: own identity and offering. The first two were already the primary's; the third
+#: was not, so full-rights staff could rename the farm and unpublish it. The
+#: *offering* stayed here deliberately -- pricing and listings are the delegated
+#: commercial work that "full rights" exists to delegate, and a farm whose
+#: primary is away must still be able to reprice a crop.
 PRODUCER_FULL_PERMISSIONS = frozenset({
-    'platform.manage_own_cultivator_profile',
     'platform.manage_own_pricing',
     'platform.manage_own_strain_listings',
     'platform.respond_to_reviews',
@@ -268,10 +279,15 @@ PRODUCER_FULL_PERMISSIONS = frozenset({
 #: appoints staff and registers sharing members. That used to be an object-level
 #: rule this catalogue could not express -- C13 and roles risk 9 -- and it is now
 #: a column on the appointment being read a few lines below.
+#:
+#: The fourth entry is the farm's identity, moved down from full rights by C13:
+#: *the cultivator member controls farm identity/profile*. Staff act on stock and
+#: on transfers; the name members buy under is not theirs to change.
 PRODUCER_PRIMARY_PERMISSIONS = frozenset({
     'platform.appoint_cultivator_staff',
     'platform.register_sharing_member',
     'platform.manage_sharing_members',
+    'platform.manage_own_cultivator_profile',
 })
 
 

@@ -321,12 +321,22 @@ class ProducerStorefront(models.Model):
 class ProducerRole(models.TextChoices):
     """What an appointed person may do for a producer.
 
-    ``PRIMARY`` is the account the organisation belongs to: only the primary
-    appoints staff and registers sharing members, per ``member-roles``.
+    ``PRIMARY`` is the account the organisation belongs to: the owner of the
+    farm. Only the primary appoints staff, registers sharing members and
+    controls the farm's public identity, per ``member-roles`` and C13.
     ``FULL`` manages stock, listings and pricing; ``LIMITED`` manages stock
     only. The distinction is the brief's -- "appointed staff with full or
     limited rights" -- and it is a column here rather than a permission because
     it is a fact about one appointment, not about the person.
+
+    **These three are the whole of "as permitted by the primary" -- C13.** The
+    farm's structure says staff act *as permitted by* the owner, and the
+    permission being granted is this column: appointing somebody ``FULL`` is
+    what permits them to move stock into a sharing member's hands, and
+    ``LIMITED`` is what withholds it. There is no per-appointment grant beside
+    the tier, deliberately: a second permission system next to
+    ``accounts.roles`` would need every screen to ask both, and no requirement
+    yet distinguishes a staff member who may allocate from one who may price.
     """
 
     PRIMARY = 'primary', 'Primary'
@@ -455,8 +465,10 @@ class ProducerMembership(models.Model):
     def has_full_rights(self):
         """Whether this appointment carries the commercial decisions.
 
-        Pricing, listings and the public profile, as against moving stock. The
-        primary has them too -- being the primary is more than full rights, not
+        Pricing, listings and allocation to sharing members, as against moving
+        stock. **Not the public profile** -- that went to the primary with C13,
+        because the identity members see is the farm owner's. The primary holds
+        everything here as well: being the primary is more than full rights, not
         an alternative to them.
 
         Asked of the appointment by ``accounts.roles.permissions_for`` rather
