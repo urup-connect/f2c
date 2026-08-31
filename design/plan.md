@@ -567,10 +567,14 @@ Repeating monthly plant orders by cultivator and strain, cancellable on a month'
 member — `plant-subscription.md`. This is a **different mechanic from the membership subscription**
 and the old plan conflated them.
 
-Refunds and partial reversals with fee withholding — **C11**, where who refunds is now answered (the
-club refunds the member; the platform's commission is not refundable) and the mechanism waits on the
-gateway choice. Sales, review and activity reporting, and the revenue, membership, plant sales and
-swap dashboards.
+**Refunds have left this block too, and they shrank on the way.** **C11** is decided: a refund is
+possible only while the money is still in the Collective's account, which is to say before it is
+released to the cultivator. After release there is none in the application — the remedy is a
+withholding against the cultivator's next payment run, settled with the member outside the platform.
+So there is no post-release reversal to build, no clawback, and no member credit ledger, and refunds no
+longer wait on the gateway choice. What is left is a refund action on a held order, full or partial,
+which belongs in **Block A** beside the hold it operates on. What stays here is the reporting: sales,
+review and activity reports, and the revenue, membership, plant sales and swap dashboards.
 
 Settlement — what the platform takes, when a cultivator earns, and how money reaches one — is
 still a launch blocker for cultivators wherever it is built, though **two of the three are now
@@ -683,8 +687,8 @@ it.
 | --- | --- | --- |
 | C9.1 | Which event confirms delivery and releases the held funds | Block A's settlement and Block C's fulfilment. The preference is Pargo's delivery or collection scan; it cannot be fixed until the integration is understood |
 | C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. **Substantially answered**: the club collects member purchases and owes F2C 15%; F2C collects the membership fee and owes the club 60%; a cultivator earns at delivery (C9). What is left is the commission base against the courier leg, whether the commission shows on a statement, **how a cultivator is actually paid** — no gateway disburses, so a payment run — and the market's leg, which is unstated and trades first |
-| C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. Also gates C11 — a gateway that reverses makes a refund a status, one that does not makes it a ledger |
-| C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10 and now of C10.1. **Narrowed by C9**: a failed crop is substituted, and where it is refunded the money is still held, so what is left here is a refund *after* release. **Who refunds is answered** — the club refunds the member and the platform's 15% is not refundable; the mechanism, a gateway reversal or a member account credit, waits on the gateway |
+| C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. **No longer gates C11** — a refund only ever touches unreleased funds in the club's own account, so an EFT out of it works where a gateway reversal does not |
+| C11.1 | **How long the money stays in the club's account after delivery** | Block A's settlement, and it is the residue of C11. Release is now the moment a member's refund right ends, so an instant release on the courier scan leaves the ordinary "arrived dead" complaint with no refund at all. Recommendation: a short hold — 72 hours is the shape of it — with a dispute able to suspend it. Cannot be separated from C9.1 |
 | C14 | May an administrator create and manage sharing members | Block 2 and Block 9 → Block D. **C5 moved the ground under the standing decision**: the prescribed route is the operator's back office, and a Next.js-only club administrator has no access to it |
 | C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules. **Promoted by C7** — the four-plant ceiling is statutory and attaches to a named adult, so the holding check is a prerequisite of the block |
 | C16 | Does a harvested plant count toward the four | Block 10 → Block E. Promoted with C15 — it decides what the holding check counts |
@@ -725,7 +729,8 @@ it sits in Block A ahead of both checkouts.
 | C6 | A sharing member is a **real person who does not transact** — decided, acted on as a placeholder, then **reversed** | Block 0.5 and Block E. Registration takes the identity number, the age rule and the POPIA attestation back, and the erasure route with them. A read-only login is specified and deferred. The code still implements the superseded reading |
 | C7 | The swap model is **defendable** — residual risk, not a gate | Ungates Block 10 → Block E. Makes the four-plant allowance a statutory ceiling, which promotes C15 and C16 to prerequisites |
 | C8 | **Nothing is payable at harvest.** Courier sits inside the price paid at order and is remitted to Pargo at settlement | Removes a checkout from Block 6 → Block C. Makes the harvest confirmation the point where ownership becomes final, which closes the swap window and constrains Block 10. Adds a third leg to C10's settlement split, and opens C35 |
-| C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Narrows C11 to refunds after release. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
+| C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Made C11 answerable, and C11 then removed the after-release case entirely. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
+| C11 | **A refund exists only while the funds are held.** After release to the cultivator there is none in the application; the remedy is a withholding on the cultivator's payment run and a settlement with the member outside the platform | Deletes the largest unbuilt thing in the register — a post-release partial reversal across two entities, and the member credit ledger that was its fallback. Moves refunds from Block 12 → Block E into **Block A**, beside the hold, and releases them from C10.1. Forces C10 to say the 15% is earned **on release**, and adds an adjustment line to the payment run. Leaves **C11.1** open, and puts a CPA constraint on copy: build it, never publish it as a term |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |

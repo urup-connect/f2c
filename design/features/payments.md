@@ -361,7 +361,11 @@ engine only by asking for it.
   is the three messages themselves, not somewhere to send them from. `accounts.notifications` is the
   pattern to follow: on-commit, per storefront, and a send failure logged rather than raised.
 - **No refunds, no proration, no plan changes.** A price change applies to new members only, and
-  there is no path for moving an existing member onto a different amount.
+  there is no path for moving an existing member onto a different amount. **This is about the
+  membership subscription only** — the one thing Payfast bills, collected into F2C's account. It says
+  nothing about refunds on what a member *buys*, which settle into the Cultivators Collective's
+  account through a second gateway that does not exist yet. Those are refundable while the funds are
+  held and not after — **C11**. The two were read as a contradiction in the register and are not one.
 - **No reconciliation report.** Payments are recorded and visible in the admin; nothing totals them
   against a Payfast statement.
 - **`amount_fee` and `amount_net` are stored and never used.** They are recorded because a

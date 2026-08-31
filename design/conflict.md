@@ -502,7 +502,10 @@ The two fallbacks, in order:
   member who never presses the button strands a cultivator's payment indefinitely, which is the C8
   failure mode with money attached.
 - **Courier event where available, automatic release after a fixed window otherwise**, unless the
-  member has raised a dispute inside that window. Needs the dispute path, which is C11.
+  member has raised a dispute inside that window. Needs the dispute path, which is still unbuilt —
+  and **C11 has made this option the leading one**. Release is now the moment the member's refund
+  right ends, so a window with a dispute inside it is no longer merely a convenience for a silent
+  courier; it is the member's protection. See **C11.1**.
 
 Whichever is chosen, the platform has to hold one fact per order: whether the money is held or
 released, and on what event. That is a ledger state, and it is a prerequisite of C10's statement of
@@ -554,9 +557,12 @@ deliberately deferred, not forgotten.
   arguably applies to it. Decide that when C35 is specified rather than by silence now.
 - **The membership subscription is unaffected.** That is a Payfast recurring payment for club
   membership, it is earned by the club itself, and it has nothing to do with this hold.
-- **Nothing here settles partial refunds with fees withheld.** That is C11, and it is a different
-  case: this rule returns funds on an order that was never delivered and whose money was never
-  released.
+- ~~**Nothing here settles partial refunds with fees withheld.**~~ **Settled by C11.** A refund
+  exists only while the funds are held, so a partial refund is a partial release of a held amount and
+  never a reversal of a settlement. This rule and C11's are now the same rule seen from two ends.
+- **The membership subscription sentence above is wrong as written** — see C10's correction. The
+  subscription is collected by F2C, not the club, and 60% is owed onward. The conclusion stands: it
+  has nothing to do with this hold.
 
 ### C10 — Cultivator settlement is entirely unspecified
 
@@ -623,12 +629,15 @@ What had to be decided before this could be specified, with what is now answered
   the ground are not a cultivator's earnings and must never be shown as them. And the release event
   itself is still open (**C9.1**): the preference is Pargo's delivery or collection scan, and it
   cannot be fixed until the integration is understood.
-- ~~Who carries a refund (C11) — the platform or the cultivator?~~ **Answered by C9 for the crop
-  failure case: the cultivator.** A failed crop is substituted where an equivalent plant exists and
-  refunded where it does not, and in both cases the money never left the hold — so nothing is
-  recovered from a cultivator, because nothing was paid to one. The general case, a refund after
-  release, is still C11's. One new question: a substitute is assumed to come from the same
-  cultivator, and a **cross-cultivator substitution** changes who the held funds release to.
+- ~~Who carries a refund (C11) — the platform or the cultivator?~~ **Fully answered, and by C11
+  rather than here.** A refund is possible only while the funds are held, so it never reaches a
+  cultivator and nothing is ever recovered from one. What C11 does put on this entry is an
+  **adjustment line on the payment run** — the Collective withholding from what it owes a cultivator
+  in order to compensate a member after release — with a reason and an authorising administrator on
+  it. And a question this entry has to answer for C11 to be neutral: **the 15% has to be earned on
+  release, not on order**, or the club pays commission on a sale it refunds. One question still
+  stands from C9: a substitute is assumed to come from the same cultivator, and a **cross-cultivator
+  substitution** changes who the held funds release to.
 - ~~Payfast is a collection gateway. Payouts need something else, or a manual EFT run.~~
   **Confirmed by the product owner, and now split in two.** Collection into the club's account is a
   *second gateway* and is a build item — **C10.1** below. Paying a cultivator is still unsolved:
@@ -670,8 +679,11 @@ legal entity's** bank account, and none of it exists.
 - **"PayGate or Stitch" is two candidates, not a choice.** They are not interchangeable. PayGate is a
   hosted card gateway of much the same shape as Payfast; Stitch is API-first and leads with
   pay-by-bank. Which one is chosen decides the shape of the checkout, how much of the ledger the
-  platform has to hold itself, and — this is the one that reaches another conflict — **whether a
-  reversal is available at all**, which is what C11 turns on.
+  platform has to hold itself. ~~And whether a reversal is available at all, which is what C11
+  turns on.~~ **That last one is discharged by C11**: refunds only ever touch unreleased funds in the
+  Collective's own account, so where a gateway cannot reverse, an EFT back out of the same account
+  does the job with no ledger behind it. The gateway choice decides how money returns, not whether a
+  refund is possible, and **C11 is no longer waiting on this**.
 - **The order has to record which gateway took the money and into which account**, because two
   entities' bank reconciliations will be read off the same table.
 - **Sequencing.** It belongs in Block A with the payment intent, ahead of both storefronts' checkouts.
@@ -682,6 +694,15 @@ be worth anything.
 
 #### What is still open
 
+- **When the commission is earned, which C11 has just made urgent.** This entry says the 15% is
+  recorded as an amount *at the time it is taken* and does not say when that is. C11 makes refunds
+  possible only before release, so if the commission is earned at order the club pays 15% on money it
+  refunds, and if it is earned at release the two unwind together. **Recommendation: on release**, the
+  same event that pays the cultivator. Free now, expensive later.
+- **An adjustment line on the payment run**, from C11's post-release remedy: the Collective withholds
+  from what it owes a cultivator and compensates the member outside the platform. The run needs a line
+  with an amount, a reason and an authorising administrator, or somebody edits a total by hand the
+  first time it happens.
 - **The base the 15% is taken on.** C8 puts the courier fee inside the price the member pays and
   remits it to Pargo at settlement. So a member's R1,000 covers grow, commission and courier, and
   nobody has said whether the commission is 15% of the R1,000 or 15% of the R1,000 less the courier
@@ -725,62 +746,164 @@ treatment differs line by line and the collecting entity has not been named.
 
 ### C11 — Refunds are required and are not built
 
-**Status: Open. Who refunds is now answered; how, and at whose cost, is not.**
+**Status: Decided — a refund exists only while the money is still in the Cultivators Collective's
+account, which is to say before it is released to the cultivator. After release there is no refund in
+the application, and the member's remedy is a deduction against what the Collective still owes that
+cultivator, settled outside the platform. One thing is open, and it now carries most of the risk in
+this entry: how long the money stays in that account after delivery. That is C11.1.**
 
 `member-roles.md` gives the administrator the power to "reverse/refund transactions or part of
 transaction (transaction/platform fees can be withheld)", and `platform.refund_transaction` is in
 the catalogue. `features/payments.md` section 9 states plainly: **no refunds, no proration, no plan
 changes.**
 
-Partial refunds with fee withholding are not a button on a gateway. They need a transaction ledger
-that can express a partial reversal, and they interact with C10 — refunding a plant order takes
-money back from a cultivator who may already have been paid.
+**That was never the contradiction it looked like.** Section 9 describes the built Payfast
+integration, and Payfast bills exactly one thing — the membership fee, collected by **F2C** (C10). It
+is a statement about a subscription, not about goods. The administrator's refund power is over member
+purchases, which settle into a different entity's account through a gateway that does not exist yet.
+The two documents were describing two different money flows and neither was wrong. `payments.md` §9
+has been edited to say which one it means.
 
-**Narrowed by C9, not closed.** The commonest refund the platform expects — a crop that failed — is
-now mostly not a refund at all: an equivalent plant is substituted and the held funds follow it. Where
-there is no equivalent, the return is of money the club still holds, before commission or courier
-have been separated out, which needs no partial reversal and takes nothing back from a cultivator.
-What is left for C11 is the harder half: a refund **after** the funds have been released on delivery,
-and the administrator's power to reverse part of a transaction with fees withheld. C9.1's third
-option also lands here — automatic release after a fixed window requires a member-raised dispute to
-suspend it, and no dispute path exists.
+#### The ruling, from the product owner
 
-#### Who refunds, from the product owner
+**Refunds can occur only before delivery, while the funds are in the Cultivators' Collective NPC
+account. After delivery the funds are transferred to the cultivator and no refund is possible.**
+Where something goes wrong after that, the Collective may withhold other amounts due to that
+cultivator and pass a credit to the member.
 
-**The Cultivators Collective refunds the member, and F2C's 15% commission is not refundable.** That
-follows from C10's money map rather than being a separate ruling: the club took the member's money and
-is the seller of record, so the club is the party that gives it back. How the club then absorbs a
-refund on which it has already paid away a commission is, in the product owner's words, the club's
-problem at this stage.
+Note the legal form, which the register did not have: the Collective is a **non-profit company**.
+Nothing in the money map moves — an NPC contracts, buys and sells like any other company — but it is
+recorded because it bears on how the club's 60% share of the membership fee is characterised, and
+because "the club absorbs it" is a sentence about a specific balance sheet rather than an
+abstraction.
 
-**The application cannot be neutral about that, because the two readings are different ledger rows.**
-Either the member is refunded in full and the club carries the commission it has already paid, or the
-member is refunded net of the commission. The first is the only thing a consumer-facing refund can
-reasonably mean under the CPA; the second is a deduction the member never agreed to and would be
-argued about the first time it happened. **Recommendation: build the full-refund case**, record the
-commission as retained on the transaction, and leave the club's recovery of it — if any — outside the
-application as a finance matter. That keeps a commercial argument out of the schema without pretending
-the money is not gone.
+#### What this settles is larger than a refund policy
 
-#### How, which is still open and is downstream of C10.1
+**A refund stops being a reversal and becomes a state of the hold.** C9 put the member's money in the
+Collective's account from order until delivery is confirmed. This ruling says the refundable period
+*is* that hold. Most of what this entry was waiting on collapses:
 
-Two routes, and which is available is not yet known:
+- **Nothing is ever clawed back from a cultivator by the application.** A refund only touches money
+  that has not been paid out — so no negative settlement line, no recovery process, no cultivator
+  liability, and none of C10's payment-run arithmetic has to run backwards.
+- **There is no post-release reversal to build.** The hard half of this entry — reversing a completed
+  settlement, with fees withheld, across two legal entities — is not built, because under this ruling
+  it does not exist.
+- **The member account credit is not required.** It was carried here as the product owner's fallback
+  where a gateway cannot reverse, and it is now confirmed **off-application**: where the Collective
+  compensates a member after release it does so directly, not through a balance the platform holds.
+  That deletes a per-member ledger, an expiry position, a POPIA-relevant record that has to survive or
+  not survive erasure, and a liability on somebody's books — the largest build in this entry, gone.
+  C9's ruling that a credit is not an acceptable crop-failure remedy is undisturbed.
+- **C10.1 no longer gates this entry, and the dependency reverses.** The gateway choice mattered
+  because a gateway that cannot reverse turned refunds into a ledger. A refund now always lands on a
+  recent, unsettled transaction sitting in the Collective's own account — the easiest kind for any
+  gateway to reverse, and where it cannot, an EFT back out of the same account needs no ledger at
+  all. **Refunds can be specified before PayGate or Stitch is chosen.** What C10.1 still decides is
+  how the money physically returns, not what a refund is.
 
-- **A gateway reversal.** PayGate may support one — the product owner's expectation, unconfirmed —
-  and Stitch's position is different again. This is precisely why the gateway choice (**C10.1**) has
-  to be made before refunds are specified: a gateway that reverses makes this a transaction status,
-  and one that does not makes it a ledger.
-- **A credit on the member's platform account**, which is the product owner's fallback where a
-  reversal is not possible. **Recorded as an option, not as a requirement.** An account credit is a
-  real ledger and a real liability: a balance per member, spendable at checkout, with a position on
-  expiry, a POPIA-relevant record that has to survive or not survive erasure, and a number that sits
-  on somebody's books. It is a larger build than a reversal, and it should not be adopted as a
-  fallback by default. Note also that C9 ruled credit *out* as the crop-failure remedy on CPA
-  grounds; a credit offered because the gateway cannot reverse is a different case, but the question
-  of whether the member consents to it is the same one.
+**What is left to build is small and ordinary**: a refund action on an order whose funds are still
+held — full or partial — which takes the order out of the hold, records the amount, the reason and
+the administrator who authorised it, and returns the money. That is `platform.refund_transaction`, it
+is object-level and therefore C13, and it belongs in **Block A** rather than Block 12 because it
+rides the held-or-released state the checkout already has to carry.
 
-**Recommendation.** Specify refunds together with settlement, not before — and specifically after
-C10.1, because the gateway decides which of the two routes above is even on the table.
+#### The correction this forces on C10: when the commission is earned
+
+C10 records the 15% **as an amount on the transaction at the time it is taken**, and leaves "at the
+time it is taken" undefined. This ruling turns that from a wording question into a number. If the
+commission is earned at order, a pre-release refund unwinds a sale on which the club has already
+accrued a commission to F2C, and the club pays 15% on money it has given back. If it is earned at
+release, the refund and the commission unwind together and nobody absorbs anything.
+
+**Recommendation: the commission is earned on release** — the same event that pays the cultivator. It
+costs nothing to adopt now and it is expensive to change later, because it is the line between a
+refund that is neutral for the club and one that is not.
+
+That supersedes half of what this entry recommended before the ruling. The earlier reading — *build
+the full-refund case, record the commission as retained, and leave the club's recovery of it outside
+the application* — was written for a refund after settlement, and there is no longer such a thing.
+**The member is refunded in full and there is nothing for the club to absorb**, provided the
+commission is earned on release. The superseded reading is kept because it is the right answer to the
+question this ruling has removed, and it will be the right answer again the first time somebody
+proposes an exception to it.
+
+**"Fees can be withheld", from `member-roles.md`, now means one thing only**: the collecting gateway's
+own transaction fee, which is genuinely sunk and recoverable from nobody. `payments.md` §9 already
+records that `amount_fee` and `amount_net` are stored and unused, for precisely this kind of reason. A
+partial refund is therefore a partial release of a held amount rather than a partial reversal of a
+settlement — arithmetic on one row, not a ledger.
+
+#### What cannot be said to a member, which is not the same as what is built
+
+**The commercial rule is sound and buildable. The sentence "no refund is possible after delivery"
+cannot be put in front of a member.** Under the CPA a consumer holds an implied warranty of quality
+for six months after delivery, with the choice of refund, repair or replacement, and section 51
+forbids contracting out of it. A blanket no-refund term after delivery is void as a term, and in a
+club document it is the kind of statement that produces a complaint to the National Consumer
+Commission instead of a conversation.
+
+**The ruling and the CPA do not actually collide**, and the reconciliation matters more than the
+warning. What the product owner has decided is *where the money sits and who carries the operational
+burden* — not whether the member has a right. The parenthetical is the proof of it: withholding from
+the cultivator and compensating the member is exactly how the Collective honours an obligation it
+cannot disclaim. So:
+
+- **Build it as decided.** No post-release refund in the application. That is a settlement design,
+  not a term of sale.
+- **Never publish it as a term.** No club document, terms page or product screen says that refunds
+  end at delivery. What they say is how to raise a problem and how long an answer takes.
+- **The post-release path is a process, not a favour.** It needs an owner, a response time and a
+  written outcome, because "the NPC could withhold" describes a discretion and a consumer right is
+  not discretionary. Carried as residual risk in the manner of C7 — known, cheap to discharge now,
+  expensive to discover later.
+
+#### The cultivator-side deduction is a build item, and it lands on C10
+
+The half of the parenthetical that does reach the application is **withholding from what the
+Collective owes a cultivator**. C10's payment run — a payable list per cultivator per period — has to
+carry an adjustment line with a reason and an authorising administrator. Without one, the first time
+this happens somebody edits a total by hand and the reconciliation stops working. It is small, it is
+on the settlement side where nothing is built yet, and it is cheaper to design in than to retrofit.
+Recorded against C10's payment run rather than held here.
+
+#### C11.1 — how long the money stays after delivery
+
+**Status: Open, and it holds most of the remaining risk in this entry. Decide it with C9.1.**
+
+Release is now the moment the member's protection ends and a discretionary process begins. If the
+funds release on the instant of a Pargo delivery scan, a member who opens the box to a dead plant or
+the wrong strain has no refund available at all — only the withhold-and-credit path, for a case that
+is not exceptional. Every ordinary complaint becomes a manual settlement.
+
+**The recommendation is a short hold after the delivery event** — 72 hours is the shape of it, long
+enough to open a box and short enough that a cultivator is not financing the club. It converts the
+common complaint back into a refund on money the Collective still holds, which is the case this entry
+has just made cheap to build.
+
+Left open because it cannot be separated from **C9.1**, which is choosing between the courier scan, an
+administrator marking delivery, and automatic release after a fixed window. The third of those is this
+recommendation with a dispute path attached, and none of the three can be fixed until the Pargo
+integration is understood. **A dispute raised inside the window has to suspend the release** — the same
+missing dispute path C9.1 named, now load-bearing rather than tidy.
+
+#### The market's leg is more exposed than the club's
+
+The same rule against harder facts. A farmer's honey is delivered in days rather than months, so the
+hold is short and the window is most of it: the ordering of the release event against a complaint is a
+matter of hours, not a comfortable months-long float. And produce is perishable and it is food — a
+no-refund-after-delivery posture on a spoiled food item is the most exposed version of the CPA problem
+above, on the storefront that trades first. C10 has still not named who collects on the market leg, and
+until it does there is no account for a market refund to come out of.
+
+#### What this does not decide
+
+- **The membership fee.** Collected by F2C through Payfast, never in the Collective's account, and
+  untouched by this ruling. `payments.md` §9 stands as written for the subscription.
+- **The release event itself** — C9.1, and now C11.1 with it.
+- **Who may authorise a refund, and up to what value.** `platform.refund_transaction` is one codename;
+  whether a club administrator can refund any order or only their own club's is C13 and C14.
+- **The market's collecting account**, without which the market has no refund source — C10, C26.
 
 ### C12 — A cultivator cannot buy, and the drawio story says they browse
 
@@ -1585,8 +1708,10 @@ What that needs, and none of it exists:
 - **A position when the member does not pay.** Hold the plant, downgrade it to a no-cost type, or
   cancel — three different products, and the plant is in physical storage while it is decided. This
   is the same silence C8 flagged for the member who never confirms, with money added to it.
-- **A refund path.** C11 already has none. A manufacturing charge is the first thing a member could
-  reasonably ask back after the product type is chosen but before it is made.
+- **A refund path.** C11 gives one, but only against held funds — and a manufacturing charge is
+  taken at harvest, after the grow price has been released. It is therefore the first charge in the
+  system with no refund route at all, and it is the first thing a member could reasonably ask back
+  after the product type is chosen but before it is made.
 - **A fourth party at settlement.** Manufacturing is work somebody performs — the cultivator or a
   third-party processor — so C10's split of price, commission and courier gains a manufacturing leg.
 
