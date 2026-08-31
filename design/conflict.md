@@ -387,7 +387,7 @@ enforce them:
 | Requirement | Source | What it needs |
 | --- | --- | --- |
 | Only the **primary** cultivator appoints staff and registers sharing members | `member-roles.md` | A cultivator organisation with a primary flag |
-| A cultivator manages **their own** listings, stock and pricing | `member-roles.md` | Ownership on every one of those models |
+| A cultivator manages **their own** listings, stock and pricing | `member-roles.md` | Ownership on every one of those models. **The stock half is written** — `plant.stock._authorise` asks `platform.manage_plant_stock` and then asks `ProducerMembership` whether the caller is appointed to the farm named in the request. Listings and pricing follow the same shape |
 | A cultivator manages **the sharing members they registered** | `member-roles.md` | `registered_by` exists; nothing checks it |
 | A member views **their own** inventory | `member-roles.md` | Ownership on the plant |
 | Club administrator versus UC administrator reach | C2 | ~~Tier comparison at every administrative endpoint~~ — **struck by C29.** The UC tier is is_staff in the Django admin, so no endpoint compares tiers |

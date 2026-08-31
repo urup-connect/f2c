@@ -8,9 +8,10 @@ what each of them will be delivered as. A generic template would have somebody
 typing strain names from memory into a column that refuses anything it does not
 recognise.
 
-Until Block 9 there is no endpoint, so this is how a cultivator gets one --
-staff run it and send the file. `design/backend.md` section 3 records that the
-admin and the command line are the whole interface at this stage.
+`GET /api/stock/template` serves the same workbook to a cultivator who may load
+stock for the farm, so this is no longer the only way to get one. It stays
+because it writes a file to a path: staff producing a template for somebody who
+is not yet appointed, and anything scripted, have no session to present.
 """
 from pathlib import Path
 

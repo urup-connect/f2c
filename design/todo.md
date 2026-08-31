@@ -1088,8 +1088,24 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
 - [x] The admin's add form allocates a serial. Before it did, `serial` was `editable=False` and so on
       no form, and the column is unique but not null — the first plant added by hand would have saved
       blank and the second would have failed on the index
-- [ ] An endpoint for either. There is no `api.py` in `app/club/plant` at all — all three routes are
-      staff-side, and a cultivator does nothing themselves until Block 9
+- [x] **An endpoint for either** — `app/club/plant/api.py`, mounted at `/api/stock`. `POST /plants`
+      captures one, `POST /uploads` takes a workbook with a `dry_run` that validates and writes
+      nothing, and `GET /template` serves the per-cultivator template so a cultivator no longer needs
+      staff to run `plant_template` and email them the file. Capture only: no read, no export and no
+      withdrawal, because the cultivator-facing read model is the same rows Block 5 browses for a
+      different audience and deciding it here would pre-empt that
+- [x] Four outcomes, four status codes. **400 for a file that is not a template** and **422 for one
+      whose rows were refused** — `spreadsheet` is emphatic that a renamed heading is not a row
+      anybody can fix, and one code for both would show an empty error report for the wrong file.
+      A refused upload answers the *same* report shape as a successful one, so the screen has one
+      renderer
+- [x] The permission check for capture, and it is **two questions**. `platform.manage_plant_stock` is
+      granted by every producer appointment, so on its own it would let one farm's staff load plants
+      into another's inventory — the exact path `spreadsheet` says must not exist. The object-level
+      half is asked against `ProducerMembership` in `plant.stock`, which is the first service to use
+      what **C13** said had nothing to point at. `plant.services` stays unauthorised on purpose: it
+      is what `manage.py upload_plants` shares with the endpoint, and a check inside it would have
+      the command line inventing a user to satisfy
 - [x] Stock on hand **export** — `drawio`, cultivator story v1. `manage.py export_stock`, plus an
       admin action for whatever staff have filtered. Scoped to that story's own two screens — *my
       inventory for sale* (the default, and what SOH means) and *my member-owned inventory* — and it
@@ -1125,7 +1141,10 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
 - [ ] The permission checks themselves. `platform.disable_plant` and `platform.disable_batch` are in
       the catalogue and the admin actions exist, but **nothing calls `has_perm` on either** — the
       admin authorises on `is_staff` like every other Django admin page. Waits on the endpoints in
-      Block 9; the object-level half is **C13**, still open
+      Block 9. The object-level half is no longer blocked on **C13**: `plant.stock._authorise` is the
+      pattern, asking the codename and then the `ProducerMembership` row, and a withdrawal endpoint
+      would follow it — though withdrawal is an administrator's act over any farm, so the second
+      question there is a different one from capture's
 
 ---
 

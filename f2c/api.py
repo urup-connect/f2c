@@ -19,6 +19,7 @@ from django.conf import settings
 from app.core.documents.api import router as documents_router
 from app.club.membership.administration_api import router as member_admin_router
 from app.club.membership.api import router as membership_router
+from app.club.plant.api import router as stock_router
 from app.core.payments.api import router as payments_router
 from app.club.strains.api import router as catalogue_router
 from ninja import NinjaAPI, Schema
@@ -71,6 +72,15 @@ api.add_router('/payments', payments_router)
 # of this one. Mounted at /catalogue rather than /strains because the router
 # also owns the aroma and effect vocabularies, which are not strains.
 api.add_router('/catalogue', catalogue_router)
+# Loading plant stock: one plant, a workbook of them, and the template a
+# workbook is filled in on. Every endpoint holds out for
+# `platform.manage_plant_stock` *and* for an appointment to the producer named
+# in the request, both checked in `plant.stock` rather than by the router --
+# the second half is the object-level rule C13 said had nothing to point at,
+# and `ProducerMembership` is what it points at. Mounted at /stock rather than
+# /plants because Block 5's member-facing browse reads the same rows for a
+# different audience and will be a second router, not a relaxation of this one.
+api.add_router('/stock', stock_router)
 
 
 class HealthOut(Schema):

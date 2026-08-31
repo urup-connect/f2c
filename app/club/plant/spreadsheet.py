@@ -16,9 +16,11 @@ against a workbook built in memory.
 It is deliberately absent here: a column naming the cultivator is a column one
 cultivator can fill in with another's identity, and the upload would then load
 stock into somebody else's inventory. Who is uploading is a property of the
-request -- the management command takes it as an argument and Block 9's endpoint
-will take it from the session -- and never of the file. The brief's field list is
-describing a form a human fills in, not a trust boundary.
+request and never of the file: the management command takes it as an argument,
+and ``POST /api/stock/uploads`` takes it as a form field that ``plant.stock``
+checks against the caller's own ``ProducerMembership`` rows before a single cell
+is read. The brief's field list is describing a form a human fills in, not a
+trust boundary.
 
 **Dates must be dates, and a string is refused rather than guessed.**
 ``03/04/2026`` is the third of April in Johannesburg and the fourth of March in

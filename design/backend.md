@@ -867,12 +867,19 @@ removing a type from a listing changes what a member who already bought a plant 
 harvest. The precedent for the answer is `payments.Subscription`, which copies what a member agreed
 to onto their own row; the natural place to take that snapshot is the order, in Block 5.
 
-What is missing around the plant is the half of Block 3 that puts stock there in bulk. There is no
-individual-capture endpoint and **no Excel batch upload**, which is how `cultivator-stock-upload.md`
-expects a cultivator to work — so `allocate_serials` is written for a five-hundred-row batch that
-nothing yet submits. There is also no status for a plant that died: C9 is open, nobody has decided
-whether a crop failure means substitution, refund or credit, and inventing one would settle that in
-the schema.
+**Stock capture is now served**, which this section used to list as absent. `plant.api`, mounted at
+`/api/stock`, captures one plant, takes an Excel workbook with a dry run, and generates the
+per-cultivator template — so `allocate_serials` is no longer written for a five-hundred-row batch
+that nothing submits. It is the first module in the project to ask an object-level permission
+question: `platform.manage_plant_stock` is granted by every producer appointment, so `plant.stock`
+asks the codename and then asks `ProducerMembership` whether this caller is appointed to *that*
+farm. That second half is what C13 recorded as having nothing to point at.
+
+What is still missing around the plant is a cultivator-facing read. Capture writes stock and nothing
+serves it back: the stock-on-hand export is `manage.py export_stock` and an admin action, and the
+browse a cultivator would use is the same queryset Block 5 reads for members. There is also no
+status for a plant that died: C9 is open, nobody has decided whether a crop failure means
+substitution, refund or credit, and inventing one would settle that in the schema.
 
 **Payment status is now recorded**, which this section used to list as absent. What is still missing
 around it is narrower and is set out in `design/features/payments.md` section 9: nothing schedules

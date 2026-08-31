@@ -135,8 +135,13 @@ def capture_plant(cultivator, **raw):
 
     That reuse is the whole point of the shape. Two implementations of "is this a
     date" would eventually disagree, and the one that disagreed would be
-    whichever was exercised less -- which is this one, until Block 9 puts an
-    endpoint in front of it.
+    whichever was exercised less -- which was this one until ``api`` put
+    ``POST /api/stock/plants`` in front of it.
+
+    **No permission is asked here**, and that is deliberate rather than missing.
+    This is what ``manage.py add_plant`` and the endpoint share, and a check
+    inside it would have the command line inventing a user to satisfy. The
+    question is asked in ``plant.stock``, which is what the endpoint calls.
 
     Raises ``ValidationError`` with a dict keyed by the internal field names, so
     a form can attach each message to the field it belongs to. That is what
