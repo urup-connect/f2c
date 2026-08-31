@@ -900,8 +900,13 @@ farm. That second half is what C13 recorded as having nothing to point at.
 What is still missing around the plant is a cultivator-facing read. Capture writes stock and nothing
 serves it back: the stock-on-hand export is `manage.py export_stock` and an admin action, and the
 browse a cultivator would use is the same queryset Block 5 reads for members. There is also no
-status for a plant that died: C9 is open, nobody has decided whether a crop failure means
-substitution, refund or credit, and inventing one would settle that in the schema.
+status for a plant that died, and **C9 now says what one has to express**: a failed crop is
+substituted with an equivalent plant where one exists — the ownership row moves to the substitute
+serial and the money, which the club holds from order until delivery, follows it — and is refunded
+out of those held funds where no equivalent exists. So the plant needs a dead status and the order
+needs a **held or released** state; credit was ruled out and is not a case to model. What is still
+open is **C9.1**, the event that releases the funds, and that is an order-level fact rather than a
+plant one, so it does not block the plant status.
 
 **Payment status is now recorded**, which this section used to list as absent. What is still missing
 around it is narrower and is set out in `design/features/payments.md` section 9: nothing schedules

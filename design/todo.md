@@ -1185,7 +1185,10 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
 
 - [x] Disable or remove a plant — `platform.disable_plant`. A `disabled_at` timestamp and a batch
       action, which refuses any plant a member holds: withdrawing stock is taking it off sale, and
-      taking a paid-for plant back is a refund, which **C9** has not decided
+      taking a paid-for plant back is now a **substitution** where an equivalent plant exists and a
+      refund of held funds where it does not — **C9**. The refusal stands either way: withdrawal is
+      not the route, because both remedies belong to the cultivator's failure path, not to an
+      administrator's batch action
 - [x] Disable or remove a batch — `platform.disable_batch`. Does not withdraw the batch's plants; a
       mis-numbered crop must not void stock a member has bought
 - [x] Trace serials and batches — `drawio`, administrator stories. The plant admin searches on both
@@ -1225,7 +1228,16 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] **Step 3 — planting and harvest dates**, with a count of plants per date. Individual serials
       are deliberately not shown
 - [ ] Member picks a date and a quantity; the system allocates specific serials
-- [ ] Cart and checkout
+- [ ] **Cart and checkout — a single full-price payment.** The member pays the whole grow price at
+      order. No deposit, no balance at harvest, no receivables ledger — **C9**
+- [ ] **Held or released state on the order**, with the event and timestamp that changed it. The club
+      holds the member's money until delivery is confirmed and releases it to the cultivator then.
+      Where the funds actually sit is a commercial matter and out of scope for the application; the
+      state and the reporting are not — **C9**, **C10**
+- [ ] **Crop failure: substitute first.** An equivalent plant — same strain, a leaf rating no lower,
+      the next available harvest date. Ownership moves to the substitute serial and the held funds
+      follow it, so no money moves. Refund only where no equivalent exists or the member declines —
+      **C9**
 - [ ] Order confirmation and order history
 
 ### Filters — `drawio`, member story
@@ -1238,12 +1250,24 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] By price
 - [ ] Promotions only — Block 4
 
+### Copy this block creates — `landing`, `sign-up`
+
+- [ ] **Say the guarantee.** The cultivator guarantees delivery and the club holds the money until it
+      arrives. That is the reason a member is asked for the full price of something that does not
+      exist yet, and it is said nowhere today. It belongs in the introductory copy and the sign-up
+      journey — **C9**
+- [ ] **Put it in the club documents, not only in the copy.** A delivery guarantee is a term of sale,
+      and the sign-up documents are already versioned with a record of what a member agreed to.
+      Landing copy is governed — `landing` §4 and **C20** — so the wording goes through that review
+      — **C9**
+
 ### Open before this block starts
 
-- [!] When is the grow price paid — in full at order, deposit and balance, or at harvest? The brief
-      does not say, and each answer implies a different refund position — **C9**
-- [!] What happens when a crop fails. No document in `twp-tasks/` addresses it. Substitution, refund
-      and credit are three different products — **C9**
+- [!] How a substitution is offered: how it reaches the member, how long they have to answer, and
+      what happens in the silence. C9 decided the remedy, not the mechanic. **Answer it with the same
+      rule as C8's unanswered harvest notification**, not a second one — **C9**, **C8**
+- [!] Whether a substitute may come from a **different cultivator**. It changes who the held funds
+      release to, which makes it a settlement question — **C9**, **C10**
 
 ---
 
@@ -1267,6 +1291,8 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] Plants for processing — confirmed product type and address, awaiting confirmation — `drawio`
 - [ ] Ready for collection
 - [ ] Delivered, proofs of delivery, delivery tracking, escalations — `drawio`
+- [ ] **Delivery releases the cultivator's money.** The held funds from the order are released on
+      confirmed delivery — **C9**, **C10**
 - [ ] Certificate of ownership: plant IDs, planting date, harvest date, strain, cultivator
       pseudonym — `plant-id-numbers`
 - [ ] Packing labels and courier shipping documents — `platform.view_fulfilment_documents`
@@ -1281,8 +1307,14 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
       the journey and nothing ships without an address, so the plant sits in a cultivator's
       storage. Reminders then default, reminders then administrator escalation, or an
       indefinite hold — three different products. Answer before specifying this block — **C8**
+- [!] **Which event confirms delivery** and releases the held funds — **C9.1**. Preference: Pargo's
+      delivery or collection scan, because it needs no member action. Fallbacks are a member
+      confirmation, which strands a cultivator's payment in silence, or automatic release after a
+      fixed window with a dispute path that does not exist. Cannot be fixed until the Pargo
+      integration is understood — **C9**, **C11**
 - [!] How a priced finished product type is paid for. Not in the MVP, but it lands on this
-      screen the moment oil or gummies are listed — **C35**
+      screen the moment oil or gummies are listed — **C35**. It is a second payment for something
+      delivered later, so decide then whether the same hold-until-delivery rule applies to it — **C9**
 
 ---
 
@@ -1521,7 +1553,14 @@ Unspecified in every document. A launch blocker for cultivators.
 
 - [!] Does the platform collect and remit, or introduce and invoice a commission?
 - [!] What is the platform's take, and is it visible to the cultivator?
-- [!] When does a cultivator earn — at order, at harvest, or at delivery?
+- [x] When does a cultivator earn — **at delivery**. The member pays in full at order and the club
+      holds the money until delivery is confirmed — **C9**. Which event counts as confirmed is still
+      open: **C9.1**, in Block 6
+- [ ] **Statement of account carries three lines, not one: held, releasable, paid.** Funds held
+      against a plant still in the ground are not a cultivator's earnings and must never be shown as
+      them — **C9**
+- [ ] **Reconciliation to whatever account holds the cash is a finance process the platform reports
+      into.** The escrow arrangement itself is out of scope for the application — **C9**
 - [!] What else does a payout need on the producer record? Block 0.5 put a collection address and
       encrypted bank details on `Producer` and **stopped there on purpose** — a tax number or a
       mandate reference would have been inventing a commercial model in a schema. Whatever this
@@ -1533,7 +1572,12 @@ Unspecified in every document. A launch blocker for cultivators.
 
 - [!] Partial reversal with transaction and platform fees withheld —
       `platform.refund_transaction`. `payments.md` §9 records that no refunds exist
-- [!] Who carries a refund when the cultivator has already been paid — C10
+- [!] Who carries a refund when the cultivator has already been paid — C10. **Narrowed by C9**: the
+      commonest case, a failed crop, is substituted or refunded out of funds that were never released,
+      so nothing is clawed back and the cultivator carries the loss. What is left here is a refund
+      *after* release
+- [ ] A **dispute path**, if C9.1 resolves to automatic release after a fixed window. The window only
+      works if a member can suspend it — **C9.1**
 
 ### Reporting — `drawio`, administrator stories
 

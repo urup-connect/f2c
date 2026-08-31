@@ -430,8 +430,20 @@ The member chooses a date and a quantity; the system allocates specific serials.
 Filters across the journey: strain, cultivator, estimated harvest, rating, top sales, price, and
 promotions only.
 
-**C9** decides when the grow price is paid and what happens when a crop fails. Both are unanswered in
-the brief and both change this block's shape.
+**C9 is decided and it shapes the checkout.** The member **pays in full at order**, the club **holds
+the money** until delivery is confirmed, and the cultivator **guarantees delivery**. So the cart ends
+in a single full-price payment — no deposit, no balance due, no receivables — and the order carries a
+**held or released** state from the moment it is created. A failed crop is **substituted** with an
+equivalent plant, same strain and a leaf rating no lower, and the held funds follow the substitute
+serial; a refund happens only where no equivalent exists. The substitution offer itself — how it
+reaches the member, how long they have, and what happens in the silence — is a specification item for
+this block and Block 6, and it should be answered with the same rule as C8's unanswered harvest
+notification rather than a second one.
+
+**The guarantee has to be said, not merely implemented.** It is the reason a member is asked for the
+full price of something that does not exist yet, and it belongs in the introductory copy and the
+sign-up journey — and, because a guarantee is a term of sale, in the versioned club documents rather
+than only in a hero paragraph. C9 carries the detail and the copy-governance constraint.
 
 ### Block 6 — Ownership, harvest and fulfilment · 3 weeks
 
@@ -449,6 +461,12 @@ C8 again, and it is a constraint on Block 10 as much as on this block. Build the
 zero-total transaction rather than a two-field form: **C35** puts a real charge on this screen the
 moment a priced product type is listed. **C8 leaves one thing open** — what happens when the owner
 never answers the notification. Answer it before this block is specified.
+
+**Delivery is also what releases a cultivator's money** — C9 holds the member's payment from order
+until delivery is confirmed. **Which event counts as confirmed is C9.1 and is open**: the preference
+is Pargo's delivery or collection scan, so if this block integrates Pargo, find out early whether that
+event is exposed. The fallbacks are worse, and one of them adds money to the silence C8 already
+flagged.
 
 Needs a delivery address model, which does not exist. **C19** decides what a cultivator sees of a
 member on a packing label; the recommendation is nothing but a nickname, serials and a waybill, and
@@ -548,7 +566,11 @@ Refunds and partial reversals with fee withholding — **C11**. Sales, review an
 and the revenue, membership, plant sales and swap dashboards.
 
 Settlement — what the platform takes, when a cultivator earns, and how money reaches one — is
-entirely unspecified today and remains a launch blocker for cultivators wherever it is built. Block
+still a launch blocker for cultivators wherever it is built, though **one of the three is now
+answered: a cultivator earns at delivery** (C9). The member's money is held from order until then, so
+the statement of account has to carry **held**, **releasable** and **paid** as separate lines. Where
+the funds sit while held is a commercial and banking matter and is **out of scope for the
+application** — the platform records the state and reports it; it does not hold the cash. Block
 0.5 put a collection address and encrypted bank details on `Producer` and **stopped there on
 purpose**: a tax number or a mandate reference would have been inventing a commercial model in a
 schema.
@@ -638,9 +660,9 @@ it.
 
 | # | Decision | Holds up |
 | --- | --- | --- |
-| C9 | When is the grow price paid, and what happens on crop failure | Block 5 → Block A. Both change the block's shape |
-| C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. The market pays a producer on every order from the day it trades |
-| C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10 |
+| C9.1 | Which event confirms delivery and releases the held funds | Block A's settlement and Block C's fulfilment. The preference is Pargo's delivery or collection scan; it cannot be fixed until the integration is understood |
+| C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. The market pays a producer on every order from the day it trades. **C9 answers when a cultivator earns — at delivery** — and adds the held / releasable / paid statement lines |
+| C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10. **Narrowed by C9**: a failed crop is substituted, and where it is refunded the money is still held, so what is left here is a refund *after* release |
 | C14 | May an administrator create and manage sharing members | Block 2 and Block 9 → Block D. **C5 moved the ground under the standing decision**: the prescribed route is the operator's back office, and a Next.js-only club administrator has no access to it |
 | C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules. **Promoted by C7** — the four-plant ceiling is statutory and attaches to a named adult, so the holding check is a prerequisite of the block |
 | C16 | Does a harvested plant count toward the four | Block 10 → Block E. Promoted with C15 — it decides what the holding check counts |
@@ -658,6 +680,11 @@ sharing member's plants consume their own statutory allowance. A legal opinion i
 but its brief is narrow — the proxy leg and the physical location of the plants, R-C7.1 and R-C7.2 —
 and it blocks nothing.
 
+**C9 has come off this list and left one item behind.** Payment in full at order, held by the club
+until delivery and released to the cultivator then, with substitution as the crop-failure rule. What
+remains is **C9.1**, the release event, which is an integration question rather than a product one and
+holds up settlement rather than the checkout.
+
 **C15 and C16 move up in its place.** Both were refinements of the swap zone while the four-plant
 number was a convention. C7 made it a statutory ceiling attaching to a named adult, so the holding
 check is now a prerequisite of the block rather than a detail inside it.
@@ -669,6 +696,7 @@ check is now a prerequisite of the block rather than a detail inside it.
 | C6 | A sharing member is a **real person who does not transact** — decided, acted on as a placeholder, then **reversed** | Block 0.5 and Block E. Registration takes the identity number, the age rule and the POPIA attestation back, and the erasure route with them. A read-only login is specified and deferred. The code still implements the superseded reading |
 | C7 | The swap model is **defendable** — residual risk, not a gate | Ungates Block 10 → Block E. Makes the four-plant allowance a statutory ceiling, which promotes C15 and C16 to prerequisites |
 | C8 | **Nothing is payable at harvest.** Courier sits inside the price paid at order and is remitted to Pargo at settlement | Removes a checkout from Block 6 → Block C. Makes the harvest confirmation the point where ownership becomes final, which closes the swap window and constrains Block 10. Adds a third leg to C10's settlement split, and opens C35 |
+| C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Narrows C11 to refunds after release. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |

@@ -412,20 +412,144 @@ integration before C19 is decided on it.
 
 ### C9 — When the grow price is paid, and what happens when a crop fails
 
-**Status: Open. Blocks the ordering workflow.**
+**Status: Decided — the member pays in full at order. The club holds the money until delivery is
+confirmed and then releases it to the cultivator. A failed crop is substituted; it is refunded only
+where no equivalent plant exists. One thing stays open: which event counts as delivery confirmed.**
 
 `member-plant-purchase.md` has the member add plants to a cart and the system allocate serials. It
 does not say when money moves. The plant is then grown for months before the member receives
 anything.
 
-Three readings are consistent with the brief — payment in full at order; a deposit at order with the
-balance at harvest; payment at harvest with the order as a commitment. Each implies a different
+Three readings were consistent with the brief — payment in full at order; a deposit at order with
+the balance at harvest; payment at harvest with the order as a commitment. Each implied a different
 position when a plant dies, and **no document in `twp-tasks/` says what happens when a crop fails.**
 A member has paid for a specific serialised plant that no longer exists. Substitution, refund and
 credit are three different products.
 
-**Recommendation.** Payment in full at order, with a defined substitution-or-refund rule for crop
-failure. Anything else needs a receivables ledger the platform does not have.
+**Decision: payment in full at order.** The two alternatives are rejected on the same ground —
+either one turns the platform into a lender. A deposit leaves a balance outstanding across a
+months-long grow, and payment at harvest leaves the whole price outstanding; both need a receivables
+ledger, a dunning path, and an answer to the member who simply does not pay when the plant is ready
+and is already the legal owner of it. None of that exists and none of it is worth building for a
+first release.
+
+#### The guarantee is what makes payment at order fair, and the hold is what makes the guarantee real
+
+The product owner's position, which the register did not have when this was written as open:
+
+- **The cultivator guarantees delivery.** The member is not buying a chance at a plant; they are
+  buying a delivered outcome, and the cultivator carries the growing risk.
+- **The club holds the money.** Funds are held back after the member pays and are released to the
+  cultivator once delivery is confirmed.
+
+Those two together change the shape of the decision. Payment in full at order, on its own, asks a
+member to carry a months-long risk on a living thing they cannot see. Payment in full at order
+against a guarantee, with the money held until the guarantee is discharged, moves that risk to the
+party who can actually manage it — the cultivator does not hold the member's money while growing the
+member's plant, and the member's remedy for non-delivery is money that has not left yet rather than
+a claim against a farm.
+
+**This is a change to when a cultivator earns, not merely to where cash sits.** It is recorded here
+and carried into C10.
+
+#### Crop failure: substitution first, refund where there is no substitute
+
+The rule:
+
+1. **Substitute.** The cultivator offers an equivalent plant — same strain, a leaf rating no lower,
+   the next available harvest date. The member's ownership moves to the substitute serial and the
+   held funds follow it. **No money moves at all**, which is the reason this is the default: the
+   common failure case never touches a refund path.
+2. **Refund** where no equivalent plant exists, or where the member refuses the substitute offered.
+   The money has not been released, so this is a return of funds still held rather than a clawback
+   from a cultivator who has already been paid.
+3. **Credit is not offered.** Holding a member's money against a future grow they have not chosen is
+   the weakest of the three positions under the CPA, and it was not asked for.
+
+**The cultivator carries crop failure.** That follows from the guarantee and from the hold, and it
+answers one of C10's open questions for this case: nothing is recovered from a cultivator, because
+nothing was paid to one.
+
+**A substitute is assumed to come from the same cultivator.** A cross-cultivator substitution would
+change who the held funds release to, which is a settlement question and not a fulfilment one. Not
+decided here; it belongs with C10.
+
+**What has still to be specified is the offer itself**, and that is a Block 5 and Block 6 item rather
+than a decision: how a substitution is offered, how long the member has to answer, and what happens
+in the silence. That silence is the same one C8 left open at the harvest notification, and the two
+should be answered together with one rule about an unanswered member rather than two.
+
+#### Open — C9.1: what event confirms delivery
+
+The release trigger cannot be fixed until the Pargo integration is understood, so it is recorded as
+open rather than assumed.
+
+**The preference is the courier event** — Pargo's confirmed delivery or collection scan releases the
+funds. It is objective, it needs no member action, and it does not add money to the longest silence
+in the journey. Whether Pargo exposes such an event to the platform is exactly what is not yet
+known.
+
+The two fallbacks, in order:
+
+- **Member confirms receipt.** Cleanest evidence of satisfaction, worst behaviour under silence — a
+  member who never presses the button strands a cultivator's payment indefinitely, which is the C8
+  failure mode with money attached.
+- **Courier event where available, automatic release after a fixed window otherwise**, unless the
+  member has raised a dispute inside that window. Needs the dispute path, which is C11.
+
+Whichever is chosen, the platform has to hold one fact per order: whether the money is held or
+released, and on what event. That is a ledger state, and it is a prerequisite of C10's statement of
+account.
+
+#### Where the money is actually held is outside the application
+
+The product owner's position: the escrow arrangement itself — the account, the banking or trust
+mechanism, and whose balance sheet it sits on — is a commercial and financial matter and is **not in
+scope for the application**. This register records that as a stated boundary rather than as an
+oversight.
+
+What remains in scope is narrow, and is not optional:
+
+- The order carries a **held or released** state, with the event and the timestamp that changed it.
+- A cultivator's statement of account (C10) **must not present held funds as earnings**. Held,
+  releasable and paid are three different lines, and a statement that shows them as one will be
+  wrong for months at a time on every order in flight.
+- Reconciliation between the platform's ledger and whatever account actually holds the cash is a
+  finance process the application reports into and does not perform.
+
+#### What has to be said to a member, and where
+
+The hold and the guarantee are the strongest things this product can say to a member who is being
+asked for the full price of something that does not exist yet, and neither of them is said anywhere
+today. They belong in the **introductory copy and in the sign-up journey**, in plain terms: pay in
+full when you order, the cultivator guarantees delivery, the club holds your money until the plant
+is delivered, and if the crop fails you get an equivalent plant or your money back.
+
+Two constraints on that, both already documented:
+
+- **Landing-page copy is governed** — `features/landing.md` section 4 and the four compliance
+  patterns. A payment and guarantee statement is a commercial term rather than a cannabis claim, so
+  it is not the kind of copy those patterns exist to catch, but it goes through the same review, and
+  C20 is the open item on that page.
+- **A guarantee is a term of sale, not marketing.** If it is stated to members it belongs in the club
+  documents agreed at sign-up — `features/sign-up.md` section 5, which already versions those
+  documents and records what a member agreed to. Saying it only in a hero paragraph creates a promise
+  with no versioned record of what was accepted.
+
+**Not yet propagated.** This entry is the decision; `plan.md`, `todo.md`, `backend.md` and the feature
+documents still describe C9 as open and still carry no copy for the guarantee. That edit is
+deliberately deferred, not forgotten.
+
+#### What this does not decide
+
+- **C35 is untouched, but inherits the question.** A priced finished product type is a second
+  payment, taken at harvest for something delivered later, so the same hold-until-delivery logic
+  arguably applies to it. Decide that when C35 is specified rather than by silence now.
+- **The membership subscription is unaffected.** That is a Payfast recurring payment for club
+  membership, it is earned by the club itself, and it has nothing to do with this hold.
+- **Nothing here settles partial refunds with fees withheld.** That is C11, and it is a different
+  case: this rule returns funds on an order that was never delivered and whose money was never
+  released.
 
 ### C10 — Cultivator settlement is entirely unspecified
 
@@ -443,9 +567,25 @@ What has to be decided before it can be specified:
 
 - Does the platform collect and remit, or introduce and invoice a commission?
 - What is the platform's take, and is it visible to the cultivator?
-- When does a cultivator earn — at order, at harvest, at delivery?
-- Who carries a refund (C11) — the platform or the cultivator?
+- ~~When does a cultivator earn — at order, at harvest, at delivery?~~ **Answered by C9: at
+  delivery.** The member pays in full at order and the club holds the funds until delivery is
+  confirmed, so settlement is a hold-and-release across a months-long grow rather than a split at
+  checkout. Two consequences land here rather than in C9. The statement of account has to carry
+  **held**, **releasable** and **paid** as three separate lines — funds held against a plant still in
+  the ground are not a cultivator's earnings and must never be shown as them. And the release event
+  itself is still open (**C9.1**): the preference is Pargo's delivery or collection scan, and it
+  cannot be fixed until the integration is understood.
+- ~~Who carries a refund (C11) — the platform or the cultivator?~~ **Answered by C9 for the crop
+  failure case: the cultivator.** A failed crop is substituted where an equivalent plant exists and
+  refunded where it does not, and in both cases the money never left the hold — so nothing is
+  recovered from a cultivator, because nothing was paid to one. The general case, a refund after
+  release, is still C11's. One new question: a substitute is assumed to come from the same
+  cultivator, and a **cross-cultivator substitution** changes who the held funds release to.
 - Payfast is a collection gateway. Payouts need something else, or a manual EFT run.
+- **Where the funds are held is out of scope for the application.** The product owner has ruled
+  that the escrow account and its banking or trust mechanism are a commercial matter — see C9. The
+  application's obligation is to know the held-or-released state per order and to report it; it does
+  not hold or move the cash, and reconciliation to the actual account is a finance process.
 - **The courier component.** C8 puts delivery inside the price the member pays and remits it
   to Pargo at settlement, so a cultivator is paid the listed price less commission *and* less
   courier. Who sets that component, whether it is visible to the cultivator, and who carries
@@ -472,6 +612,15 @@ changes.**
 Partial refunds with fee withholding are not a button on a gateway. They need a transaction ledger
 that can express a partial reversal, and they interact with C10 — refunding a plant order takes
 money back from a cultivator who may already have been paid.
+
+**Narrowed by C9, not closed.** The commonest refund the platform expects — a crop that failed — is
+now mostly not a refund at all: an equivalent plant is substituted and the held funds follow it. Where
+there is no equivalent, the return is of money the club still holds, before commission or courier
+have been separated out, which needs no partial reversal and takes nothing back from a cultivator.
+What is left for C11 is the harder half: a refund **after** the funds have been released on delivery,
+and the administrator's power to reverse part of a transaction with fees withheld. C9.1's third
+option also lands here — automatic release after a fixed window requires a member-raised dispute to
+suspend it, and no dispute path exists.
 
 **Recommendation.** Specify refunds together with settlement, not before.
 
