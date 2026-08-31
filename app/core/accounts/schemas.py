@@ -233,3 +233,76 @@ class ProfileRefusedOut(Schema):
     detail: str
     fields: dict[str, list[str]] = {}
     mobile_unavailable: bool = False
+
+
+# ----------------------------------------------------------------------
+# Creating a store account
+# ----------------------------------------------------------------------
+# Read and written by `registration_api`, which is unauthenticated. Kept in this
+# module rather than in one of its own because a customer *is* a `User` and
+# nothing else -- `design/verticals.md` section 6 -- so the schemas that create
+# one belong beside the schemas that read one back.
+
+
+class CustomerRegisterIn(Schema):
+    """Exactly what the store's sign-up form collects. Four fields.
+
+    Every value arrives as typed and is normalised server-side; nothing here
+    assumes the caller has done it.
+
+    ``mobile`` defaults to the empty string rather than being required, and the
+    default is the contract rather than a convenience: the store's form leaves
+    the field optional because a wrong number is worse than none, so a
+    submission that omits it is a complete submission and not a partial one.
+
+    **What is absent is the schema.** No identity number, no nickname, no
+    password, and no ``consents`` -- see ``accounts.registration`` for each, and
+    ``registration.ConsentRequired`` for what happens the day the last of those
+    has to arrive.
+    """
+
+    first_name: str
+    last_name: str
+    email: str
+    mobile: str = ''
+
+
+class CustomerRegistrationOut(Schema):
+    """A registration that was accepted.
+
+    **One field, and the thinness is the point.** No id, no email address, no
+    name, nothing that came in. ``membership.schemas.RegistrationOut`` explains
+    the reasoning and then has to break it for a checkout token; there is no
+    payment here, so this response keeps the rule whole.
+
+    It is byte-identical for an address already on file. What differs between
+    the two is what arrives in a mailbox, which only the mailbox's owner sees --
+    see ``registration.CustomerRegistration.sign_in_for``.
+    """
+
+    detail: str
+
+
+class CustomerRegistrationRefusedOut(Schema):
+    """Why a registration was refused, per field where it has one.
+
+    The same shape as ``ProfileRefusedOut`` -- ``detail`` plus ``fields`` --
+    because the store already knows how to render that and a second refusal
+    shape would be a second renderer.
+
+    **The values in ``fields`` are machine codes, not sentences, and that is the
+    one place this differs from every other refusal on this API.** The store's
+    form renders its own wording under each input, keyed on the code, and it
+    drops any code it does not recognise -- see ``readSignUpRefusals`` in
+    ``frontend/market/lib/sign-up.ts``. Sending prose would put a Django
+    message beside the store's own voice on a screen the store designed, and
+    matching on prose is how that silently stops working. The codes are mapped
+    from the validators' ``code`` in ``registration_api``, which is the only
+    module that knows the wire vocabulary.
+
+    ``detail`` stays prose, for a human reading the response directly and for a
+    log.
+    """
+
+    detail: str
+    fields: dict[str, list[str]] = {}

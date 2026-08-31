@@ -13,6 +13,7 @@ methods, which is mandatory here because authentication is cookie-based rather
 than token-based.
 """
 from app.core.accounts.api import router as accounts_router
+from app.core.accounts.registration_api import router as customers_router
 from app.core.authn.api import router as authn_router
 from django.conf import settings
 from app.core.documents.api import router as documents_router
@@ -37,6 +38,13 @@ api = NinjaAPI(
 # rather than an omission. /accounts/me/avatar is the only endpoint on this API
 # that answers with something other than JSON.
 api.add_router('/accounts', accounts_router)
+# Creating a store account. Unauthenticated for the same reason /members/register
+# is -- there is no account until it returns -- and mounted on its own prefix
+# rather than beside the profile endpoints above, so an auth=None route is not
+# filed next to the ones that read a member's own record. A customer is a `User`
+# with no other row, which is why this lives in `accounts` and not in a market
+# app: see `accounts/registration.py`.
+api.add_router('/customers', customers_router)
 # Passkeys, emailed codes and sessions.
 api.add_router('/auth', authn_router)
 # Club documents. /documents/current is unauthenticated: sign-up has to read it

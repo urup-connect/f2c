@@ -39,10 +39,24 @@ in on a deployed environment today.**
       and `git add` says nothing. Found while checking that the P6 work could be committed. The
       packaging patterns are now anchored to the repository root. **`backend.md` risk 12 said the
       project was not under version control and C23 closed it; a third of the frontend genuinely
-      was not.** The 133 files still need adding in a commit of their own
+      was not.** **Closed:** all 133 are tracked and the tree is clean — they landed in `d3731df`
 
 - [ ] Configure a real email provider. `MAILERS` is the console backend, so sign-in codes and the
       duplicate-registration payment link reach nobody — P1
+- [ ] **A mail outage answers 500 on two paths that have already written, and one of them is a
+      dead end.** New, and found by running `/api/customers/register` against a configured SMTP
+      server that was not answering. Nothing in this project sends with `fail_silently`, so a send
+      that raises propagates: `POST /auth/login/start` answers 500, and so does the club's
+      duplicate-registration path where `email_outstanding_checkout` runs in an `on_commit` hook.
+      Both are retryable and lose nothing.
+      **Customer registration was not**, and that is why it is the only one fixed: the send follows a
+      row that has already committed, so a 500 goes to somebody whose account exists — and every
+      retry repeats it, because the retry is a duplicate and the duplicate path emails too. It
+      answers 503 with the account kept, worded so the answer is identical for a new address and one
+      already on file. **The other two are left alone deliberately**, because changing `authn` and
+      `payments` in passing is not the same decision: whether a sign-in code that cannot be sent
+      should be a 500 or a 503 is a contract question for those endpoints' own callers. Sequenced
+      with the mail provider above, since a provider that works is most of the answer
 - [ ] Schedule `manage.py lapse_memberships`. Until something runs it, an unpaid membership keeps
       access indefinitely — P2
 - [x] Shared cache backend. **Decided and built: Azure Managed Redis in QA and production, a
@@ -714,22 +728,47 @@ is not read as an unfinished step. `frontend/market` **now exists** and fills th
       `frontend/package.json` already declares. Built: the front door, the legal index, sign-in
       (passkey and emailed code), sign-up, and the signed-in account area — home, details, security —
       with 338 colocated tests. Runs on port 3001. `design/frontend.md` section 11 is the design
-- [ ] **A customer registration endpoint.** The one thing standing between the store application and
-      a usable storefront, and it is backend work: Django's only registration endpoint is
-      `POST /api/members/register`, which requires an identity number and document consents and
-      creates a `ClubMembership`. A produce customer has none of those — `verticals.md` §6 — so
-      calling it would enrol shoppers in a cannabis club. The frontend contract is already written and
-      tested against, in `frontend/market/lib/sign-up-api.ts`:
+- [x] **A customer registration endpoint — done.** `POST /api/customers/register`, unauthenticated,
+      over `app/core/accounts/registration.py` and `registration_api.py`, mounted at `/customers`.
+      **The store now takes accounts**: sign-up, then a sign-in code, then the account area, working
+      end to end against a real server. 53 new tests; frontend suite unchanged at 353 and its
+      contract needed no edit, which was the point of writing it first.
 
-      ```
-      POST /api/customers/register        auth=None
-        { first_name, last_name, email, mobile }
-        201     -> accepted. The SAME answer for an address already on file, per RegistrationOut
-        409/422 -> { "detail": ..., "fields": { "email": ["email-malformed"] } }
-      ```
+      It lives in `accounts` rather than in `app/market`, and the contrast with `club/membership` is
+      the argument: that app owns no models and exists because its write spans two apps that must not
+      know about each other, while this write is one row in this app. **A `market` app holding it
+      would be an app whose only content is a function about `User`.** `app/market` stays empty.
 
-      The store currently gets a 404 and says "accounts are not open yet", which is honest and is not
-      a placeholder to be replaced — it is the branch that stays for the day the API is down
+      Four decisions inside it, each of which could have gone the obvious way and been wrong:
+
+      - **A duplicate address is emailed a sign-in code too**, because the confirmation screen sends
+        everybody to the sign-in screen to enter one — so a customer who had forgotten their account
+        would otherwise be told to wait for something that never arrives. It reaches the mailbox
+        rather than whoever filled in the form, which is the same channel the club uses to email a
+        duplicate their outstanding payment link. A duplicate matched on the **handset** under a
+        different address is sent nothing, and a **suspended** account is sent nothing: a code would
+        be an invitation to nothing. The response body is byte-identical in every case, asserted on
+        the bytes
+      - **Publishing a market document at `agreement=at_registration` stops registration dead** with
+        a 503 — `registration.ConsentRequired` — rather than creating customers recorded as having
+        agreed to nothing. That publication is one action in the Django admin taken by whoever writes
+        the terms, not by whoever writes the endpoint, and without the guard it would begin quietly:
+        a condition no screen would show and no test would fail on. **The storefront it checks is
+        named, not resolved from the host** — the club's own three seeded documents demand agreement
+        at registration, so a host-scoped check would 503 the store on every unmapped host, which is
+        every development machine and every preview deployment. The mirror image of the line
+        `membership.services` already carries
+      - **A mail outage answers 503 and keeps the account.** See the Block 0 line below — this is the
+        one endpoint where that failure lands differently, and it was found by running the thing
+        rather than by reading it
+      - **The refusal body carries machine codes, not sentences**, which is the one place this API
+        does that. The store renders its own wording keyed on the code and drops what it does not
+        recognise, so prose would show a customer a blank form. `REFUSAL_CODES` is the table where
+        the two vocabularies meet, and a contract test asserts every value it can emit is one the
+        store renders
+
+      The `unavailable` branch in the frontend stays, but its meaning has changed: a 404 is now a
+      routing fault rather than an unbuilt endpoint, and its copy no longer promises a future opening
 - [ ] **The store's brand.** Palette, typography and a wordmark are neutral placeholders under the
       name *Farm to Consumer* (F2C), structured on the club's tokens so ratified values land in
       `frontend/market/app/globals.css` and nowhere else. `design/frontend.md` §11.5
@@ -749,7 +788,15 @@ market has content of its own.
       `frontend/market/app/legal` reads `GET /api/documents/published` and today correctly says
       nothing is published — distinguishing that from "could not be read", because telling a shopper
       the store has no privacy notice on a day when it has one and the API was down is an untrue
-      statement about a legal obligation
+      statement about a legal obligation.
+
+      **Read this before publishing any of them.** Registration now refuses outright if any market
+      document carries `agreement=at_registration`, so publishing the store's terms that way closes
+      sign-up until `POST /api/customers/register` grows a `consents` field and the form grows the
+      checkboxes to fill it. That is the intended behaviour and not a bug — the alternative is
+      customers recorded as having agreed to nothing — but it makes the order compulsory: **extend
+      the contract first, publish second.** A privacy notice at `agreement=none` is unaffected and
+      may be published on its own today, which is the sequence to prefer
 - [ ] **`frontend/club/lib/club-documents.ts` and `CLUB_DOCUMENT_IDS` per application.** The file has
       moved under `frontend/club` and the API contract did not change shape, so nothing is broken —
       the identifiers stay club-specific and split when the market has documents of its own

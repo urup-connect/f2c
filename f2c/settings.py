@@ -658,6 +658,13 @@ NINJA_DEFAULT_THROTTLE_RATES = {
     # membership/throttles.py -- this is the control that stands in for the
     # CSRF check an unauthenticated, server-to-server endpoint cannot have.
     'register': '5/m',
+    # Creating a store account. The same shape and the same job as `register`
+    # above, and a scope of its own so the two can be tuned apart: one
+    # storefront is a club somebody joins once and the other is a shop. Held at
+    # the same rate because a registration also emails a sign-in code, so the
+    # limit bounds mail to a typed address as well as rows in the table. See
+    # accounts/throttles.py.
+    'customer_register': '5/m',
     # The nickname check the sign-up form makes when the field loses focus.
     # Looser than `register`: a member tries a few names in one sitting, and
     # each one is a request. See membership/throttles.py.

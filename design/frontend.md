@@ -385,25 +385,53 @@ divergence a failing test rather than a refusal only one storefront makes.
 
 ### 11.4 What is not built, and is not pretending to be
 
-**Sign-up cannot complete, because the endpoint does not exist.** Django's only registration endpoint
-is `POST /api/members/register`, which registers a *club member*: identity number, document consents,
-a `ClubMembership`, and a checkout token for a subscription. None of that belongs to a produce
-customer, and calling it would enrol shoppers in a cannabis club.
-
-`lib/sign-up-api.ts` is therefore the one place the store's registration contract is written down, and
-it is written against the endpoint the API will have:
+**Sign-up completes. The endpoint is built** — `app/core/accounts/registration.py` and
+`registration_api.py`, mounted at `/customers`, with 53 tests. It creates a `User` and nothing else:
+no `ClubMembership`, no `StorefrontStaff`, no `ProducerMembership`, and therefore no permission of
+any kind. The contract `lib/sign-up-api.ts` was written against is the contract that shipped, so the
+form, its rules, its refusals and its confirmation screen needed no change:
 
 ```
 POST /api/customers/register        auth=None
-  { first_name, last_name, email, mobile }
-  201     -> the store has the details. The SAME answer for an address already on file
-  409/422 -> { "detail": ..., "fields": { "email": ["email-malformed"] } }
+  { first_name, last_name, email, mobile }        mobile optional
+  200     -> accepted, and a six-digit sign-in code is emailed.
+             The SAME answer, byte for byte, for an address already on file
+  422     -> { "detail": ..., "fields": { "email": ["email-malformed"] } }
+  429     -> the per-IP limit, 5/m, which stands in for the CSRF check an
+             unauthenticated server-to-server endpoint cannot have
+  503     -> either the store has published a document that must be agreed to
+             and this contract carries no `consents` field, or the sign-in code
+             could not be sent
 ```
 
-Today that call gets a 404, which the module reports as `unavailable` and the screen renders as
-"accounts are not open yet". Nothing is faked, nothing is stubbed, and no local state pretends an
-account was made. When the endpoint lands, that one file changes: the form, its rules, its refusals
-and its confirmation screen are already written and tested against the outcome union.
+Three decisions in that shape are worth stating, because none of them is the obvious reading.
+
+**A duplicate address is emailed a sign-in code too.** The confirmation screen sends everybody to the
+sign-in screen to enter one, so a customer who had forgotten their account would otherwise be told to
+wait for something that never arrives. It reaches the mailbox rather than whoever filled in the form
+— the same channel, and the same reasoning, that lets the club email an outstanding payment link to a
+duplicate. A duplicate matched on the *handset* under a different address is sent nothing at all,
+because emailing the typed address would tell it about somebody else's account. The response body is
+identical in every case.
+
+**Publishing a market document that must be agreed to stops registration dead**, with a 503, rather
+than creating customers recorded as having agreed to nothing — `registration.ConsentRequired`.
+Publishing one is a single action in the Django admin taken by whoever writes the terms, not by
+whoever writes the endpoint, and without the guard it would begin quietly. The storefront it checks is
+**named** rather than read from the request host: the club's own three documents demand agreement at
+registration, so a host-scoped check would refuse the store on every unmapped host, which is every
+development machine.
+
+**A mail outage answers 503 and keeps the account.** Found by running the endpoint against a mail
+server that was not answering. It is the one failure mode this endpoint has that no other on the API
+shares: a failed send during sign-in is retryable and idempotent, while a failed send here follows a
+row that has already committed — so letting it through would answer 500 to somebody whose account
+exists, and every retry would repeat it. The account is not rolled back to match, because it is a
+good row and the failure is a mail server.
+
+The remaining stale note is the `unavailable` branch: a 404 no longer means "not built", it means the
+API could not route the request. The branch stays as a diagnostic distinct from a 500, and its copy
+now says the fault is ours rather than promising a future opening.
 
 The success answer is deliberately identical for a fresh address and one already registered, which is
 the same disclosure decision `RegistrationOut` records on the Django side and the same one that makes
@@ -454,7 +482,7 @@ rules on the store's legal page — reads like a scoping bug in the frontend whe
 
 | # | Risk | Status |
 | --- | --- | --- |
-| 11.1 | The registration endpoint does not exist, so the store cannot take a single account. Everything in front of it is built and tested; the store is one backend endpoint away from usable, and not usable at all until then. | Open — `todo.md` Block B |
+| 11.1 | The registration endpoint does not exist, so the store cannot take a single account. Everything in front of it is built and tested; the store is one backend endpoint away from usable, and not usable at all until then. | **Closed.** `POST /api/customers/register` is built — see 11.4. The frontend contract needed no change, which is what the risk was really about |
 | 11.2 | The palette and typefaces are unratified placeholders. A ratified brand may cost more than a token swap if it brings a different layout language with it. | Accepted — the structure is shared with the club, so the swap is one file |
 | 11.3 | Four modules are duplicated from the club with their tests. A rule fixed in one and not the other diverges silently between storefronts. | Accepted, with the duplicated tests as the tripwire. Closes when `packages/` is drawn |
 | 11.4 | Risk 2 in section 10 applied here identically. | **Closed** with it — see risk 2. `SITE_URL` and `APP_ENV` are still evaluated during the build, so an image is still environment-specific; the API address no longer is |

@@ -7,24 +7,30 @@ import { readSignUpRefusals } from './sign-up'
 /**
  * Registers a store customer with Django, and never throws.
  *
- * ## The endpoint this calls does not exist yet
+ * ## The endpoint
  *
- * That is stated first because it governs everything below. Django has exactly one registration
- * endpoint today — `POST /api/members/register` — and it registers a **club member**: it requires an
- * identity number and document consents, it creates a `ClubMembership`, and it answers with a
- * checkout token for a subscription. None of that belongs to a produce customer, and calling it
- * would enrol shoppers in a cannabis club.
+ * `POST /api/customers/register` — four fields, no consents, no identity number, no payment. It
+ * creates a `User` and **nothing else**: no `ClubMembership`, no `StorefrontStaff`, no
+ * `ProducerMembership`, and therefore no permission of any kind. `app/core/accounts/registration.py`
+ * is the service, and it records why each absent field is absent.
  *
- * So this file is the one place the store's registration contract lives, written against the shape
- * the API will have rather than the shape it has: four fields, no consents, no identity number, no
- * payment. **Until the endpoint lands, the honest outcome is `unavailable`**, which a 404 produces
- * here and which the screen renders as "accounts are not open yet". Nothing is faked, nothing is
- * stubbed, and no local state pretends an account was made.
+ * **It is not the club's registration and must never become it.** Django's other registration
+ * endpoint, `POST /api/members/register`, requires an identity number and document consents and
+ * creates a `ClubMembership` — calling that one from here would enrol shoppers in a cannabis club.
+ * The two are separate endpoints on separate prefixes for exactly that reason.
  *
- * When the endpoint is built, the change is this file and nothing else: the form, its rules, its
- * refusals and its confirmation screen are all written and tested against `SignUpOutcome`.
- * `design/frontend.md` section 11.4 records the contract and `design/todo.md` Block B carries the
- * work.
+ * **Consents are still absent, and their absence is now enforced on the Django side rather than
+ * merely intended.** The store has no published documents, so there is nothing to tick. The day one
+ * is published at `agreement=at_registration`, the endpoint refuses every registration with a 503
+ * rather than creating customers recorded as having agreed to nothing —
+ * `registration.ConsentRequired`. That lands here as `unusable`, which is the right answer:
+ * extending this contract to carry consents is our work and not the customer's.
+ *
+ * **A 404 no longer means "not built".** It means the API could not route the request, which is a
+ * deployment fault rather than a phase of the project. The `unavailable` branch stays because it is
+ * a different diagnostic from a 500, not because the endpoint might be missing.
+ *
+ * `design/frontend.md` section 11.4 records the contract.
  *
  * ## Why it is server-only
  *
@@ -42,7 +48,7 @@ import { readSignUpRefusals } from './sign-up'
  * throws, so the server action does not need a try/catch to stay up.
  */
 
-/** The path the store's registration will answer on. One string, one place. */
+/** The path the store's registration answers on. One string, one place. */
 export const REGISTER_PATH = '/api/customers/register'
 
 export const createAccount = async (submission: SignUpSubmission): Promise<SignUpOutcome> => {

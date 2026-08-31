@@ -64,10 +64,21 @@ export const SIGN_UP_OUTCOME = {
     'did not already have an account, one has been created and a six-digit sign-in code is on its way. Enter it on the sign-in screen.',
   acceptedAction: 'Go to sign-in',
 
-  /** The endpoint does not exist yet. Said plainly, because it is nobody's mistake. */
-  unavailableHeading: 'Accounts are not open yet',
+  /**
+   * A 404 from the registration endpoint.
+   *
+   * **This used to say the store was not open yet, and that is no longer what a 404 means.** The
+   * endpoint exists — `POST /api/customers/register` — so the API failing to route the request is a
+   * deployment fault rather than a phase of the project, and telling a customer to come back when
+   * the store opens would be sending them away from something that is already working.
+   *
+   * The branch stays because it is a different diagnostic from a 500 and worth keeping separate in
+   * a log. What the customer reads is close to `failed`, deliberately: the distinction is ours to
+   * act on, not theirs.
+   */
+  unavailableHeading: 'Accounts are not available',
   unavailableBody:
-    'The store is not taking new accounts at the moment. Nothing you typed has been kept. Please try again once the store opens for orders.',
+    'The store cannot create accounts just now, and the fault is ours rather than yours. Nothing you typed has been kept. Please try again shortly.',
 
   refusedHeading: 'Something needs correcting',
   failedHeading: 'That did not work',

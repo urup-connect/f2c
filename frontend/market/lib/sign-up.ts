@@ -12,12 +12,17 @@
  * `email-address.ts` and `sa-mobile-number.ts`. Every field is checked and every refusal collected,
  * in field order, so somebody with two things wrong is told two things once.
  *
- * **Document consents are absent, and their absence is dated.** When the store's own terms and
- * privacy notice are published with `audience=customer` and `agreement=at_registration`, they are
- * collected here and posted with the rest — the machinery on the Django side is already built and
- * storefront-scoped. There is nothing to tick today because there is nothing published;
+ * **Document consents are absent, and their absence is dated and now enforced.** When the store's own
+ * terms and privacy notice are published with `audience=customer` and `agreement=at_registration`,
+ * they are collected here and posted with the rest — the machinery on the Django side is already
+ * built and storefront-scoped. There is nothing to tick today because there is nothing published;
  * `design/todo.md` Block B carries it. A checkbox against a document that does not exist would be a
  * consent to nothing, recorded as though it were something.
+ *
+ * What is new is that the API no longer relies on this file remembering. Publishing such a document
+ * makes `POST /api/customers/register` refuse every registration outright —
+ * `registration.ConsentRequired` — so the day somebody publishes the store's terms before this form
+ * has grown a checkbox, sign-up stops rather than quietly recording agreement to nothing.
  */
 
 import { checkEmailAddress } from './email-address'
@@ -143,8 +148,10 @@ export const signUpRefusalFor = (
  * address with no account.
  *
  * `refused` carries field refusals the API made that this form did not. `unavailable` is the endpoint
- * answering 404, which is today's normal answer — see `sign-up-api.ts`. `unusable` is everything
- * else, and says the fault is ours.
+ * answering 404 — no longer the normal answer, and now a routing fault rather than an unbuilt
+ * endpoint; see `sign-up-api.ts`. `unusable` is everything else, including the 503 the API answers
+ * if the store ever publishes a document that must be agreed to and this contract has not yet grown
+ * a `consents` field.
  */
 export type SignUpOutcome =
   | { readonly status: 'accepted'; readonly email: string }
