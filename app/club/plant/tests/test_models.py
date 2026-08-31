@@ -17,12 +17,19 @@ tenure in one transaction. A plant with two open tenures has two current owners
 and no way to say which certificate is real, so that half *is* enforced in SQL
 and is asserted through a raw update.
 
-**The four-plant count, and the refusal built on it.** C16 decides that a
-harvested plant does not count toward the statutory limit, and C15 enforces the
-limit in ``transfer_to`` — the only place ownership is written. Getting the count
-wrong means either refusing a swap ``harvest.md`` explicitly permits or letting a
-member hold five flowering plants, and the second of those is a member in breach
-of the Act because the platform put them there.
+**The four-plant count, and the refusal built on it.** C15 enforces the limit in
+``transfer_to`` — the only place ownership is written — and **C16 decides what it
+counts: every plant the club is still holding for the member, released at
+``shipped``.** A harvested plant therefore keeps its place until it goes out for
+delivery, which reverses the reading C15 originally shipped. Getting the count
+wrong means letting a member hold five plants, and that is a member in breach of
+the Act because the platform put them there.
+
+The boundary tests are the ones to read first: a harvested plant counts, a
+processed one counts, a shipped one does not, and a member whose four have all
+been cut has nothing swappable and waits for a delivery. That last one is a
+consequence C16 accepts rather than a defect, and it is asserted so that it stays
+one.
 """
 from datetime import timedelta
 from decimal import Decimal
@@ -35,7 +42,7 @@ from django.utils import timezone
 from app.core.accounts.services import SHARING_MEMBER_PLANT_ALLOCATION
 
 from ..models import (
-    MEMBER_FLOWERING_PLANT_LIMIT,
+    MEMBER_PLANT_HOLDING_LIMIT,
     Batch,
     OwnershipReason,
     Plant,
@@ -616,12 +623,14 @@ class OwnershipTests(PlantTestCase):
 
 
 class HoldingLimitTests(PlantTestCase):
-    """C15: four flowering plants per member, enforced on the write.
+    """C15: four plants per member, enforced on the write.
 
     Statutory rather than conventional since C7 — the ceiling attaches to the
     named adult — so these are tests about the platform not putting a member in
-    breach of the Act. The count itself is C16's: preflowering and in bloom, and
-    nothing at or past harvest.
+    breach of the Act. **What the four is counted over is C16's, and C16 is now
+    decided the other way**: every plant the club still holds for the member
+    counts, harvested and processed included, and the place is freed when the
+    plant ships rather than when it is cut.
 
     Nothing here asks what *kind* of member the holder is, and nothing may: C33
     requires the sharing-member role to stay droppable, and an owner-type branch
@@ -631,14 +640,14 @@ class HoldingLimitTests(PlantTestCase):
     def fill_the_allowance(self, member=None):
         """Four flowering plants in one member's hands."""
         member = member or self.member
-        for n in range(MEMBER_FLOWERING_PLANT_LIMIT):
+        for n in range(MEMBER_PLANT_HOLDING_LIMIT):
             plant = self.make_plant(cultivator_plant_id=f'POT-{n}')
             plant.transfer_to(member, reason=OwnershipReason.PURCHASE)
         return member
 
     def test_a_member_may_take_on_a_fourth_flowering_plant(self):
         """The limit is four held, not four minus one."""
-        for n in range(MEMBER_FLOWERING_PLANT_LIMIT - 1):
+        for n in range(MEMBER_PLANT_HOLDING_LIMIT - 1):
             self.make_plant(cultivator_plant_id=f'POT-{n}').transfer_to(
                 self.member, reason=OwnershipReason.PURCHASE
             )
@@ -647,8 +656,8 @@ class HoldingLimitTests(PlantTestCase):
         fourth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
 
         self.assertEqual(
-            Plant.objects.flowering_held_by(self.member).count(),
-            MEMBER_FLOWERING_PLANT_LIMIT,
+            Plant.objects.held_against_limit(self.member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT,
         )
 
     def test_a_fifth_flowering_plant_is_refused(self):
@@ -674,6 +683,20 @@ class HoldingLimitTests(PlantTestCase):
 
         self.assertIn('swap', str(refused.exception).lower())
 
+    def test_the_refusal_says_a_harvested_plant_still_counts(self):
+        """C16 reads oddly against the Act's own wording, so the refusal has to
+        say which rule it is applying. A member told they hold four when two of
+        them are in a curing room will otherwise read it as a bug."""
+        self.fill_the_allowance()
+        for plant in Plant.objects.held_by(self.member):
+            plant.mark_harvested(HARVESTS)
+        fifth = self.make_plant(cultivator_plant_id='POT-5')
+
+        with self.assertRaises(ValidationError) as refused:
+            fifth.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+
+        self.assertIn('delivered', str(refused.exception).lower())
+
     def test_a_refused_transfer_leaves_the_ledger_untouched(self):
         """The refusal comes before the tenure is written, so the plant is still
         the farm's and the trail has no aborted hop in it."""
@@ -688,26 +711,92 @@ class HoldingLimitTests(PlantTestCase):
         self.assertEqual(fifth.ownerships.count(), 1)
         self.assertTrue(fifth.ownerships.get().is_cultivator_held)
 
-    def test_a_harvested_plant_does_not_consume_the_allowance(self):
-        """C16, and the case `harvest.md` explicitly permits: a member at the
-        limit may still swap for a harvested plant."""
+    def test_a_harvested_plant_consumes_the_allowance(self):
+        """**C16, decided.** A harvested plant is stock the club is holding for
+        the member, so a member at the limit cannot take on a fifth by taking on
+        a harvested one. This inverts the reading C15 shipped."""
         self.fill_the_allowance()
         harvested = self.make_plant(cultivator_plant_id='POT-5')
         harvested.mark_harvested(HARVESTS)
 
-        harvested.transfer_to(self.member, reason=OwnershipReason.SWAP)
+        with self.assertRaises(ValidationError) as refused:
+            harvested.transfer_to(self.member, reason=OwnershipReason.SWAP)
+
+        self.assertEqual(
+            refused.exception.error_list[0].code, 'holding_limit_reached'
+        )
+        self.assertEqual(Plant.objects.held_by(self.member).count(), 4)
+
+    def test_harvesting_a_plant_does_not_free_its_place(self):
+        """The member's own four, all cut. The place is freed by the delivery
+        and not by the harvest — which is what C16 changed, and the reason the
+        refusal names a delivery rather than a harvest."""
+        self.fill_the_allowance()
+        for plant in Plant.objects.held_by(self.member):
+            plant.mark_harvested(HARVESTS)
+
+        self.assertEqual(
+            Plant.objects.held_against_limit(self.member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT,
+        )
+        self.assertEqual(Plant.objects.holding_allowance_for(self.member), 0)
+
+    def test_a_processed_plant_still_counts(self):
+        """The status between harvest and dispatch. It is in the club's hands
+        exactly as a harvested one is, so it counts exactly as one does."""
+        self.fill_the_allowance()
+        Plant.objects.held_by(self.member).first().mark_harvested(
+            HARVESTS, status=PlantStatus.PROCESSED
+        )
+
+        self.assertEqual(Plant.objects.holding_allowance_for(self.member), 0)
+
+    def test_a_shipped_plant_frees_its_place(self):
+        """Where the count stops. `SHIPPED` stands in for delivery — the event
+        that confirms delivery is C9.1 and is open — and it is the last thing
+        the platform observes about a plant. Past it, what the member physically
+        holds is theirs, which is R-C15.2's blindness arriving by another
+        route."""
+        self.fill_the_allowance()
+        going_out = Plant.objects.held_by(self.member).first()
+        going_out.mark_harvested(HARVESTS, status=PlantStatus.SHIPPED)
+        replacement = self.make_plant(cultivator_plant_id='POT-5')
+
+        replacement.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
 
         self.assertEqual(Plant.objects.held_by(self.member).count(), 5)
         self.assertEqual(
-            Plant.objects.flowering_held_by(self.member).count(),
-            MEMBER_FLOWERING_PLANT_LIMIT,
+            Plant.objects.held_against_limit(self.member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT,
         )
+
+    def test_a_member_holding_four_harvested_plants_has_nothing_to_swap(self):
+        """The consequence C16 accepts, asserted here so that it is not later
+        discovered as a bug. Swapping requires a flowering plant — `harvest.md`,
+        and `assert_swappable` — and the holding count now includes harvested
+        ones, so a member whose four have all been cut cannot trade one out to
+        make room and waits for a delivery instead."""
+        self.fill_the_allowance()
+        for plant in Plant.objects.held_by(self.member):
+            plant.mark_harvested(HARVESTS)
+
+        held = Plant.objects.held_by(self.member)
+        self.assertEqual(held.count(), MEMBER_PLANT_HOLDING_LIMIT)
+        self.assertEqual(
+            Plant.objects.swappable().filter(owner=self.member).count(), 0
+        )
+        for plant in held:
+            with self.assertRaises(ValidationError) as refused:
+                plant.assert_swappable()
+            self.assertEqual(
+                refused.exception.error_list[0].code, 'not_flowering'
+            )
 
     def test_swapping_a_plant_out_makes_room_for_another(self):
         """The remedy the refusal names, end to end."""
         self.fill_the_allowance()
         alex = self.another_member()
-        Plant.objects.flowering_held_by(self.member).first().transfer_to(
+        Plant.objects.held_against_limit(self.member).first().transfer_to(
             alex, reason=OwnershipReason.SWAP
         )
         incoming = self.make_plant(cultivator_plant_id='POT-5')
@@ -715,8 +804,8 @@ class HoldingLimitTests(PlantTestCase):
         incoming.transfer_to(self.member, reason=OwnershipReason.SWAP)
 
         self.assertEqual(
-            Plant.objects.flowering_held_by(self.member).count(),
-            MEMBER_FLOWERING_PLANT_LIMIT,
+            Plant.objects.held_against_limit(self.member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT,
         )
 
     def test_a_withdrawn_plant_does_not_consume_the_allowance(self):
@@ -724,14 +813,14 @@ class HoldingLimitTests(PlantTestCase):
         says no longer exists. Leaving it in the count would strand a member at
         the ceiling holding three."""
         self.fill_the_allowance()
-        Plant.objects.flowering_held_by(self.member).first().disable()
+        Plant.objects.held_against_limit(self.member).first().disable()
         replacement = self.make_plant(cultivator_plant_id='POT-5')
 
         replacement.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
 
         self.assertEqual(
-            Plant.objects.flowering_held_by(self.member).count(),
-            MEMBER_FLOWERING_PLANT_LIMIT,
+            Plant.objects.held_against_limit(self.member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT,
         )
 
     def test_the_limit_is_per_member_and_not_per_club(self):
@@ -742,18 +831,18 @@ class HoldingLimitTests(PlantTestCase):
 
         theirs.transfer_to(alex, reason=OwnershipReason.PURCHASE)
 
-        self.assertEqual(Plant.objects.flowering_held_by(alex).count(), 1)
+        self.assertEqual(Plant.objects.held_against_limit(alex).count(), 1)
 
     def test_the_allowance_reads_back_as_a_number_of_plants(self):
         """What a screen shows before a member is refused."""
         self.assertEqual(
-            Plant.objects.flowering_allowance_for(self.member),
-            MEMBER_FLOWERING_PLANT_LIMIT,
+            Plant.objects.holding_allowance_for(self.member),
+            MEMBER_PLANT_HOLDING_LIMIT,
         )
 
         self.fill_the_allowance()
 
-        self.assertEqual(Plant.objects.flowering_allowance_for(self.member), 0)
+        self.assertEqual(Plant.objects.holding_allowance_for(self.member), 0)
 
     def test_an_over_stocked_member_reads_zero_and_never_a_negative(self):
         """A member can come to be over the ceiling without the platform having
@@ -764,14 +853,14 @@ class HoldingLimitTests(PlantTestCase):
         extra = self.make_plant(cultivator_plant_id='POT-5')
         Plant.objects.filter(pk=extra.pk).update(owner=self.member)
 
-        self.assertEqual(Plant.objects.flowering_allowance_for(self.member), 0)
+        self.assertEqual(Plant.objects.holding_allowance_for(self.member), 0)
 
     def test_a_sharing_members_allocation_is_the_same_number(self):
         """C7: the four attaches to the named adult, so a cultivator allocating
         four to a sharing member spends that person's own allowance. One
         constant, imported — two would let the figures drift apart."""
         self.assertEqual(
-            SHARING_MEMBER_PLANT_ALLOCATION, MEMBER_FLOWERING_PLANT_LIMIT
+            SHARING_MEMBER_PLANT_ALLOCATION, MEMBER_PLANT_HOLDING_LIMIT
         )
 
 
@@ -808,10 +897,10 @@ class StockQuerySetTests(PlantTestCase):
 
         self.assertEqual(list(Plant.objects.held_by(self.member)), [])
 
-    def test_the_flowering_count_excludes_a_harvested_plant(self):
-        """C16. The Act's limit is on *flowering* plants, and `harvest.md`
-        explicitly lets a member swap for a harvested one — so counting those
-        would have two briefs refusing the same transaction."""
+    def test_the_holding_count_includes_a_harvested_plant(self):
+        """**C16, decided.** The count is over what the club is holding rather
+        than over what is in flower, so an in-bloom plant and a harvested one
+        are both in it. The reading this replaces returned only the first."""
         flowering = self.make_plant(cultivator_plant_id='POT-1')
         flowering.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
         flowering.status = PlantStatus.IN_BLOOM
@@ -823,14 +912,28 @@ class StockQuerySetTests(PlantTestCase):
 
         self.assertEqual(Plant.objects.held_by(self.member).count(), 2)
         self.assertEqual(
-            list(Plant.objects.flowering_held_by(self.member)), [flowering]
+            set(Plant.objects.held_against_limit(self.member)),
+            {flowering, harvested},
+        )
+
+    def test_the_holding_count_excludes_a_shipped_plant(self):
+        """C16's boundary, as a read. Everything before dispatch counts; from
+        the moment the product is with the courier the platform stops claiming
+        to know what the member holds."""
+        shipped = self.make_plant(cultivator_plant_id='POT-1')
+        shipped.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
+        shipped.mark_harvested(HARVESTS, status=PlantStatus.SHIPPED)
+
+        self.assertEqual(Plant.objects.held_by(self.member).count(), 1)
+        self.assertEqual(
+            list(Plant.objects.held_against_limit(self.member)), []
         )
 
     def test_a_preflowering_plant_counts_toward_the_four(self):
         plant = self.make_plant()
         plant.transfer_to(self.member, reason=OwnershipReason.PURCHASE)
 
-        self.assertEqual(Plant.objects.flowering_held_by(self.member).count(), 1)
+        self.assertEqual(Plant.objects.held_against_limit(self.member).count(), 1)
 
     def test_swappable_excludes_a_harvested_plant(self):
         """`harvest.md`: "After harvest no further swapping for paying members."

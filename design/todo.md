@@ -1175,18 +1175,27 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
 - [x] `Plant.holder` and `PlantOwnership.holder_name` — the read a screen, an export or a certificate
       uses. `owner` answers the narrower question *which member*, which is what keeps `available()` a
       one-column filter
-- [x] **The four-flowering-plant statutory limit, enforced — C15.** `MEMBER_FLOWERING_PLANT_LIMIT` is
-      `4`, `Plant.assert_may_be_held_by` refuses a fifth, and `transfer_to` calls it — the only place
-      `owner` is written, so purchase, swap, allocation and adjustment all meet one refusal. Counts
-      `preflowering` and `in_bloom` only (**C16**'s reading), excludes the plant being transferred
-      from its own count, and never asks what kind of member holds it (**C33**).
-      `accounts.SHARING_MEMBER_PLANT_ALLOCATION` now imports the same constant — C7 made the four the
-      person's own ceiling, and two constants could drift. A count in Python, not a constraint: SQL
-      cannot express *at most four rows per owner*, and the concurrent-transfer race is named and
-      accepted
-- [x] `Plant.objects.flowering_allowance_for(member)` — *how many more may you take on*, floored at
-      zero. What Block 5's quantity step and Block 10's swap screens read so a member is told before
-      they are refused
+- [x] **The four-plant statutory limit, enforced — C15.** `MEMBER_PLANT_HOLDING_LIMIT` is `4`,
+      `Plant.assert_may_be_held_by` refuses a fifth, and `transfer_to` calls it — the only place
+      `owner` is written, so purchase, swap, allocation and adjustment all meet one refusal. Excludes
+      the plant being transferred from its own count, and never asks what kind of member holds it
+      (**C33**). `accounts.SHARING_MEMBER_PLANT_ALLOCATION` now imports the same constant — C7 made
+      the four the person's own ceiling, and two constants could drift. A count in Python, not a
+      constraint: SQL cannot express *at most four rows per owner*, and the concurrent-transfer race
+      is named and accepted
+- [x] **What the four is counted over, decided and rebuilt — C16.** `HOLDING_LIMIT_STATUSES` is
+      `preflowering`, `in_bloom`, `harvested` and `processed`: every plant the club is still holding
+      for the member, released at `shipped`. **This reverses the reading C15 shipped** — a harvested
+      plant keeps its place until it goes out for delivery, because until then it is stock the club
+      has custody of and can see. `shipped` stands in for the delivery-confirmed event **C9.1** has
+      not chosen; when it lands it replaces `processed` as the boundary and nothing else changes.
+      `FLOWERING_STATUSES` survives and now means only what may be swapped (`harvest`), and the two
+      tuples are kept apart on purpose
+- [x] `Plant.objects.held_against_limit(member)` and `Plant.objects.holding_allowance_for(member)` —
+      the count and *how many more may you take on*, floored at zero. What Block 5's quantity step and
+      Block 10's swap screens read so a member is told before they are refused. Renamed off
+      `flowering_*` with C16, because a name saying *flowering* over a count that includes harvested
+      plants is the drift C15 spent a section refusing over a duplicated `4`
 
 ### Capture
 
@@ -1302,11 +1311,14 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] **Step 3 — planting and harvest dates**, with a count of plants per date. Individual serials
       are deliberately not shown
 - [ ] Member picks a date and a quantity; the system allocates specific serials
-- [ ] **The quantity step is capped by the member's remaining allowance — C15.** Four flowering
-      plants is a statutory ceiling and `transfer_to` refuses the fifth, so a member holding three
-      who orders two would pay and then be refused. Read
-      `Plant.objects.flowering_allowance_for(member)` and say so on the step; never let the refusal
-      first appear at the payment page
+- [ ] **The quantity step is capped by the member's remaining allowance — C15.** Four plants is a
+      statutory ceiling and `transfer_to` refuses the fifth, so a member holding three who orders two
+      would pay and then be refused. Read `Plant.objects.holding_allowance_for(member)` and say so on
+      the step; never let the refusal first appear at the payment page
+- [ ] **The step has to explain the number, not just enforce it — C16.** A harvested plant keeps its
+      place until it goes out for delivery, so a member can be at the ceiling with nothing growing.
+      "You may take on 0 more" with no reason attached will be read as a bug on that screen more often
+      than anywhere else in the journey
 - [ ] **Cart and checkout — a single full-price payment.** The member pays the whole grow price at
       order. No deposit, no balance at harvest, no receivables ledger — **C9**
 - [!] **This checkout does not run on the built gateway.** The money goes to the Cultivators
@@ -1398,7 +1410,9 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
       the journey and nothing ships without an address, so the plant sits in a cultivator's
       storage. Reminders then default, reminders then administrator escalation, or an
       indefinite hold — three different products. Answer before specifying this block — **C8**
-- [!] **Which event confirms delivery** and releases the held funds — **C9.1**. Preference: Pargo's
+- [!] **Which event confirms delivery** — it releases the held funds and, since **C16**, frees a
+      place on the member's four. One event, two consumers, and an argument for one column rather than
+      two — **C9.1**. Preference: Pargo's
       delivery or collection scan, because it needs no member action. Fallbacks are a member
       confirmation, which strands a cultivator's payment in silence, or automatic release after a
       fixed window with a dispute path that does not exist. Cannot be fixed until the Pargo
@@ -1551,20 +1565,26 @@ treated as defendable, and a sharing member's four flowering plants consume thei
 allowance. A legal opinion is still worth having on the proxy leg and on where the plants physically
 sit (R-C7.1, R-C7.2), and it blocks nothing.
 
-**Both prerequisites that arrived with that answer are met.** The four-flowering-plant holding check
-became a statutory ceiling rather than a convention, so it was a precondition of this block rather
-than a rule inside it — and **C15 built it**, in `Plant.transfer_to`, counting plants per member and
-**never branching on what kind of member** (C33 requires this role to be droppable, and a branch on
-owner type is exactly what would have to be deleted to drop it). What this block still owes the rule
-is the *prompt*: a member at the ceiling should be offered a trade down, not only refused.
+**Both prerequisites that arrived with that answer are met.** The four-plant holding check became a
+statutory ceiling rather than a convention, so it was a precondition of this block rather than a rule
+inside it — and **C15 built it**, in `Plant.transfer_to`, counting plants per member and **never
+branching on what kind of member** (C33 requires this role to be droppable, and a branch on owner type
+is exactly what would have to be deleted to drop it). **C16 then decided what it counts, against the
+reading C15 shipped**: every plant the club still holds for the member, released at dispatch rather
+than at the cut.
+
+What this block still owes the rule is the *prompt*: a member at the ceiling should be offered a trade
+down, not only refused — and since C16 the prompt has to handle the case where there is no trade to
+offer, because a member's four have all been harvested and a harvested plant cannot be swapped.
 
 - [ ] Swap zone listing. **No Rand values anywhere in it** — `swap-zone`
 - [ ] Leaf rating displayed on every plant in the zone
 - [ ] An explanation of how the leaf rating works — `drawio`, member story
-- [ ] Sharing-member stock seeds the zone. Four flowering plants per sharing member —
+- [ ] Sharing-member stock seeds the zone. Four plants per sharing member —
       `platform.allocate_sharing_member_stock`. `SHARING_MEMBER_PLANT_ALLOCATION` is the person's own
-      statutory ceiling (C7) and is now `MEMBER_FLOWERING_PLANT_LIMIT` imported; allocating a fifth
-      is already refused by `transfer_to` — **C15**
+      statutory ceiling (C7) and is now `MEMBER_PLANT_HOLDING_LIMIT` imported; allocating a fifth
+      is already refused by `transfer_to` — **C15**. The allocation stays spent through harvest and
+      processing, not released by the cut — **C16**
 - [ ] The cultivator offers and swaps a sharing member's plants; the sharing member does neither —
       **C33**. When the read-only login lands, revisit: a person who signs in can withdraw their own
       plant, which is most of R-C7.1 gone
@@ -1575,12 +1595,23 @@ is the *prompt*: a member at the ceiling should be offered a trade down, not onl
 - [ ] Equivalent leaf-value matching
 - [ ] Explicit acknowledgement when a member accepts a lower-valued request and forfeits the
       difference — `swap-zone`
-- [x] Four-flowering-plant holding check, enforced on the write — **C15**, in `transfer_to`, so a
-      swap that would leave a member overstocked is already refused with the remedy named in the
-      message
+- [x] Four-plant holding check, enforced on the write — **C15**, in `transfer_to`, so a swap that
+      would leave a member overstocked is already refused with the remedy named in the message.
+      Counting harvested and processed plants too — **C16**
 - [ ] Prompt a member to trade a flowering plant for a pre-flowering one before refusing —
       `stock-holding-limit`. The refusal exists and names the remedy; the screen that *offers* it,
-      reading `flowering_allowance_for`, is the part this block owes
+      reading `holding_allowance_for`, is the part this block owes
+- [!] **The prompt has to handle the case C16 leaves with no move.** A member holding four harvested
+      plants cannot trade one out — swapping requires a flowering plant (`harvest`,
+      `assert_swappable`) and the count now includes harvested ones — so the screen has to say *wait
+      for your delivery* rather than offer a trade that will be refused. There is no fix inside the
+      ruling: letting a harvested plant into the zone contradicts `harvest`, not counting it
+      contradicts **C16**
+- [!] **Sequence a swap as release-then-acquire.** `assert_may_be_held_by` excludes only the plant
+      being transferred, so a member at the ceiling is refused if the incoming leg runs first and
+      permitted if the outgoing leg does. True before **C16** and now biting on more swaps, because a
+      flowering-for-harvested trade is a counted plant for a counted plant. It is a rule about the
+      order of two writes inside one service
 - [ ] No swapping after harvest for paying members — `harvest`. The trigger is the owner's harvest
       confirmation: confirming product type and address makes ownership final and takes the plant out
       of the zone — **C8**
@@ -1610,10 +1641,14 @@ is the *prompt*: a member at the ceiling should be offered a trade down, not onl
       is argued on private cultivation plus ownership attaching at flowering, and carried as R-C7.2.
       The third is a swap: the model is in use by other clubs and defendable, mitigated by keeping
       the leaf rating a rounding of a disclosed price and moving **no money in the zone**
-- [!] Does a harvested plant count toward the four? `harvest` permits a swap the holding rule might
-      refuse. Recommendation: count only preflowering and in bloom — **C16**. **Already running**:
-      C15's holding check counts those two statuses and nothing at or past harvest, so ratifying
-      costs nothing and reversing is a change to a refusal members meet
+- [x] Does a harvested plant count toward the four? **Decided and rebuilt — C16. It does**, until
+      the plant goes out for delivery, because until then it is stock the club is holding and can
+      see. This reversed the recommendation C15 had already shipped, and the check was changed with
+      the ruling. The swap `harvest` permits is not thereby refused — it is refused only for a member
+      already at the ceiling, which is the holding rule working. Two consequences are accepted: a
+      member's grow cycle no longer overlaps their delivery window, and a member holding four
+      harvested plants has no swap available and waits. `shipped` stands in for the delivery-confirmed
+      event **C9.1** has yet to choose
 - [!] Equal-value matching versus maturity. Leaf rating derives from grow price alone, so a plant
       three weeks from harvest and a seedling of the same price trade at par, and everyone wants the
       mature side. Recommendation: require confirmation for mature stock — **C17**
@@ -1635,9 +1670,12 @@ is the *prompt*: a member at the ceiling should be offered a trade down, not onl
 - [ ] Ticket status tracking and responses
 - [ ] Contact us page
 - [ ] Rules and guidelines page. **It carries the two limits the platform does not enforce — C15.**
-      Four flowering plants are enforced; the household limit, the dried-weight limit and plants held
-      through any other club are the member's own responsibility, and the page says so plainly rather
-      than implying the club polices them. Drafted copy is in the C15 entry in `conflict.md`; it is a
+      Four plants are enforced; the household limit, the dried-weight limit and plants held through
+      any other club are the member's own responsibility, and the page says so plainly rather than
+      implying the club polices them. **Two paragraphs of C15's drafted copy are superseded by C16**
+      and the replacement is in the C16 entry: a harvested plant keeps counting until it goes out for
+      delivery, harvesting frees no place, and the page says out loud that this is the club's own rule
+      and stricter than the law requires. Drafted copy is in `conflict.md`; it is a
       club document under the copy-governance rules, not a hero paragraph
 - [ ] FAQ
 - [ ] Cultivator requests a new strain listing — `platform.request_catalogue_addition`

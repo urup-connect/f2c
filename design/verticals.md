@@ -84,7 +84,7 @@ between the two storefronts. Built once it serves both; built inside the club it
 
 **The club alone.** Strain attributes — cannabinoid content, terpene profile, flowering weeks;
 `Plant`; `Batch`; the serial; `PlantOwnership`; grow price; the leaf rating; the swap zone; harvest
-and the finished product; the four-flowering-plant ceiling; the membership subscription; the age
+and the finished product; the four-plant ceiling; the membership subscription; the age
 gate; and the copy-compliance rules in `frontend/club/lib/copy-compliance.ts`.
 
 **The market alone.** Unit of measure — kilogram, bunch, punnet, each; a stock quantity that

@@ -164,13 +164,19 @@ knowing it is spoken for reveals nothing about who holds it.
 ### 3.5 The four plants
 
 `services.SHARING_MEMBER_PLANT_ALLOCATION` is the same limit members live under, and since C15 it is
-literally the same object: `plant.models.MEMBER_FLOWERING_PLANT_LIMIT`, imported. One number, and now
+literally the same object: `plant.models.MEMBER_PLANT_HOLDING_LIMIT`, imported. One number, and now
 one definition — two constants holding the same `4` could drift, and a drift there would be the
 platform quietly deciding that a sharing member is a different kind of adult under the Act.
 
 **C7 settles what that number means: it consumes the sharing member's own statutory allowance.** So a
-sharing member holding four flowering plants may hold nothing else, and the limit is a ceiling
-attaching to a named adult rather than a convention the platform may interpret.
+sharing member holding four plants may hold nothing else, and the limit is a ceiling attaching to a
+named adult rather than a convention the platform may interpret.
+
+**C16 settles what the four is counted over, and it is not only what flowers.** Every plant the club
+is still holding for the person counts — harvested and processed included — and the place is freed
+when the plant goes out for delivery. A sharing member's allocation is therefore spent for longer than
+it first appeared: through the grow, the harvest and the processing, and not released by the cut. It
+sharpens C34 rather than changing anything in this module.
 
 **C15 enforces it, in `Plant.transfer_to`.** That is the only place `owner` is written, so a
 purchase, a swap, an allocation to a sharing member and an administrator's adjustment all meet one
@@ -464,10 +470,12 @@ signed-in member's own record and so may carry their own name; any endpoint that
 member must expose `display_name` and nothing else. There is no such endpoint yet, which is exactly
 why this is written down.
 
-**Nobody may hold more than four flowering plants.** The system prompts a member to swap a flowering
-plant for a pre-flowering one when they approach the limit, and refuses a swap that would breach it.
-It is an invariant of the swap service, enforced on the write, and it belongs with the plant and
-swap models when they are built.
+**Nobody may hold more than four plants.** Four is the Act's limit on flowering plants; **C16 counts
+it over every plant the club is still holding for the member** — harvested and processed included —
+and frees the place when the plant goes out for delivery. The system prompts a member to swap a
+flowering plant for a pre-flowering one when they approach the limit, and refuses a swap that would
+breach it. It is an invariant enforced on the write, in `Plant.transfer_to` since C15, which is the
+only place ownership is written.
 
 ### 6.7 The action that was retired
 

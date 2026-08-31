@@ -52,8 +52,10 @@ costs and what is owed in return.
 Block 4, and both are properties of a price *change over time* rather than of a
 plant. No cart, order or allocation: Block 5. No swap: Block 10 -- ungated
 since C7, though the four-plant holding check that block depends on *is* here,
-because ``transfer_to`` is the only place ownership is written. And **no status
-for a plant that died** -- C9 is open, nobody has decided whether a crop failure
+because ``transfer_to`` is the only place ownership is written. **No delivered
+status either** -- C16 counts a plant against a member's four until it ships,
+and ``SHIPPED`` stands in for delivery because the event confirming delivery is
+C9.1 and is open. And **no status for a plant that died** -- C9 is open, nobody has decided whether a crop failure
 means substitution, refund or credit, and inventing a status for it here would
 pre-empt that decision in the schema.
 """
@@ -228,10 +230,16 @@ class PlantStatus(models.TextChoices):
     ``accounts.UserStatus``.
 
     ``PREFLOWERING`` and ``IN_BLOOM`` are the two that matter legally: the
-    Cannabis for Private Purposes Act limits an adult to four *flowering* plants,
-    and C16's recommendation is that a harvested plant does not count toward it.
-    :meth:`PlantQuerySet.flowering_held_by` is the one place that reading is
-    expressed.
+    Cannabis for Private Purposes Act limits an adult to four *flowering*
+    plants. **The platform counts more than those two against that four** --
+    C16, decided: a harvested plant is stock the club still has custody of, so
+    it keeps counting until it ships. :data:`HOLDING_LIMIT_STATUSES` is the one
+    place that reading is expressed, and
+    :meth:`PlantQuerySet.held_against_limit` the one place it is counted.
+
+    ``SHIPPED`` is the last status and there is no ``DELIVERED``. The event that
+    would justify one is **C9.1**, which is open; until it exists, handover to
+    the courier is the last thing the platform observes about a plant.
     """
 
     PREFLOWERING = 'preflowering', 'Preflowering'
@@ -241,8 +249,15 @@ class PlantStatus(models.TextChoices):
     SHIPPED = 'shipped', 'Shipped'
 
 
-#: The statuses that count toward a member's four-plant holding limit. C16, and
-#: `twp-tasks/stock-holding-limit.md`.
+#: The two statuses in which a plant is actually flowering. What the Cannabis
+#: for Private Purposes Act's limit names, and what the swap zone requires --
+#: `harvest.md`: "After harvest no further swapping for paying members."
+#:
+#: **This is no longer the holding count.** It was, until C16 was decided the
+#: other way; the count is :data:`HOLDING_LIMIT_STATUSES`, which is wider. The
+#: two are kept apart because they answer different questions, and one tuple
+#: serving both is what would quietly make a harvested plant swappable the next
+#: time either rule moved.
 FLOWERING_STATUSES = (PlantStatus.PREFLOWERING, PlantStatus.IN_BLOOM)
 
 #: The statuses at or past harvest. `harvest.md`: after harvest a paying member
@@ -251,8 +266,40 @@ HARVESTED_STATUSES = (
     PlantStatus.HARVESTED, PlantStatus.PROCESSED, PlantStatus.SHIPPED
 )
 
-#: How many flowering plants one member may hold at once. C15, off the Cannabis
-#: for Private Purposes Act through `twp-tasks/stock-holding-limit.md`.
+#: The statuses that count against a member's plant holding limit. **C16**, and
+#: `twp-tasks/stock-holding-limit.md`.
+#:
+#: Everything from planting up to the point the plant leaves the club: a
+#: harvested plant and a processed one still count, because they are stock the
+#: club is holding for the member and can see. The count releases at
+#: ``SHIPPED`` -- once the product has gone to the courier the platform can no
+#: longer know what the member physically holds, which is the same blindness
+#: R-C15.2 accepts for the dried-weight limit.
+#:
+#: **``SHIPPED`` is a stand-in for delivery, and a deliberate one.** The truer
+#: boundary is the delivery-confirmed event, and choosing that event is
+#: **C9.1**, which is open. Handover to the courier is the last thing the
+#: platform observes about a plant today, and the alternative -- counting a
+#: shipped plant until C9.1 lands -- would strand a member at the ceiling with
+#: nothing they or the club could do about it. When C9.1 is decided, a delivered
+#: status replaces ``PROCESSED`` as the last member of this tuple and nothing
+#: else in the codebase changes.
+HOLDING_LIMIT_STATUSES = (
+    PlantStatus.PREFLOWERING,
+    PlantStatus.IN_BLOOM,
+    PlantStatus.HARVESTED,
+    PlantStatus.PROCESSED,
+)
+
+#: How many plants one member may hold at once. C15, off the Cannabis for
+#: Private Purposes Act through `twp-tasks/stock-holding-limit.md`.
+#:
+#: The Act's four is a limit on *flowering* plants; this platform applies the
+#: same four to a wider set of statuses -- :data:`HOLDING_LIMIT_STATUSES` --
+#: because C16 ruled that a plant the club still holds for a member counts
+#: whatever its status. That is stricter than the Act requires, and it is the
+#: ruling rather than a misreading: the number comes from the Act, and the set
+#: it is counted over comes from what the platform can see.
 #:
 #: Since C7 this is a statutory ceiling attaching to a named adult rather than a
 #: platform convention, which is why it is counted **per member and never per
@@ -267,7 +314,7 @@ HARVESTED_STATUSES = (
 #: going to be. C15 records them as accepted risks: the platform cannot observe
 #: what a member holds off-platform, so a check here would be theatre. They are
 #: stated in the club rules instead.
-MEMBER_FLOWERING_PLANT_LIMIT = 4
+MEMBER_PLANT_HOLDING_LIMIT = 4
 
 
 class OwnershipReason(models.TextChoices):
@@ -392,23 +439,30 @@ class PlantQuerySet(models.QuerySet):
         rule that has nothing enforcing it yet."""
         return self.live().filter(owner=member)
 
-    def flowering_held_by(self, member):
-        """The count the four-plant statutory limit applies to.
+    def held_against_limit(self, member):
+        """The count the four-plant statutory limit applies to. **C16.**
 
-        Preflowering and in bloom only. C16's recommendation is that a harvested
-        plant does not count toward the limit -- the Act's limit is on
-        *flowering* plants, and ``harvest.md`` explicitly permits a member to
-        swap for a harvested one, so counting those would have two briefs
-        refusing the same transaction.
+        Everything the club is still holding for this member: preflowering, in
+        bloom, harvested and processed. A harvested plant counts, and that is
+        the decision rather than an oversight -- until it ships it is stock in
+        the club's custody, and a limit that ignored it would be the platform
+        declining to count what it can plainly see.
+
+        **The reading this replaces** counted the two flowering statuses only,
+        on the argument that the Act's limit names flowering plants and
+        ``harvest.md`` permits a swap for a harvested one. Both of those remain
+        true, and the second is handled where it belongs: :meth:`swappable`
+        still turns on :data:`FLOWERING_STATUSES`, so the two rules no longer
+        share a tuple and cannot drift into each other.
 
         Enforced since C15, in :meth:`Plant.assert_may_be_held_by` and through
         it in :meth:`Plant.transfer_to`. This is the read the refusal counts and
-        the read a screen shows a member who has to swap one out to make room.
+        the read a screen shows a member who has to make room.
         """
-        return self.held_by(member).filter(status__in=FLOWERING_STATUSES)
+        return self.held_by(member).filter(status__in=HOLDING_LIMIT_STATUSES)
 
-    def flowering_allowance_for(self, member):
-        """How many more flowering plants this member may take on. C15.
+    def holding_allowance_for(self, member):
+        """How many more plants this member may take on. C15, counted per C16.
 
         Never negative. A member can legitimately be over the ceiling without
         the platform having allowed it -- a plant that reverts under C9's
@@ -417,7 +471,7 @@ class PlantQuerySet(models.QuerySet):
         is the answer that matters, and it is the same answer either way.
         """
         return max(
-            MEMBER_FLOWERING_PLANT_LIMIT - self.flowering_held_by(member).count(),
+            MEMBER_PLANT_HOLDING_LIMIT - self.held_against_limit(member).count(),
             0,
         )
 
@@ -427,6 +481,13 @@ class PlantQuerySet(models.QuerySet):
         ``harvest.md``: "After harvest no further swapping for paying members."
         The sharing-member exception in the same document is a rule about *who*,
         not about the plant, so it belongs to Block 10 rather than here.
+
+        It keeps :data:`FLOWERING_STATUSES` where the holding count moved to
+        :data:`HOLDING_LIMIT_STATUSES`: C16 changed what counts against a
+        member's four and changed nothing about what may be swapped. One
+        consequence of that is recorded in C16 -- a member at the ceiling
+        holding only harvested plants has nothing swappable, and waits for a
+        delivery.
 
         Also excludes a plant priced too low to earn a whole step of leaf rating
         -- :data:`LEAF_RATING_FLOOR`. This is the query half of that rule and
@@ -862,8 +923,19 @@ class Plant(models.Model):
 
     @property
     def is_flowering(self):
-        """Whether this plant counts toward a member's four. C16."""
+        """Whether the plant is actually in flower. What the Act's limit names
+        and what the swap zone requires -- **not** the holding count, which is
+        :attr:`counts_against_limit`. The two were one property until C16."""
         return self.status in FLOWERING_STATUSES
+
+    @property
+    def counts_against_limit(self):
+        """Whether holding this plant consumes a place in a member's four. C16.
+
+        True from planting until the plant ships. The row-level twin of
+        :meth:`PlantQuerySet.held_against_limit`, for a plant already in hand.
+        """
+        return self.status in HOLDING_LIMIT_STATUSES
 
     @property
     def is_swappable(self):
@@ -915,37 +987,44 @@ class Plant(models.Model):
     def assert_may_be_held_by(self, member):
         """Raise unless this member has room for this plant. C15.
 
-        The Cannabis for Private Purposes Act allows an adult four *flowering*
+        The Cannabis for Private Purposes Act allows an adult four flowering
         plants, and C7 settled that the four attaches to the named adult rather
-        than to the club -- so a member holding four may take on nothing else
-        that flowers, and a sharing member's allocation spends the same
-        allowance. C16 decides what counts: preflowering and in bloom, never a
-        harvested plant.
+        than to the club -- so a member holding four may take on nothing else,
+        and a sharing member's allocation spends the same allowance.
+
+        **C16 decides what counts, and it is not only what flowers.** Every
+        plant the club is still holding for the member does:
+        :data:`HOLDING_LIMIT_STATUSES`, which releases at ``SHIPPED``. A plant
+        already delivered is invisible to the platform and counts against
+        nothing here, which the club rules state rather than engineer around.
 
         **The plant excludes itself.** A transfer of a plant the member already
         holds is not a fifth plant, and the count has to say so or a correcting
         re-transfer of the fourth plant would be refused as an overstock.
 
-        Raises with a code, like :meth:`assert_swappable`, and the message
-        carries the remedy ``stock-holding-limit.md`` asks for: swap a flowering
-        plant out for a pre-flowering one. Block 10 turns that into a prompt;
-        the sentence is here so the refusal is never a bare "no" even before the
-        screen exists.
+        Raises with a code, like :meth:`assert_swappable`. The message carries
+        both remedies, because C16 took one of them away in the case that
+        matters: a flowering plant can be swapped out for the incoming one, but
+        a member holding four *harvested* plants has nothing swappable
+        (:meth:`assert_swappable` refuses a harvested plant) and can only wait
+        for a delivery. Block 10 turns this into a prompt; the sentence is here
+        so the refusal is never a bare "no" even before the screen exists.
         """
-        if not self.is_flowering:
+        if not self.counts_against_limit:
             return
         held = (
             type(self)
-            .objects.flowering_held_by(member)
+            .objects.held_against_limit(member)
             .exclude(pk=self.pk)
             .count()
         )
-        if held >= MEMBER_FLOWERING_PLANT_LIMIT:
+        if held >= MEMBER_PLANT_HOLDING_LIMIT:
             raise ValidationError(
-                f'That member already holds {MEMBER_FLOWERING_PLANT_LIMIT} '
-                'flowering plants, which is the legal limit for one adult. '
-                'They can swap a flowering plant for a pre-flowering one to '
-                'make room.',
+                f'That member already holds {MEMBER_PLANT_HOLDING_LIMIT} '
+                'plants, which is the legal limit for one adult. A harvested '
+                'plant still counts until it has been delivered. They can swap '
+                'a flowering plant out for this one, or wait for a delivery to '
+                'free a place.',
                 code='holding_limit_reached',
             )
 
@@ -969,9 +1048,12 @@ class Plant(models.Model):
         against "the previous member".
 
         **The four-plant ceiling is enforced here** -- C15 -- because this is the
-        only place ``owner`` is written, and a plant's status never moves
-        *backwards* into flowering, so acquiring one is the only way a member's
-        count can rise. The check is a count in Python and not a constraint: SQL
+        only place ``owner`` is written, and a plant's status only ever moves
+        *forwards*, so it can leave the counted set (C16: at ``SHIPPED``) and
+        never re-enter it. Acquiring a plant is therefore the only way a
+        member's count can rise, and this is the only door.
+
+        The check is a count in Python and not a constraint: SQL
         cannot express "at most four rows matching a predicate per owner", and
         two concurrent transfers to a member holding three could therefore both
         pass and leave five. That race is worth naming and not worth a table

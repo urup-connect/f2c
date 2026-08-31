@@ -38,8 +38,10 @@ account buys by quantity. It takes a commission on each order, needs no membersh
 of the club's regulatory load. See [`verticals.md`](verticals.md).
 
 The swap zone earns nothing directly. It exists so a member who buys a seedling can get product
-sooner, and so the four-flowering-plant statutory limit can be managed by trading down rather than
-by refusing a purchase.
+sooner, and so the four-plant statutory limit can be managed by trading down rather than by refusing
+a purchase. **C16 narrows that second purpose**: a harvested plant counts until it goes out for
+delivery and cannot be swapped, so trading down is available to a member whose plants are still
+growing and not to one whose four are in a drying room.
 
 ---
 
@@ -243,9 +245,9 @@ lawful and whether a swap is a sale in substance. **C7 is now decided as residua
 model is in use by other clubs and treated as defendable, and the plants do consume the sharing
 member's own allowance. So the block is no longer gated, and it comes last on ordinary grounds — it
 is four weeks of work, it depends on the plant and the leaf rating, and nothing else depends on it.
-What it depended on that it did not before — C15, the four-flowering-plant holding check, which
-became a statutory ceiling rather than a convention the moment C7 was answered — **is now built**,
-enforced in `Plant.transfer_to` ahead of the block that needs it.
+What it depended on that it did not before — C15, the four-plant holding check, which became a
+statutory ceiling rather than a convention the moment C7 was answered — **is now built**, enforced in
+`Plant.transfer_to` ahead of the block that needs it, and counting what C16 ruled it should count.
 
 ### 4.1 Revised sequence — two storefronts
 
@@ -463,10 +465,15 @@ sign-up journey — and, because a guarantee is a term of sale, in the versioned
 than only in a hero paragraph. C9 carries the detail and the copy-governance constraint.
 
 **C15 puts a ceiling on the quantity step, and it must be shown before it is hit.** A member may hold
-four flowering plants, and `transfer_to` now refuses the fifth — so a member who has three and orders
-two would pay and then be refused. `Plant.objects.flowering_allowance_for(member)` is what the
-quantity step reads: *how many more may you take on*, floored at zero. A correct rule delivered at
-the payment page is the wrong place to deliver it.
+four plants, and `transfer_to` now refuses the fifth — so a member who has three and orders two would
+pay and then be refused. `Plant.objects.holding_allowance_for(member)` is what the quantity step
+reads: *how many more may you take on*, floored at zero. A correct rule delivered at the payment page
+is the wrong place to deliver it.
+
+**C16 makes that read matter more than it did.** A harvested plant keeps its place until it goes out
+for delivery, so a member can be at the ceiling with nothing growing and no swap available — and the
+number on the screen is the only thing that explains it. The step has to show the allowance and say
+why it is what it is, not merely cap a quantity input.
 
 ### Block 6 — Ownership, harvest and fulfilment · 3 weeks
 
@@ -486,10 +493,11 @@ moment a priced product type is listed. **C8 leaves one thing open** — what ha
 never answers the notification. Answer it before this block is specified.
 
 **Delivery is also what releases a cultivator's money** — C9 holds the member's payment from order
-until delivery is confirmed. **Which event counts as confirmed is C9.1 and is open**: the preference
-is Pargo's delivery or collection scan, so if this block integrates Pargo, find out early whether that
-event is exposed. The fallbacks are worse, and one of them adds money to the silence C8 already
-flagged.
+until delivery is confirmed — **and, since C16, what frees a place on the member's four.** That is a
+second consumer for one event, and an argument for one column rather than two. **Which event counts as
+confirmed is C9.1 and is open**: the preference is Pargo's delivery or collection scan, so if this
+block integrates Pargo, find out early whether that event is exposed. The fallbacks are worse, and
+one of them adds money to the silence C8 already flagged.
 
 Needs a delivery address model, which does not exist. **C19** decides what a cultivator sees of a
 member on a packing label; the recommendation is nothing but a nickname, serials and a waybill, and
@@ -556,12 +564,14 @@ it is the only UC-tier item with anything left to build.
 defendable and a sharing member's plants consume their own allowance. The leaf rating it matches on is
 built and stored, which is the one dependency that will not hold it up.
 
-**The two things that moved in front of it are done.** C15, the four-flowering-plant holding check,
-became a prerequisite rather than a refinement when C7 made the ceiling statutory — and it is built:
-`Plant.transfer_to` refuses a fifth flowering plant, counting per member and never asking what kind
-of member, which is what C33 requires for the sharing-member role to stay droppable. The count is
-C16's reading, preflowering and in bloom only, so the swap `harvest.md` permits is not refused by the
-holding rule.
+**The two things that moved in front of it are done.** C15, the four-plant holding check, became a
+prerequisite rather than a refinement when C7 made the ceiling statutory — and it is built:
+`Plant.transfer_to` refuses a fifth plant, counting per member and never asking what kind of member,
+which is what C33 requires for the sharing-member role to stay droppable. **C16 is decided too, and
+against the reading C15 shipped**: every plant the club is still holding for a member counts, so a
+harvested plant keeps its place until it goes out for delivery. The swap `harvest.md` permits is
+therefore open to a member with a place free and refused to one at the ceiling, which is the holding
+rule working rather than the two briefs colliding.
 
 Leaf-rating display with no Rand values anywhere in the zone. Sharing-member stock seeding the zone.
 Instant swaps against sharing-member plants, confirmed swaps against member plants. Equivalent-value
@@ -571,9 +581,14 @@ is the **prompt** — `stock-holding-limit.md` asks that a member at the ceiling
 down rather than simply refused; the refusal exists and names the remedy, and the screen that offers
 it is here.
 
-**C16** decides whether a harvested plant counts toward the four — its recommendation is already
-running, shipped with C15, so ratifying costs nothing and reversing is a change to a live refusal.
-**C17** decides how equal-value matching survives the fact that maturity is not in the leaf rating.
+**Three things C16 leaves this block to build.** The trade-down prompt
+`stock-holding-limit.md` asks for, which now has to say that a harvested plant cannot be swapped out
+and the member waits for a delivery. A swap sequenced as release-then-acquire, because a member at the
+ceiling is refused if the incoming leg of a swap runs first. And an allowance read on every screen
+that offers a plant, so the refusal is never the first a member hears of it.
+
+**C17** decides how equal-value matching survives the fact that maturity is not in the leaf rating,
+and is the only open item left in front of this block.
 
 ### Block 11 — Support · 1.5 weeks
 
@@ -584,11 +599,17 @@ finished product type requests from cultivators, landing in the administrator's 
 from a storefront administrator to the UC tier, worked in the Django admin — C29.
 
 **The rules and guidelines page is where C15's two unenforced limits live**, and that is the whole of
-the decision rather than a footnote to it. The platform enforces four flowering plants; the household
-limit, the dried-weight limit and anything a member holds through another club are stated as the
-member's own responsibility, in plain terms, because a club that implied it policed them would be
-claiming a control that never ran. The copy is drafted in the C15 entry, and it is a club document
-under the copy-governance rules rather than a page anybody edits in passing.
+the decision rather than a footnote to it. The platform enforces four plants; the household limit, the
+dried-weight limit and anything a member holds through another club are stated as the member's own
+responsibility, in plain terms, because a club that implied it policed them would be claiming a
+control that never ran.
+
+**The page also has to carry C16, and it is the harder half to write.** A harvested plant keeps its
+place until it goes out for delivery — stricter than the Act, which counts only flowering plants — so
+the page says out loud that this is the club's own rule and why: the club is holding those plants, and
+it will not hand one adult eight plants' worth of product in a cycle by not counting what is in its
+own drying room. Copy is drafted in the C16 entry and supersedes two paragraphs of C15's. Both are
+club documents under the copy-governance rules rather than pages anybody edits in passing.
 
 **One decision waits for this block rather than for Block B.**
 `platform.submit_support_request` is granted by a relationship a store customer does not hold, so a
@@ -725,11 +746,10 @@ it.
 
 | # | Decision | Holds up |
 | --- | --- | --- |
-| C9.1 | Which event confirms delivery and releases the held funds | Block A's settlement and Block C's fulfilment. The preference is Pargo's delivery or collection scan; it cannot be fixed until the integration is understood |
+| C9.1 | Which event confirms delivery, releases the held funds — **and, since C16, frees a place on the member's four** | Block A's settlement and Block C's fulfilment. The preference is Pargo's delivery or collection scan; it cannot be fixed until the integration is understood. C16 gave it a second consumer, which is an argument for one event and one column rather than two |
 | C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. **Substantially answered**: the club collects member purchases and owes F2C 15%; F2C collects the membership fee and owes the club 60%; a cultivator earns at delivery (C9). What is left is the commission base against the courier leg, whether the commission shows on a statement, **how a cultivator is actually paid** — no gateway disburses, so a payment run — and the market's leg, which is unstated and trades first |
 | C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. **No longer gates C11** — a refund only ever touches unreleased funds in the club's own account, so an EFT out of it works where a gateway reversal does not |
 | C11.1 | **How long the money stays in the club's account after delivery** | Block A's settlement, and it is the residue of C11. Release is now the moment a member's refund right ends, so an instant release on the courier scan leaves the ordinary "arrived dead" complaint with no refund at all. Recommendation: a short hold — 72 hours is the shape of it — with a dispute able to suspend it. Cannot be separated from C9.1 |
-| C16 | Does a harvested plant count toward the four | Block 10 → Block E. **The recommendation is already built** — C15's holding check counts preflowering and in bloom only — so ratifying costs nothing and reversing is a change to a refusal members meet |
 | C17 | Equal-value swaps versus maturity | Block 10 → Block E |
 | C18 | Where finished product types are selected | Block 1 → Block A. **The recommendation is already built** — the plant inherits from its listing — so ratifying costs nothing and reversing is a model change |
 | C19 | What a cultivator sees of a member on a packing label | Block 6 → Block C. POPIA-relevant. The stock export already implements the recommendation — nickname only |
@@ -749,12 +769,20 @@ until delivery and released to the cultivator then, with substitution as the cro
 remains is **C9.1**, the release event, which is an integration question rather than a product one and
 holds up settlement rather than the checkout.
 
-**C15 and C16 moved up in its place, and C15 has since come off the list entirely.** Both were
-refinements of the swap zone while the four-plant number was a convention. C7 made it a statutory
-ceiling attaching to a named adult, which turned the holding check into a prerequisite — and C15 is
-now decided and built, with C16's reading of the count shipped inside it. What C15 did *not* enforce
-is deliberate and recorded: the household and dried-weight limits are accepted risks in the club
-rules rather than checks the platform cannot honestly run.
+**C15 and C16 moved up in its place, and both have since come off the list.** Both were refinements
+of the swap zone while the four-plant number was a convention. C7 made it a statutory ceiling
+attaching to a named adult, which turned the holding check into a prerequisite — and C15 is decided
+and built. What C15 did *not* enforce is deliberate and recorded: the household and dried-weight
+limits are accepted risks in the club rules rather than checks the platform cannot honestly run.
+
+**C16 is decided, and it reversed what C15 shipped.** A harvested plant counts against a member's
+four until it goes out for delivery, because until then it is stock the club is holding and can see —
+which is C15's own principle applied to the case C15 had built the other way. The count releases at
+`shipped`, standing in for the delivery-confirmed event **C9.1** has yet to choose; when C9.1 lands,
+the boundary moves to it and nothing else changes. Two consequences are accepted rather than
+engineered around: a member's grow cycle no longer overlaps their delivery window, and a member
+holding four harvested plants has no swap available and waits. Both are in the club rules, redrafted
+in the C16 entry.
 
 **C10 is narrowed and has shed a build item.** The money map is settled for the club: F2C collects the
 membership fee through Payfast and keeps 40%, the Cultivators Collective collects everything else and
@@ -768,14 +796,15 @@ it sits in Block A ahead of both checkouts.
 | # | Decision | What it changed |
 | --- | --- | --- |
 | C6 | A sharing member is a **real person who does not transact** — decided, acted on as a placeholder, then **reversed** | Block 0.5 and Block E. Registration takes the identity number, the age rule and the POPIA attestation back, and the erasure route with them. A read-only login is specified and deferred. The code still implements the superseded reading |
-| C7 | The swap model is **defendable** — residual risk, not a gate | Ungates Block 10 → Block E. Makes the four-plant allowance a statutory ceiling, which promotes C15 and C16 to prerequisites |
+| C7 | The swap model is **defendable** — residual risk, not a gate | Ungates Block 10 → Block E. Makes the four-plant allowance a statutory ceiling, which promoted C15 and C16 to prerequisites — both now decided |
 | C8 | **Nothing is payable at harvest.** Courier sits inside the price paid at order and is remitted to Pargo at settlement | Removes a checkout from Block 6 → Block C. Makes the harvest confirmation the point where ownership becomes final, which closes the swap window and constrains Block 10. Adds a third leg to C10's settlement split, and opens C35 |
 | C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Made C11 answerable, and C11 then removed the after-release case entirely. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
 | C11 | **A refund exists only while the funds are held.** After release to the cultivator there is none in the application; the remedy is a withholding on the cultivator's payment run and a settlement with the member outside the platform | Deletes the largest unbuilt thing in the register — a post-release partial reversal across two entities, and the member credit ledger that was its fallback. Moves refunds from Block 12 → Block E into **Block A**, beside the hold, and releases them from C10.1. Forces C10 to say the 15% is earned **on release**, and adds an adjustment line to the payment run. Leaves **C11.1** open, and puts a CPA constraint on copy: build it, never publish it as a term |
 | C12 | **A cultivator cannot buy, and does not see another grower’s offers.** Policy rather than an enforced rule — no purchase journey, no membership sold to a grower, and deliberately no constraint, so the club reverses it with a sale rather than a migration. The drawio parenthetical is struck: a cultivator sees **their own** listings, each carrying an above / in line / below indicator against similar products site-wide | Turns a catalogue screen into a scoped one. Adds nothing to the permission catalogue — `browse_catalogue` stays — and everything to C13’s open “their own listings, stock and pricing” row, which now has a second reason to be built. The indicator lands on Block 1’s cultivator listing screen, priced with Block 4 → Block A. Puts a Competition Act s4(1)(b) constraint on how it is computed: a cohort minimum, a band rather than a number, a period average |
 | C13 | **The cultivator organisation, as the product owner states it.** The farm is the front identity; the primary owns it and controls its identity, its staff and its sharing members; staff act as permitted by the primary, which **is** the `full`/`limited` tier; and **every plant must always have a verifiable owner with a trail to final ownership** | Moves `manage_own_cultivator_profile` from full rights to the primary — the offering stays delegable. Rules out a per-appointment grant table as a second authorisation system. Reopens the ownership ledger and closes it differently: a `cultivation` tenure held by the `Producer`, opened at capture by `Plant.save`, closed by the first transfer, with two nullable holder columns and a constraint over them. New document, `features/cultivator-organisation.md` |
 | C14 | **An administrator reads sharing members and their holdings, and writes none of them.** The three sharing-member actions stay with the primary cultivator; the read is granted as `platform.view_member_inventory`, over any holder rather than one kind of holder, showing nicknames and plants and no identity | Adds one screen to Block D's administration and takes one away: "sharing member CRUD" is off the cultivator-administration list for good. Closes the C5 pressure without conceding the writes — the read leaves the Django admin and becomes an endpoint, the writes stay the operator's under C29. Depends on C13's capture-time tenure for the trail half, and is constrained by C33: the query must not ask what kind of member the holder is |
-| C15 | **Four flowering plants per member, enforced on the write.** The household limit and the dried-weight limit are accepted risks stated in the club rules, because the platform cannot observe what a member holds off-platform and a check it cannot run would only produce a record that it did | Discharges Block 10 → Block E's first prerequisite before the block starts. One constant for every kind of member — `SHARING_MEMBER_PLANT_ALLOCATION` now imports it — and no branch on owner type, per C33. Adds an item to Block 5 → Block A: a member at the ceiling must be told on the browse and swap screens, not refused at the payment page. Gives Block 11's rules page drafted copy, and puts three accepted risks into `backend.md` |
+| C15 | **Four plants per member, enforced on the write.** The household limit and the dried-weight limit are accepted risks stated in the club rules, because the platform cannot observe what a member holds off-platform and a check it cannot run would only produce a record that it did | Discharges Block 10 → Block E's first prerequisite before the block starts. One constant for every kind of member — `SHARING_MEMBER_PLANT_ALLOCATION` now imports it — and no branch on owner type, per C33. Adds an item to Block 5 → Block A: a member at the ceiling must be told on the browse and swap screens, not refused at the payment page. Gives Block 11's rules page drafted copy, and puts three accepted risks into `backend.md`. **What it counts is C16's and was reversed** |
+| C16 | **A harvested plant counts** toward a member's four, and keeps its place until it goes out for delivery | Reverses the reading C15 shipped, and the check was changed with the ruling rather than left to Block 10. Frees Block 10 of the question and hands it three items: the trade-down prompt has to say that a harvested plant cannot be traded out, a swap has to release before it acquires, and the allowance read belongs on every screen that offers a plant. Gives **C9.1** a second consumer — one delivery-confirmed event releases a cultivator's money and frees a member's place. Rewrites two paragraphs of C15's club-rules copy |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |

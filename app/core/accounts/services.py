@@ -58,7 +58,7 @@ from app.core.common.validators import (
 
 from app.commerce.producers.models import ProducerRole
 from app.club.membership.models import ClubMembership, MembershipStatus
-from app.club.plant.models import MEMBER_FLOWERING_PLANT_LIMIT
+from app.club.plant.models import MEMBER_PLANT_HOLDING_LIMIT
 
 from .models import User, UserStatus
 
@@ -73,11 +73,11 @@ REGISTER_PERMISSION = 'platform.register_sharing_member'
 #: function decides.
 SHARING_MEMBER_STATUS = UserStatus.NON_AUTHENTICATING
 
-#: How many flowering plants a sharing member may hold, and the number a
-#: cultivator allocates when they register one.
+#: How many plants a sharing member may hold, and the number a cultivator
+#: allocates when they register one.
 #:
 #: **The same number as every other member's, and the same object** --
-#: ``plant.models.MEMBER_FLOWERING_PLANT_LIMIT``, imported rather than restated.
+#: ``plant.models.MEMBER_PLANT_HOLDING_LIMIT``, imported rather than restated.
 #: C7 settled that the four attaches to the named adult, so this is that
 #: person's own statutory allowance being spent rather than a quota the club
 #: grants; C15 enforces it in ``Plant.transfer_to`` for every holder alike. Two
@@ -87,7 +87,11 @@ SHARING_MEMBER_STATUS = UserStatus.NON_AUTHENTICATING
 #:
 #: The name stays because this is what a *registration* returns -- an allocation
 #: is what a cultivator does with the limit. Nothing here branches on it.
-SHARING_MEMBER_PLANT_ALLOCATION = MEMBER_FLOWERING_PLANT_LIMIT
+#:
+#: C16 widened what the four is counted over -- a harvested plant keeps its place
+#: until delivery -- and this line needed no change, which is the argument for
+#: having imported the constant instead of restating the number.
+SHARING_MEMBER_PLANT_ALLOCATION = MEMBER_PLANT_HOLDING_LIMIT
 
 
 class IdentityNumberUnavailable(Exception):
