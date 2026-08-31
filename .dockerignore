@@ -1,0 +1,52 @@
+# What the API image's `COPY . .` must not pick up.
+#
+# **`.env` is the line that matters.** `f2c/settings.py` calls
+# `load_dotenv(BASE_DIR / '.env')` at import, so a `.env` inside the image is
+# not inert -- it is configuration, read on every start, and the one on a
+# developer's machine holds real SMTP passwords and real storage keys. Baking it
+# into an image that is pushed to a registry publishes them. Deployed
+# configuration is environment variables set by Container Apps, and the image
+# ships no `.env` at all.
+.env
+.env.*
+!.env.example
+
+# 123 MB of Windows CPython that a Linux image cannot run. The image builds its
+# own at /venv, outside /app, in the build stage.
+.venv/
+venv/
+
+# 530 MB belonging to the frontend images, which are built from `frontend/` and
+# have their own ignore file. Django serves JSON; none of this reaches it.
+frontend/
+
+# The SQLite fallback, and this deployment does not use it. Shipping it would
+# also ship whatever a developer happened to be testing with.
+db.sqlite3
+*.sqlite3
+
+# Uploads and collectstatic output. Both are produced at runtime and belong to
+# the environment, not to the artefact.
+media/
+staticfiles/
+
+.git/
+.github/
+.gitignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editor and tooling state.
+.idea/
+.vscode/
+.claude/
+
+# Documentation. Read by people, never by the application.
+README.md
+design/
+*.ps1

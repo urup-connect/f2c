@@ -1,0 +1,47 @@
+# The development image for both Next.js applications, used only by compose.yaml.
+#
+# **One image, two services.** `club/Dockerfile` and `market/Dockerfile` are the
+# deployed artefacts: they build a standalone server, bake SITE_URL, and run a
+# read-only tree as an unprivileged user. None of that survives a code change
+# without a rebuild, which is the wrong trade for a stack you are editing. This
+# one installs the workspace's dependencies and then runs `next dev` over a bind
+# mount, so the source on disk is the source being served.
+#
+# The context is `frontend/` for the same reason the deployed ones use it: one
+# lockfile resolves the whole workspace, and `npm ci` fails on a member it
+# cannot find.
+#
+# **Root, deliberately.** The deployed images run as uid 10001 and should. Here
+# the working tree is a bind mount from the developer's machine, and a
+# non-root user inside the container writing `.next` and npm's caches into a
+# directory owned by somebody else is a permissions argument with no upside on a
+# stack that is not reachable from anywhere.
+
+FROM node:24-slim
+
+WORKDIR /workspace
+
+# Both workspace manifests, so the layer caches on a dependency change rather
+# than on every source edit. The source itself arrives as a mount, not a COPY.
+COPY package.json package-lock.json ./
+COPY club/package.json ./club/
+COPY market/package.json ./market/
+
+RUN npm ci
+
+# **File watching does not work over the bind mount, and no environment
+# variable in this file fixes it.** Turbopack ignores `WATCHPACK_POLLING`, which
+# is webpack's escape hatch; the switch it reads is `watchOptions.pollIntervalMs`
+# in `next.config.ts`, set from NEXT_WATCH_POLL_MS by compose.yaml. On Docker
+# Desktop for Windows even that does not make it recompile -- the container sees
+# the new file and its new mtime and Turbopack does not react. So a frontend
+# edit needs `docker compose restart club`, which is about a second. The comment
+# in `club/next.config.ts` carries the detail.
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0
+
+# The club on 3000, the store on 3001, matching the per-application `dev`
+# scripts and the SITE_URL each one is documented with.
+EXPOSE 3000 3001
+
+CMD ["npm", "run", "dev"]

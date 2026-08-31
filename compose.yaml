@@ -1,24 +1,43 @@
-# Local development services. Nothing here is deployed; QA and production use
-# Azure Database for MySQL Flexible Server and Azure Managed Redis.
+# The whole application, locally, in one command.
 #
-#     docker compose up -d
+#     docker compose up --build
 #
-# Then in `.env`:
-#     DJANGO_REDIS_URL=redis://localhost:6379/0
+# Then:
+#     the club          http://localhost:3000
+#     the produce store http://localhost:3001
+#     the API and admin http://localhost:8000
 #
-# **Redis is the one that changes behaviour when you start it.** Without it the
-# application falls back to `LocMemCache`, which works and is per-process -- so
-# the throttle counters are correct in a single `runserver` and wrong the moment
-# there is more than one process. Running this container is how the deployed
-# backend gets exercised locally rather than only in QA. See `f2c/cache.py`.
+# Sign in at `localhost`, never at `127.0.0.1`. An IP address is not a valid
+# WebAuthn Relying Party ID, and the session cookie needs the frontend and the
+# API to share a hostname -- design/conflict.md C30. That constraint is the
+# reason for the two API addresses on each frontend below: the Next.js server
+# reaches Django at `http://api:8000` over the compose network, and the browser
+# reaches the same Django at `http://localhost:8000`, which is inside the origin
+# the page was served from. Get that second one wrong and every request after
+# sign-in is cross-site and silently unauthenticated.
 #
-# MySQL is optional in the other direction: the suite runs on SQLite and only
-# the constraint behaviour in `design/backend.md` section 8 needs a real server.
+# **This is not the deployed configuration and does not rehearse it.** QA and
+# production run the images from `Dockerfile`, `frontend/club/Dockerfile` and
+# `frontend/market/Dockerfile` on Azure Container Apps, against Azure Database
+# for MySQL and Azure Managed Redis, behind ingress that terminates TLS. Here
+# there is no TLS, so `DJANGO_DEBUG` is on -- without it Django sets Secure
+# cookies that a plain-HTTP browser discards and nobody can sign in -- and
+# `DJANGO_DEBUG` on is precisely what the deployed entrypoint's
+# `check --deploy --fail-level WARNING` gate refuses. The API service therefore
+# runs `deploy/entrypoint.sh dev`, which skips that gate. Read the comment there
+# before reaching for this file to check a deployment.
+#
+# Everything below is a development value. There are no real credentials in this
+# file and none should be added: anything genuinely secret belongs in your own
+# `.env`, which the `${VAR:-default}` forms here will pick up.
 services:
+  # ------------------------------------------------------------------ backing
   redis:
     image: redis:7-alpine
+    # Same reasoning as the MySQL mapping below: published only so you can point
+    # `redis-cli` at it. `api` reaches it as `redis:6379` regardless.
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     # No persistence. The only thing in this cache is throttle counters, which
     # are disposable by nature -- losing them resets a rate limit window and
     # nothing else. Matching that here keeps the local instance honest about
@@ -32,8 +51,14 @@ services:
 
   mysql:
     image: mysql:8.4
+    # 3307 on the host, not 3306. A developer who has ever installed MySQL
+    # locally already has something on 3306, and compose fails to start rather
+    # than fails over -- so the default here is the port that is usually free.
+    # Nothing inside the stack uses this mapping: `api` reaches the server as
+    # `mysql:3306` over the compose network. It is published for a GUI client
+    # and nothing else. Override with MYSQL_HOST_PORT in your `.env`.
     ports:
-      - "3306:3306"
+      - "${MYSQL_HOST_PORT:-3307}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: dev-root
       MYSQL_DATABASE: f2c
@@ -45,8 +70,204 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
+    # Unlike Redis, this one persists. Migrations, a superuser and whatever you
+    # were testing with are worth more than the tidiness of a clean slate every
+    # `down`. `docker compose down -v` is the clean slate when you want it.
+    volumes:
+      - mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "--silent"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # -------------------------------------------------------------------- Django
+  api:
+    build:
+      context: .
+    # `dev`, not the image's `serve`. See the header, and deploy/entrypoint.sh.
+    command: ["dev"]
+    ports:
+      - "8000:8000"
+    volumes:
+      # The working tree, so `runserver`'s reloader sees an edit. `/venv` lives
+      # outside `/app` in the image precisely so a mount like this cannot
+      # shadow it. Uploads written by the container land in ./media as usual,
+      # because no blob container is configured here.
+      - .:/app
+      # Not the host's. `db.sqlite3` in the tree above is the SQLite fallback
+      # and is not what this stack uses; `staticfiles/` would be collectstatic
+      # output that DEBUG never reads. Keeping the container's own directory
+      # here stops either from confusing the other.
+      - api-staticfiles:/app/staticfiles
+    environment:
+      # DEBUG is load-bearing here in more places than it looks. It selects the
+      # console email backend, Payfast's published sandbox merchant, the local
+      # disk fallbacks for documents and avatars, and `localhost` as the
+      # WebAuthn RP ID -- so a fresh clone runs with no credentials at all.
+      DJANGO_DEBUG: "1"
+      # **`qa`, not `dev`, and that is not a typo.** `database_config` reads
+      # this before it reads anything else, and `dev` -- which is also what an
+      # unset value means -- returns SQLite no matter what host is configured.
+      # So with `dev` here every DJANGO_DB_* variable below is read and ignored,
+      # and this stack quietly runs on the `db.sqlite3` in the mounted tree
+      # while looking exactly like it is on MySQL. `.github/workflows/ci.yml`
+      # sets `qa` for the same reason and says so at greater length.
+      #
+      # The two opt-outs that `qa` then requires are below: TLS on the database
+      # connection and TLS on the Redis URL. Both are refusals aimed at a
+      # deployed connection crossing a network with a key in it, and neither
+      # describes a container on a bridge network on this machine.
+      DJANGO_ENV: qa
+
+      # Throwaways, and generated as throwaways. Nothing signed or encrypted by
+      # these leaves your machine. Set the real ones in `.env` if you need to
+      # read data encrypted elsewhere -- changing the pepper invalidates every
+      # stored blind index, so the two have to travel together.
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-local-compose-key-not-for-any-deployment}
+      DJANGO_FIELD_ENCRYPTION_KEY: ${DJANGO_FIELD_ENCRYPTION_KEY:-dNR9PhsXkj_uemuyr4GA_RgeXMGrZdcV2eEkEUUoDDs=}
+      DJANGO_BLIND_INDEX_PEPPER: ${DJANGO_BLIND_INDEX_PEPPER:-ZMZXw9iJt6olERrYcf3L3CC0nvRl7dCCuVAoR1naRQI=}
+
+      # `api` is in the list because that is the name the Next.js servers call
+      # Django by on this network, and ALLOWED_HOSTS is checked against the Host
+      # header of every one of those requests.
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api
+      # Both frontends, both spellings. The default in settings.py covers only
+      # port 3000, so the store would fail CSRF on every POST without this.
+      DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
+      DJANGO_CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
+      # Only `localhost`, and that is not an oversight. A credential is bound to
+      # the origin the JavaScript ran on, and `127.0.0.1` cannot be a Relying
+      # Party ID, so a passkey enrolled there could never be presented again.
+      DJANGO_WEBAUTHN_ORIGINS: http://localhost:3000,http://localhost:3001
+
+      # MySQL rather than the SQLite fallback, so the collation and constraint
+      # behaviour in design/backend.md section 8 is the behaviour you get.
+      DJANGO_DB_HOST: mysql
+      DJANGO_DB_PORT: "3306"
+      DJANGO_DB_NAME: f2c
+      DJANGO_DB_USER: f2c
+      DJANGO_DB_PASSWORD: dev-password
+      # `f2c/database.py` refuses to guess about TLS: name a CA or say plainly
+      # that there is none. On a bridge network to a container on the same
+      # machine, there is none.
+      DJANGO_DB_SSL_DISABLED: "true"
+
+      DJANGO_REDIS_URL: redis://redis:6379/0
+      # `qa` requires `rediss://`, because in a deployment the access key
+      # travels inside that URL. This one carries no key and never leaves the
+      # compose network, so the opt-out is taken here rather than the rule being
+      # weakened for every deployment that relies on it. Same call as CI's.
+      DJANGO_CACHE_ALLOW_PLAINTEXT: "true"
+
+      # **The local trap, and it is worth reading before you file a bug.** The
+      # storefront a request belongs to is resolved from the host *Django* sees,
+      # and both frontends call it as `api` -- one host, so the two storefronts
+      # are indistinguishable here and everything falls back to this default.
+      # Working on the store's documents or its legal pages means flipping this
+      # to `market` and restarting the service. In a deployment the two API
+      # hostnames differ and DJANGO_STOREFRONT_HOSTS does the work.
+      DJANGO_DEFAULT_STOREFRONT: ${DJANGO_DEFAULT_STOREFRONT:-club}
+
+      # **Blanked on purpose, and this block is not optional.** The working tree
+      # is mounted at /app, so `settings.py` finds your `.env` and loads it --
+      # and `load_dotenv` does not override a variable that is already set, but
+      # it happily supplies one that is not. Without these, a developer whose
+      # `.env` carries real SMTP credentials and a real blob container gets a
+      # local stack that sends live email to whatever address it is testing with
+      # and writes uploads into the shared Azure container. Set here as empty
+      # strings so the variables exist and the file cannot fill them in: a blank
+      # mail host is the console backend under DEBUG, and a blank container is
+      # the local disk fallback.
+      EMAIL_CC_HOST: ""
+      EMAIL_CC_USER: ""
+      EMAIL_CC_PASSWORD: ""
+      EMAIL_CC_PORT: ""
+      EMAIL_CC_FROM: ""
+      EMAIL_F2C_HOST: ""
+      EMAIL_F2C_USER: ""
+      EMAIL_F2C_PASSWORD: ""
+      EMAIL_F2C_PORT: ""
+      EMAIL_F2C_FROM: ""
+      DJANGO_DOCUMENT_STORAGE_CONTAINER: ""
+      DJANGO_DOCUMENT_STORAGE_ACCOUNT: ""
+      DJANGO_DOCUMENT_STORAGE_ACCOUNT_KEY: ""
+      DJANGO_DOCUMENT_STORAGE_SAS_TOKEN: ""
+      DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING: ""
+      DJANGO_AVATAR_STORAGE_CONTAINER: ""
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ----------------------------------------------------------------- frontends
+  club:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    command: ["npm", "run", "dev", "--workspace", "@f2c/club-web", "--", "--hostname", "0.0.0.0"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/workspace
+      # The mount above would otherwise bury the Linux dependency tree the image
+      # installed under whatever `npm install` left on the host -- which on
+      # Windows is the wrong platform's binaries for anything with a native
+      # component. These three keep the container's own.
+      - club-node-modules:/workspace/node_modules
+      - club-workspace-modules:/workspace/club/node_modules
+      # Likewise the build output: a `.next` written by `next dev` on the host
+      # and one written in here are not interchangeable.
+      - club-next:/workspace/club/.next
+    environment:
+      APP_ENV: local
+      SITE_URL: http://localhost:3000
+      # Turbopack polls for changes instead of waiting for inotify events a bind
+      # mount from this host will never deliver. Read by `next.config.ts`, which
+      # leaves watching alone when it is unset -- so `npm run dev` outside Docker
+      # keeps native events. One second is a saved file appearing within a second.
+      NEXT_WATCH_POLL_MS: "1000"
+      # Read at request time by `lib/site.ts` and `lib/api-address.ts`, which is
+      # the whole reason none of these is a build argument here.
+      DJANGO_API_URL: http://api:8000
+      DJANGO_API_PUBLIC_URL: http://localhost:8000
+      # The landing page's brand film. Points at the QA static host because
+      # nothing local serves it; the page renders without it.
+      CDN_BASE_URL: ${CDN_BASE_URL:-https://qa-static.urup.com/consumer-collective}
+    depends_on:
+      - api
+
+  market:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    # `--port 3001` is already in the workspace's own `dev` script, which is how
+    # the two applications avoid colliding outside Docker as well.
+    command: ["npm", "run", "dev", "--workspace", "@f2c/market-web", "--", "--hostname", "0.0.0.0"]
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./frontend:/workspace
+      - market-node-modules:/workspace/node_modules
+      - market-workspace-modules:/workspace/market/node_modules
+      - market-next:/workspace/market/.next
+    environment:
+      APP_ENV: local
+      SITE_URL: http://localhost:3001
+      NEXT_WATCH_POLL_MS: "1000"
+      DJANGO_API_URL: http://api:8000
+      DJANGO_API_PUBLIC_URL: http://localhost:8000
+      # No CDN_BASE_URL. The store reads none -- see frontend/market/lib/site.ts.
+    depends_on:
+      - api
+
+volumes:
+  mysql-data:
+  api-staticfiles:
+  club-node-modules:
+  club-workspace-modules:
+  club-next:
+  market-node-modules:
+  market-workspace-modules:
+  market-next:

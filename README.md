@@ -172,6 +172,101 @@ falls back to `DJANGO_DEFAULT_STOREFRONT`, the club. Working on the store's `/le
 means setting that variable to `market`, or expecting the club's documents to appear there. In a
 deployment the two hosts differ and `DJANGO_STOREFRONT_HOSTS` does the work.
 
+## The whole stack in Docker
+
+```
+docker compose up --build
+```
+
+That brings up five containers -- MySQL, Redis, Django, the club and the store -- and is the one
+command that gets a working environment on a machine with nothing installed but Docker.
+
+| | |
+| --- | --- |
+| the club | http://localhost:3000 |
+| the produce store | http://localhost:3001 |
+| the API and admin | http://localhost:8000 |
+| MySQL, for a GUI client | `localhost:3307`, user `f2c`, password `dev-password` |
+| Redis, for `redis-cli` | `localhost:6379` |
+
+Sign in at `localhost`, never at `127.0.0.1`, for the same reason as outside Docker: an IP address
+is not a valid WebAuthn Relying Party ID.
+
+The first `up` creates an empty database and applies every migration. Then:
+
+```
+docker compose exec api python manage.py createsuperuser
+```
+
+Any management command runs the same way. Source is bind-mounted, so **an edit to a Python file
+restarts the Django reloader by itself** -- that half works.
+
+**A frontend edit does not.** Turbopack's watcher does not fire over a Docker Desktop bind mount on
+Windows: the container sees the saved file and its new mtime and never recompiles, logging
+`watch error ... NotFound` instead. `NEXT_WATCH_POLL_MS` is wired through to
+`watchOptions.pollIntervalMs`, which is the switch Turbopack actually reads, and it does not change
+this on Windows -- it is there for hosts where the watcher works. Until it does, a frontend change
+needs:
+
+```
+docker compose restart club     # or market
+```
+
+which takes about a second, because `next dev` is already warm. If you are working on the frontend
+for any length of time, `.undev.ps1` outside Docker is the better loop -- HMR works natively and
+the API in compose serves it either way.
+
+A dependency change needs a rebuild in both directions: `pyproject.toml`, `poetry.lock` or
+`package.json` means `docker compose build`.
+
+`docker compose down` stops everything and keeps the database. `docker compose down -v` discards it.
+
+### What this is not
+
+**It does not rehearse a deployment, and the difference is deliberate.** There is no TLS in front of
+these containers, so `DJANGO_DEBUG` is on -- without it `SESSION_COOKIE_SECURE` and
+`CSRF_COOKIE_SECURE` are both set, a plain-HTTP browser stores neither cookie, and nobody can sign
+in. `DJANGO_DEBUG` on is then exactly what the deployed entrypoint's
+`check --deploy --fail-level WARNING` gate refuses, so the API container runs
+`deploy/entrypoint.sh dev`, which skips that gate and starts `runserver` instead of Uvicorn.
+
+Three consequences worth knowing:
+
+- **Uvicorn is not what serves these requests.** Anything touching async views, async ORM access,
+  streaming or long-lived connections has to be checked through `.
+unasgi.ps1`, not here.
+  `runserver` is used because `django.contrib.staticfiles` serves `/static/` by overriding that
+  command -- under Uvicorn the admin renders with no stylesheets at all.
+- **The frontends run `next dev`, not the deployed images.** `frontend/club/Dockerfile` and
+  `frontend/market/Dockerfile` build the standalone servers that Container Apps runs;
+  `frontend/Dockerfile.dev` is what compose uses.
+- **`DJANGO_ENV` is `qa` in `compose.yaml`, and that is not a mistake.** `database_config` reads it
+  before anything else and `dev` returns SQLite whatever host is configured, so `dev` here would run
+  the stack on `db.sqlite3` while looking exactly like MySQL. CI sets `qa` for the same reason.
+
+### The storefront trap, again
+
+Both frontends call Django as `api`, so `request.get_host()` is the same for both and the storefront
+cannot be resolved from it. Everything falls back to `DJANGO_DEFAULT_STOREFRONT`, the club. Working
+on the store's documents or legal pages means:
+
+```
+DJANGO_DEFAULT_STOREFRONT=market docker compose up -d api
+```
+
+In a deployment the two API hostnames differ and `DJANGO_STOREFRONT_HOSTS` does the work.
+
+### Your own `.env`
+
+`compose.yaml` sets every variable the containers need, so no `.env` is required. Where one exists
+it is still read -- the working tree is mounted and `settings.py` calls `load_dotenv` -- which is
+why the mail and blob-storage variables are explicitly blanked in `compose.yaml`. Without that, a
+developer whose `.env` holds real SMTP credentials would get a local stack sending live email.
+
+Anything you do want to override -- `DJANGO_SECRET_KEY`, the encryption keys, `MYSQL_HOST_PORT` if
+3307 is taken -- goes in `.env` and is picked up through the `${VAR:-default}` forms in
+`compose.yaml`.
+
 ## Tests
 
 Backend, 794 tests:

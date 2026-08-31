@@ -38,6 +38,12 @@ pillow>=11.0
 # .github/workflows/ci.yml does that before installing. Any Linux deployment has
 # to as well.
 mysqlclient>=2.2.8,<3.0
+# The client Django's own RedisCache backend imports. Named here because it was
+# missing: `[project.dependencies]` has carried it since the throttle counters
+# moved off LocMemCache, and this file did not -- so anyone installing the
+# documented way got a backend that raises on the first cache read. See
+# f2c/cache.py.
+redis>=5.2,<7.0
 # Reading and writing the cultivator stock-upload template (plant/spreadsheet.py).
 # Pure Python, no system libraries, so unlike mysqlclient above it needs nothing
 # installed on the host. `cultivator-stock-upload.md` asks for an Excel template

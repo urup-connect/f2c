@@ -98,6 +98,37 @@ case "${1:-serve}" in
         exec python manage.py check --deploy --fail-level WARNING
         ;;
 
+    dev)
+        # The local stack in compose.yaml, and nothing else. It exists because
+        # the gate above cannot pass here, and the alternative was to weaken it.
+        #
+        # `check --deploy --fail-level WARNING` fails on DJANGO_DEBUG=1:
+        # security.W018 says DEBUG must not be on in a deployment, and it is
+        # right. But a local stack with DEBUG off is worse than useless -- over
+        # plain HTTP, SESSION_COOKIE_SECURE and CSRF_COOKIE_SECURE are both on,
+        # so no cookie is ever stored and nobody can sign in. The choice is
+        # therefore between a gate that does not run and a stack nobody can log
+        # into, and this is the one that does not run the gate. Nothing here
+        # ships: the image's CMD is still `serve`, and only compose.yaml asks
+        # for `dev`.
+        #
+        # `runserver` rather than uvicorn, and that is not the usual local
+        # preference reversed for no reason. `django.contrib.staticfiles`
+        # serves /static/ under DEBUG by overriding the runserver command, not
+        # by adding a URL, so uvicorn renders the admin with no stylesheets at
+        # all. Media is a real urlpattern and would work either way. Anything
+        # touching async views, streaming or long-lived connections still needs
+        # uvicorn -- see README "Running" -- and is not what this container is
+        # for.
+        wait_for_database
+
+        echo "entrypoint: applying migrations"
+        python manage.py migrate --noinput
+
+        echo "entrypoint: starting the development server"
+        exec python manage.py runserver "0.0.0.0:${PORT:-8000}"
+        ;;
+
     *)
         # Anything else is a management command, which is how the Function App's
         # fallback and any one-off maintenance run: `... lapse_memberships`.

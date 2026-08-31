@@ -1,0 +1,24 @@
+# Line endings, and one file where they are not cosmetic.
+#
+# `core.autocrlf=true` is the usual Windows setting and it rewrites the working
+# tree to CRLF on checkout. That is harmless for Python and TypeScript, and
+# fatal for `deploy/entrypoint.sh`: the API image is built with `COPY . .` from
+# that working tree, so the script arrives in the image with `#!/bin/sh\r`,
+# Linux looks for an interpreter literally named `sh\r`, and the container dies
+# with "no such file or directory" naming the script that plainly exists.
+#
+# The repository blob was always LF -- CI on Linux checks out LF and builds a
+# working image -- so this only ever broke a build run on a developer's machine,
+# which is exactly the build `compose.yaml` runs.
+*.sh text eol=lf
+
+# Same class of problem, less dramatic: a heredoc or a line continuation in a
+# Dockerfile with CRLF is a parse error rather than a runtime one.
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+*.dockerfile text eol=lf
+compose.yaml text eol=lf
+.dockerignore text eol=lf
+
+# Windows tooling, and it should stay Windows-shaped.
+*.ps1 text eol=crlf

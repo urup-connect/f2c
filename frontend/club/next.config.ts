@@ -9,6 +9,30 @@ const workspaceRoot = path.resolve(
 )
 
 const nextConfig: NextConfig = {
+
+  // **File watching inside a container, and it is only half a fix.** A bind
+  // mount from a Windows or macOS host delivers no inotify events, so the dev
+  // server starts, serves, and then never notices a saved file. Turbopack has
+  // its own watcher and ignores `WATCHPACK_POLLING`, webpack's escape hatch;
+  // `watchOptions.pollIntervalMs` is the one it reads -- see
+  // `next/dist/server/dev/hot-reloader-turbopack.js`, which passes it straight
+  // to the native watcher.
+  //
+  // **Measured on Docker Desktop for Windows, it did not help.** The container
+  // sees the edited file and its new mtime, and Turbopack still does not
+  // recompile; the log fills with `watch error ... NotFound` instead. So a
+  // frontend edit under compose needs `docker compose restart club`, which
+  // takes about a second. This is kept because it is the correct mechanism and
+  // does work where the watcher does -- a Linux host, or WSL2-native files --
+  // and because the next person to look at this should not have to rediscover
+  // that `WATCHPACK_POLLING` is the wrong knob.
+  //
+  // Off unless asked for: polling costs CPU proportional to the tree, and
+  // `npm run dev` on the host has working native events. `compose.yaml` sets
+  // NEXT_WATCH_POLL_MS.
+  ...(process.env.NEXT_WATCH_POLL_MS
+    ? { watchOptions: { pollIntervalMs: Number(process.env.NEXT_WATCH_POLL_MS) } }
+    : {}),
   reactCompiler: true,
 
   // Ships a self-contained server in `.next/standalone` -- only the files the

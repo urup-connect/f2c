@@ -1,0 +1,35 @@
+# What the club, market and development images must not pick up from `frontend/`.
+#
+# All three build from this directory, because one lockfile resolves the whole
+# workspace. That makes the hoisted `node_modules` part of the context unless it
+# is named here -- half a gigabyte, uploaded on every build, and then discarded:
+# each image runs its own `npm ci` against the lockfile, which is the point of
+# having one.
+node_modules/
+
+# Build output, and the wrong platform's. A `.next` produced by `next dev` on
+# the host is not interchangeable with one produced inside the image, and the
+# deployed Dockerfiles build their own from source.
+.next/
+club/.next/
+market/.next/
+out/
+
+# Local configuration. `.env.local` is gitignored and machine-specific; the
+# deployed images read SITE_URL and APP_ENV as build arguments and everything
+# else at runtime, so none of these should ever be inside one.
+.env.local
+.env.*.local
+
+.git/
+.gitignore
+
+# Tests and coverage. Neither runs in the image.
+coverage/
+**/*.test.ts
+**/*.test.tsx
+**/__tests__/
+
+.idea/
+.vscode/
+README.md
