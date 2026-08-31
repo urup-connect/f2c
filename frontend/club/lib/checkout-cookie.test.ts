@@ -15,6 +15,7 @@ const config = (overrides: Partial<SiteConfig> = {}): SiteConfig => ({
   appEnv: 'local',
   siteUrl: 'http://localhost:3000',
   cdnBaseUrl: 'http://localhost:3000/static',
+  supportEmail: 'hello@example.invalid',
   isProduction: false,
   ...overrides,
 })

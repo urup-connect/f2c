@@ -39,6 +39,7 @@ from ninja.errors import HttpError
 from app.club.membership.models import MembershipStatus
 
 from . import gateway, services
+from .models import Subscription
 from .schemas import CheckoutOut, CheckoutUnavailableOut, NotificationOut
 from .throttles import CheckoutThrottle
 
@@ -94,9 +95,11 @@ def my_checkout(request):
     ``/checkout/{token}`` returns, so the screen behind it is unchanged.
 
     **409 for a membership money cannot settle** -- one awaiting the club's
-    verification, or a placeholder, or one that is already paid up. Offering a
-    checkout there would take a payment for something the payer does not
-    thereby get, which is worse than refusing.
+    verification, one the club has **suspended for conduct**, a placeholder, or
+    one that is already paid up. Offering a checkout there would take a payment
+    for something the payer does not thereby get, which is worse than refusing.
+    A suspension is lifted by ``reinstate_member`` and by nothing else, least of
+    all by the suspended member paying.
     """
     membership = getattr(request.user, 'club_membership', None)
     if membership is None:
@@ -108,7 +111,18 @@ def my_checkout(request):
     if membership.status not in services.ACTIVATABLE_STATUSES:
         raise HttpError(409, 'This membership is not one a payment can settle.')
 
-    return services.checkout_for(services.open_subscription(request.user))
+    # The live subscription if there is one, and only otherwise a new one.
+    # **This endpoint used to call `open_subscription` unconditionally**, which
+    # answered 500 for the member it was written for: registration opens a
+    # subscription, so somebody at `Pending payment` always has one, and a
+    # second live mandate is refused by the `live_for_user` partial index. The
+    # docstring above always claimed it found the live one first; nothing did,
+    # and nothing tested it either. See `MyCheckoutEndpointTests`.
+    subscription = Subscription.objects.live().filter(user=request.user).first()
+    if subscription is None:
+        subscription = services.open_subscription(request.user)
+
+    return services.checkout_for(subscription)
 
 
 @router.post(

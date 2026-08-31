@@ -63,14 +63,31 @@ PAYMENT_STATUSES = {
     'CANCELLED': PaymentStatus.CANCELLED,
 }
 
-#: The membership statuses a payment may lift a member out of.
-#: ``PENDING_PAYMENT`` is where registration leaves one; ``LAPSED`` and
-#: ``SUSPENDED`` are where ``lapse_overdue`` and the club respectively put one
-#: whose subscription stopped paying, and paying again undoes both.
+#: The membership statuses a payment may lift a member out of. **Only the two
+#: that are about money.** ``PENDING_PAYMENT`` is where registration leaves one
+#: and ``LAPSED`` is where ``lapse_overdue`` puts one whose subscription stopped
+#: paying; paying again undoes both, which is the whole point of them.
 #:
 #: ``PENDING`` is deliberately absent: that is a membership awaiting
 #: *verification* by the club, and money does not settle that question.
 #: ``SHARING`` is absent because a placeholder pays for nothing -- C6.
+#:
+#: **``SUSPENDED`` was here and should not have been.** This tuple's own comment
+#: used to justify it by calling ``SUSPENDED`` the club's landing state for a
+#: subscription that stopped paying. Nothing in the codebase does that.
+#: ``lapse_overdue`` writes ``LAPSED`` and refuses to touch ``SUSPENDED`` --
+#: there is a test named for it, *does not overwrite a suspension staff
+#: applied* -- and the only writer of ``SUSPENDED`` is
+#: ``membership.administration.suspend_member``, a conduct action that mentions
+#: money nowhere. So the effect was that **a member suspended for conduct could
+#: pay the fee and be restored to Active automatically**, going around
+#: ``reinstate_member``, which exists so that lifting a block is a deliberate
+#: act by an administrator. Only that function lifts a suspension now.
+#:
+#: A recurring debit from a suspended member is therefore recorded, warned
+#: about and not activated -- see ``_activate`` below. That leaves money held
+#: against an account with no access, which is a refund question and belongs to
+#: **C11**, not here.
 #:
 #: **These are membership statuses now, not account statuses.** Before the split
 #: a payment activated the account, which is why an unpaid registrant could not
@@ -78,7 +95,6 @@ PAYMENT_STATUSES = {
 #: payment moves is the membership. C27.
 ACTIVATABLE_STATUSES = (
     MembershipStatus.PENDING_PAYMENT,
-    MembershipStatus.SUSPENDED,
     MembershipStatus.LAPSED,
 )
 

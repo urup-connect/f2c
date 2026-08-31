@@ -115,9 +115,13 @@ puts it most sharply: the catalogue and the enforcement path are built and teste
 they govern has no surface. Twenty-six of the twenty-nine destinations on the club home pages still
 carry no `href`, honestly.
 
-**The critical path is not a feature.** No member can sign in on a deployed environment, because
-sign-in codes print to a server console and no email provider is configured. That is P1 in
-`conflict.md` section D and it is Block 0 in `todo.md`, where seventeen lines are still open.
+**The critical path is not a feature.** No member can sign in on a *deployed* environment, because
+QA and production have no mail configuration — not because none exists. P1 said sign-in codes print
+to a console, and that was wrong: the console backend survives only under `DEBUG` and `_mailer`
+refuses to boot a deployed environment naming no host, so this was always provisioning rather than
+code. A provider is now configured locally for both storefronts and the club mailbox authenticates.
+What is left of P1 is the market mailbox, which does not, and the same values set on the deployed
+environments. Block 0 in `todo.md` has twenty lines still open, one blocked and one part-built.
 
 ---
 

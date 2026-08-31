@@ -18,6 +18,7 @@ export default defineConfig({
       APP_ENV: 'local',
       SITE_URL: 'http://localhost:3000',
       CDN_BASE_URL: 'http://localhost:3000/static',
+      SUPPORT_EMAIL: 'hello@example.invalid',
     },
     setupFiles: ['./vitest.setup.ts'],
     // The routes, the components and the pure modules. There is no src/ directory.

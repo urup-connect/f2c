@@ -10,7 +10,9 @@ The API tests beside this file cover the translation into status codes. Nothing
 is asserted twice.
 """
 from datetime import date
+from unittest.mock import patch
 
+from django.core import mail
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
@@ -426,6 +428,79 @@ class Suspending(RegisterTestCase):
 
         with self.assertRaises(ValidationError):
             administration.suspend_member(self.admin, self.member)
+
+    def test_it_emails_the_member_that_the_hold_is_on(self):
+        """**The screen will not say why; this does.**
+
+        A suspended member can still sign in — the account stays Active — and
+        the club layout sends them to `/blocked`, which names their standing and
+        nothing else. The reason and the invitation to challenge it belong in the
+        mailbox, which only its owner reads. C-decision: emailed, not shown.
+        """
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            administration.suspend_member(self.admin, self.member)
+
+        self.assertEqual(1, len(mail.outbox))
+        sent = mail.outbox[0]
+        self.assertEqual([self.member.email], sent.to)
+        self.assertIn('on hold', sent.subject)
+
+    def test_the_email_does_not_say_why(self):
+        """A reason an administrator recorded is not in the member's mailbox
+        either. What the email offers is a way to ask, not an account of the
+        club's reasoning — which nothing in this codebase stores anyway."""
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            administration.suspend_member(self.admin, self.member)
+
+        body = mail.outbox[0].body.lower()
+        for word in ('breach', 'misconduct', 'violation', 'complaint', 'fraud'):
+            self.assertNotIn(word, body)
+
+    def test_it_emails_nothing_until_the_transaction_commits(self):
+        """A suspension that rolls back tells nobody it happened."""
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=False):
+            administration.suspend_member(self.admin, self.member)
+
+        self.assertEqual(0, len(mail.outbox))
+
+    def test_suspending_twice_emails_once(self):
+        """The idempotent early return sits above the send, so a second call is
+        genuinely a no-op rather than a second letter."""
+        mail.outbox.clear()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            administration.suspend_member(self.admin, self.member)
+            administration.suspend_member(self.admin, self.member)
+
+        self.assertEqual(1, len(mail.outbox))
+
+    def test_a_mail_failure_does_not_undo_the_suspension(self):
+        """**The one place this project sends with the failure swallowed.**
+
+        The suspension is committed by the time the send runs. Raising would
+        report failure to an administrator whose action in fact succeeded, and
+        invite them to repeat it. The block stands and the log carries the line.
+        """
+        mail.outbox.clear()
+
+        with patch(
+            'app.core.accounts.notifications.send_storefront_email',
+            side_effect=OSError('mail server unreachable'),
+        ):
+            with self.assertLogs('app.core.accounts.notifications', level='ERROR'):
+                with self.captureOnCommitCallbacks(execute=True):
+                    administration.suspend_member(self.admin, self.member)
+
+        self.member.club_membership.refresh_from_db()
+        self.assertEqual(
+            MembershipStatus.SUSPENDED, self.member.club_membership.status
+        )
 
 
 class Reinstating(RegisterTestCase):

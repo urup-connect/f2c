@@ -1,0 +1,12 @@
+Hi {{ name }},
+
+The club has placed a hold on your {{ brand }} membership. The member area is
+closed to you while the hold is in place.
+
+Nothing has been deleted. Your details are still with the club, and a hold can
+be lifted by an administrator.
+
+If you would like this looked at again, reply to this email and we will come
+back to you.
+
+-- {{ brand }}

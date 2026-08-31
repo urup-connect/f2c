@@ -14,6 +14,7 @@ const validEnv = {
   APP_ENV: 'production',
   SITE_URL: 'https://example.co.za',
   CDN_BASE_URL: 'https://static.example.invalid/collective',
+  SUPPORT_EMAIL: 'hello@example.co.za',
 }
 
 describe('readSiteConfig', () => {
@@ -164,4 +165,51 @@ describe('readSiteConfig rejects a misconfigured CDN base URL', () => {
       ).toThrow(/CDN_BASE_URL/)
     },
   )
+
+  describe('SUPPORT_EMAIL', () => {
+    /*
+     * The blocked-membership screen is the only reader. It exists so that somebody the club has
+     * shut out can ask about it, and a screen saying "contact support" with no address on it is the
+     * dead end it was written to replace — so this is required rather than defaulted, in every
+     * environment including local.
+     */
+    test('is read back as given, trimmed', () => {
+      const config = readSiteConfig({ ...validEnv, SUPPORT_EMAIL: '  hello@example.co.za  ' })
+
+      expect(config.supportEmail).toBe('hello@example.co.za')
+    })
+
+    test('throws naming SUPPORT_EMAIL when it is absent', () => {
+      expect(() => readSiteConfig({ ...validEnv, SUPPORT_EMAIL: undefined })).toThrow(
+        /SUPPORT_EMAIL/,
+      )
+    })
+
+    test('throws naming SUPPORT_EMAIL when it is blank', () => {
+      expect(() => readSiteConfig({ ...validEnv, SUPPORT_EMAIL: '   ' })).toThrow(/SUPPORT_EMAIL/)
+    })
+
+    test.each(['not-an-address', 'two @ signs@example.co.za', 'missing@tld', '@example.co.za'])(
+      'refuses %s',
+      (value) => {
+        expect(() => readSiteConfig({ ...validEnv, SUPPORT_EMAIL: value })).toThrow(
+          /SUPPORT_EMAIL/,
+        )
+      },
+    )
+
+    test('accepts an address a stricter pattern would wrongly refuse', () => {
+      /*
+       * The validation is deliberately loose. What it guards against is a blank or a placeholder,
+       * not an exotic-but-valid address — a regular expression that claims to know RFC 5322 refuses
+       * real mailboxes, and the cost of that is a deployment that will not start.
+       */
+      const config = readSiteConfig({
+        ...validEnv,
+        SUPPORT_EMAIL: "club+members'enquiries@sub.example.co.za",
+      })
+
+      expect(config.supportEmail).toBe("club+members'enquiries@sub.example.co.za")
+    })
+  })
 })

@@ -622,12 +622,56 @@ anybody without them.
 
 | # | Blocker | Recorded in |
 | --- | --- | --- |
-| P1 | No email provider. Sign-in codes and payment links print to a console. **No member can sign in on a deployed environment** | `authentication.md` risk 2, `backend.md` risk 3 |
+| P1 | ~~No email provider. Sign-in codes and payment links print to a console~~ — **stated wrongly, and now mostly done.** The console backend only survives under `DEBUG`; `_mailer` refuses a deployed environment naming no host, so this was provisioning, not code. A cPanel provider is configured for both storefronts, the transport corrected from 465-with-STARTTLS to 587, and the two missing `EMAIL_*_FROM` senders added — without which the club sent as the market's domain. **Left:** the market mailbox does not authenticate, and QA and production carry none of the values | `authentication.md` risk 2, `backend.md` risk 3 |
 | P2 | Nothing schedules `lapse_memberships`. An unpaid membership keeps access indefinitely | `payments.md` risk 2 |
 | P3 | `LocMemCache` makes every rate limit per worker | `backend.md` risk 2, `authentication.md` risk 1 |
 | P4 | No documented backup or rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every stored identity number | `backend.md` risk 1 |
 | P5 | ~~Staff password sign-in at `POST /api/auth/login` is not restricted to staff~~ — **closed by deleting the endpoint.** Nothing called it, members hold an unusable password hash so it could never have signed one in, and staff use `/admin/login/`. Restricting it would have documented the risk; removing it ends it | `authentication.md` risk 5 |
 | P6 | ~~`NEXT_PUBLIC_DJANGO_API_URL` is baked in at build time, so one artefact cannot serve two environments~~ **Closed** — now `DJANGO_API_PUBLIC_URL`, read per request | `frontend.md` risk 2 |
+| P7 | **A member suspended for conduct could pay the membership fee and be restored to Active automatically**, going around `reinstate_member`. `MembershipStatus.SUSPENDED` sat in `ACTIVATABLE_STATUSES` and in the frontend's `PAYABLE`, justified by a comment calling it the landing state for a subscription that stopped paying — which is `LAPSED`. **Closed:** out of both sets, with tests on both sides; a suspended member is now refused a checkout with a 409 and sent to `/blocked`. Found while implementing C32 | this register, and `payments.md` |
+| P8 | **`GET /api/payments/me/checkout` answered 500 for the member it was written for.** It called `open_subscription` unconditionally, and registration has already opened one, so the `live_for_user` partial index refused the second — the pay-now redirect from the club layout was a 500 for anybody at `Pending payment`. The endpoint had no tests at all; its docstring always claimed it found the live subscription first. **Closed:** it does now, with `MyCheckoutEndpointTests` behind it. Found while writing the P7 tests | this register |
+---
+
+## D2. Decided while closing Block 0
+
+### C32 — Where a block lives, and how a blocked member is told
+
+**Status: Decided — two levels, kept separate; the member is emailed, not shown a reason.**
+
+Asked because the two `suspended` values looked like one fact recorded twice. They are not, and the
+distinction is load-bearing:
+
+| Level | Written by | Means |
+| --- | --- | --- |
+| `ClubMembership.status = SUSPENDED` | `membership.administration.suspend_member` | The club has suspended a **membership**. Conduct. The account still signs in, and still uses the produce market. |
+| `ClubMembership.status = LAPSED` | `payments.lapse_overdue` | Did not pay. Money lifts it. |
+| `User.status = SUSPENDED` | `platform.revoke_access`, in the Django admin | Off the **platform**, both storefronts. |
+
+**Merging the account and membership levels was considered and refused.** It would mean a club
+conduct suspension locking somebody out of the produce market — which is precisely what Block 0.5
+separated, and `administration.suspend_member` carries the note saying so. What was genuinely
+muddled was inside `MembershipStatus.SUSPENDED`, and that is **P7**.
+
+**A blocked member is told by email, and the screen does not say why.** Two halves:
+
+- *The sign-in endpoints stay vague.* `_find_user` filters to Active, so a revoked account is
+  answered exactly as a stranger is — *"if that address belongs to a member, a code is on its
+  way"*. Saying more would confirm to anybody typing addresses that one belongs to a member of a
+  cannabis club, which is the disclosure the whole authentication design exists to prevent.
+- *The explanation goes to the mailbox*, which only its owner reads — the same reasoning
+  `accounts.registration` already uses for a duplicate registration. `accounts.notifications`
+  carries both messages.
+
+A club suspension leaves the member able to sign in, so they also reach a screen: `/blocked` names
+their standing, offers the support address, and **states no reason**. A reason recorded by an
+administrator is not something to render into a page a shared device or a forwarded screenshot can
+carry, and the email is the private channel.
+
+**What it cost.** A new required frontend variable, `SUPPORT_EMAIL` — a screen that says "contact
+support" with no address on it is the dead end it was written to replace. And none of the mail has
+been seen in a real mailbox yet: **P1** has since configured a provider and the club mailbox
+authenticates, so this is now testable rather than blocked — it has simply not been done.
+
 ---
 
 ## E. The second storefront

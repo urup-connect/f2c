@@ -14,6 +14,7 @@ const configFor = (appEnv: AppEnv): SiteConfig => ({
   appEnv,
   siteUrl: 'https://example.co.za',
   cdnBaseUrl: 'https://static.example.invalid/collective',
+  supportEmail: 'hello@example.invalid',
   isProduction: appEnv === 'production',
 })
 

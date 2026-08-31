@@ -1,0 +1,11 @@
+Hi {{ name }},
+
+Your access to {{ brand }} has been withdrawn. You will not be able to sign in
+while that is the case, on either of our sites.
+
+Nothing has been deleted. Your details are still on file.
+
+If you would like this looked at again, reply to this email and we will come
+back to you.
+
+-- {{ brand }}

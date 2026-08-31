@@ -41,8 +41,42 @@ in on a deployed environment today.**
       project was not under version control and C23 closed it; a third of the frontend genuinely
       was not.** **Closed:** all 133 are tracked and the tree is clean — they landed in `d3731df`
 
-- [ ] Configure a real email provider. `MAILERS` is the console backend, so sign-in codes and the
-      duplicate-registration payment link reach nobody — P1
+- [~] Configure a real email provider — P1. **Most of the way, and the line as written was already
+      wrong twice over.** It said `MAILERS` is the console backend: the console backend survives
+      only under `DEBUG`, and `f2c/settings.py` `_mailer` refuses to boot a deployed environment
+      that names no `EMAIL_CC_HOST` or `EMAIL_F2C_HOST`, with `_from_email` doing the same for the
+      two senders. So this was never a code task and it could never have shipped silently wrong —
+      it is provisioning, and the provisioning is now largely done.
+      **A cPanel provider is configured for both storefronts** and the transport was corrected in
+      the process: both were set to port 465 with `USE_TLS=True`, which is implicit TLS and STARTTLS
+      at the same time, so a send opened a plaintext conversation on a port expecting a handshake
+      and sat there until the ten-second timeout. `_mailer` does not catch that — it refuses only
+      `USE_TLS` and `USE_SSL` together. Probed rather than assumed: 465 presents a certificate with
+      no subject, issuer or SANs and fails verification, while 587 presents the cPanel certificate
+      covering the mail host and verifies. **Both are 587 with STARTTLS now, and the club mailbox
+      authenticates.**
+      **`EMAIL_CC_FROM` and `EMAIL_F2C_FROM` were missing entirely**, which mattered more than the
+      port: absent, `_from_email` falls back to `DEFAULT_FROM_EMAIL` under `DEBUG` — the *market's*
+      address — so every club email was set to send as a domain the club's provider does not own.
+      That is the failure the settings docstring names. Both senders are now the authenticated
+      mailbox for their own storefront.
+      Two things left, and neither is a repo change:
+  - [ ] **The market mailbox does not authenticate.** `noreply@f2c.co.za` times out during AUTH,
+        repeatably, where `noreply@f2c-cannabis.co.za` succeeds against the same server with the
+        same settings — both hosts resolve to one cPanel box. A mailbox or host-side matter to take
+        up with the provider, not a settings one
+  - [ ] **The deployed environments have none of it.** The values above are in a local `.env`; QA
+        and production need the same eight variables per storefront set on the Container App
+- [x] **The test suite must not reach a mail server, and it was pointed at one** — `f2c/test_runner.py`.
+      Django's `setup_test_environment` stubs `EMAIL_BACKEND`, and nothing in this project sends
+      through it: mail goes per storefront through `MAILERS` and `send(using=...)`. So a developer
+      with a populated `.env` had a suite aimed at a real host, and the only thing keeping it quiet
+      was that almost nothing sent outside a `TestCase`, whose `on_commit` callbacks never run.
+      **C32's suspension email ended that** — `accounts.tests.test_models` is a
+      `TransactionTestCase`, which does run them — and the suite began opening connections to the
+      provider and waiting out the timeout on each. Nothing was ever delivered, but a suite that
+      tries is one that can succeed, against the addresses in the fixtures. `MailSafeRunner` points
+      every alias in `MAILERS` at locmem for the duration
 - [ ] **A mail outage answers 500 on two paths that have already written, and one of them is a
       dead end.** New, and found by running `/api/customers/register` against a configured SMTP
       server that was not answering. Nothing in this project sends with `fail_silently`, so a send
@@ -163,6 +197,44 @@ in on a deployed environment today.**
       profile editing is unbuilt, and it is built — C21. Close `backend.md` risk 12, which says the
       project is not under version control — C23
 
+### Access and blocks — C32
+
+Built while closing this block, because the question *"which statuses stop a member and what are
+they told"* had to be answered before the destinations could be. **C32** records the decision and
+the table of the three levels.
+
+- [x] **A blocked member reaches a screen that says so** — `/blocked`, over `clubGateFor`. It was
+      the marketing landing page: no explanation, and a sign-up form they cannot use. The screen
+      derives its own reason from the session rather than from a query parameter, so a visitor
+      cannot choose which situation it describes, and the rule stays in one place
+- [x] **A membership awaiting verification gets its own wording** rather than being lumped in with a
+      block. `GateReason` went from three values to four; `not-settled-by-payment` had been doing
+      duty for a conduct block, an unfinished check and a placeholder, and one reason covering three
+      cases could only say something vague
+- [x] **The member is emailed, and the screen states no reason** — `accounts.notifications`, two
+      messages: a club suspension, club-branded, and a platform revocation that says both sites.
+      Sent on commit, and a mail failure is logged rather than raised — the only place in this
+      project that suppresses a send, because the block is already committed and failing the admin
+      action after the fact would report a suspension that did happen as one that did not
+- [x] **`SUSPENDED` out of `ACTIVATABLE_STATUSES` and out of the frontend's `PAYABLE`** — **P7**. A
+      member suspended for conduct could pay the fee and be restored to Active, around
+      `reinstate_member`. Nothing asserted the old behaviour, which is how it survived: 438 tests
+      passed with the value removed before a single test was written for it
+- [x] **`GET /api/payments/me/checkout` no longer answers 500 to the member it exists for** —
+      **P8**. It called `open_subscription` unconditionally against a member who already has one.
+      Found by the first test the endpoint has ever had
+- [ ] **`SUPPORT_EMAIL` needs a production value** for the club deployment — a build argument on
+      `frontend/club/Dockerfile`, refused if absent. The address the blocked screen offers. Belongs
+      with the deployment configuration below
+- [ ] **None of the mail above has been seen in a real mailbox.** It is tested against Django's
+      outbox; whether it arrives, renders and survives a spam filter is not known. **No longer
+      blocked** — P1 has configured a provider and the club mailbox authenticates on 587 — so this
+      is one `sendtestemail` per storefront and a look at what lands. The market half waits on that
+      mailbox authenticating
+- [ ] Account-level revocation is still a Django admin action with no tests of its own. The
+      notification it sends is tested directly — `test_notifications` — but `suspend_accounts`
+      itself, and the other two actions beside it, are not
+
 ### Two domains — C3, C30
 
 **The assignment is fixed and it is not what C3 assumed** — see **C30**. `f2c.co.za` is the
@@ -192,6 +264,9 @@ untouched.
         origin the JavaScript runs on: `club=f2c-cannabis.co.za,market=f2c.co.za`
       - `SESSION_COOKIE_DOMAIN` stays **unset**. One deployment on two registrable domains cannot
         name one cookie domain, and host-only cookies per API host are what the pairing needs
+      - `SUPPORT_EMAIL` is the club frontend's, not Django's — a **build argument** on
+        `frontend/club/Dockerfile`, which refuses a build without it. The mailbox the blocked
+        screen offers, and not the same thing as the `EMAIL_CC_FROM` sender — C32
 - [ ] Provision DNS and TLS for four names — `f2c.co.za`, `backend.f2c.co.za`,
       `f2c-cannabis.co.za`, `backend.f2c-cannabis.co.za` — and route both `backend.*` names to the
       one Django deployment. A SAN certificate per domain, or one covering all four

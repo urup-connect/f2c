@@ -65,6 +65,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.utils import timezone
 
+from app.core.accounts import notifications
 from app.core.accounts.models import (
     IdentityNumberDisclosure,
     User,
@@ -521,7 +522,8 @@ def suspend_member(user, member):
 
     Idempotent. Suspending an already-suspended account is a no-op that answers
     200, because a caller that got what it asked for should not be told it
-    failed.
+    failed -- **and it emails nobody a second time**, because the early return is
+    above the send.
     """
     _authorise(user)
     _editable(member)
@@ -543,6 +545,14 @@ def suspend_member(user, member):
     member.club_membership.status = MembershipStatus.SUSPENDED
     member.club_membership.save(update_fields=['status', 'updated_at'])
     member.flush_sessions()
+
+    # **The member is told by email, not by the sign-in screen.** They can still
+    # sign in -- the account is Active -- so the club layout sends them to
+    # `/blocked`, which says where they stand without saying why. The reason and
+    # the invitation to challenge it go to the mailbox, which is the private
+    # channel. Sent on commit, so a rolled-back suspension emails nobody. See
+    # `accounts.notifications`.
+    notifications.email_membership_suspended(member)
     return member
 
 

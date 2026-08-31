@@ -207,12 +207,34 @@ per-storefront plumbing exists — see section 7 — and Django now refuses to s
 until both storefronts have a host and a sender, so this fails loudly at deploy rather than quietly
 at the first sign-in. Filling in `EMAIL_CC_*` and `EMAIL_F2C_*` on QA is what remains.
 
+**Two traps found while configuring it locally, both silent, and worth knowing before QA is filled
+in.** Neither is caught by `_mailer`, which validates only that `USE_TLS` and `USE_SSL` are not set
+together:
+
+- **`PORT=465` with `USE_TLS=True` hangs.** 465 is implicit TLS and `USE_TLS` is STARTTLS, so the
+  send opens a plaintext conversation on a port expecting a handshake and waits out the ten-second
+  timeout. Use 587 with `USE_TLS`, or 465 with `USE_SSL` — and check which the provider actually
+  offers: on the cPanel host configured locally, 465 presents a certificate with no subject, issuer
+  or SANs and fails verification, while 587 verifies against the system roots.
+- **Omitting `EMAIL_CC_FROM` or `EMAIL_F2C_FROM` sends as the other storefront.** `_from_email`
+  falls back to `DEFAULT_FROM_EMAIL` under `DEBUG`, which is a single address and therefore one
+  storefront's — so the club sends as the market's domain. Outside `DEBUG` it raises instead, which
+  is the right behaviour and the reason this only bites locally. Set each to the mailbox that
+  storefront authenticates as.
+
 **Nothing enrols a passkey without a code first.** By design — see section 5 — but it means the
 mail configuration gates passkeys too, not only the fallback.
 
 **Staff password sign-in has been removed from the API.** `POST /api/auth/login` no longer
 exists. Staff authenticate at `/admin/login/`, which is Django's own view and does not route through
 django-ninja. See risk 5.
+
+**A blocked account is told by email, and the endpoints still say nothing.** The vagueness above is
+not softened for somebody who cannot get in: `_find_user` filters to Active, so a suspended or
+revoked account is answered exactly as a stranger is, and no sign-in response distinguishes them.
+The explanation reaches the mailbox instead — `accounts.notifications` — which is the one channel
+only its owner reads. A *club* suspension leaves the account able to sign in, so those members also
+reach `/blocked`, which names their standing and deliberately not the club's reasons. **C32.**
 
 ## 9. A defect worth recording
 
@@ -240,7 +262,8 @@ unreachable from the browser too, so no manual testing would have found it eithe
 | # | Risk | Status |
 | --- | --- | --- |
 | 1 | Rate limits are per worker with the default cache, so a multi-worker deployment multiplies every limit — including the one bounding outbound email. | Open — blocks production |
-| 2 | No email provider. The only route into a new account does not work on a deployed environment. | Partly closed — two per-storefront SMTP mailers are configurable and required outside `DEBUG` (section 7). Each environment's credentials are still outstanding |
+| 2 | No email provider. The only route into a new account does not work on a deployed environment. | Partly closed — two per-storefront SMTP mailers are configurable and required outside `DEBUG` (section 7), and a provider is now configured locally with the club mailbox authenticating. Each **deployed** environment's credentials are still outstanding, as is the market mailbox, which does not authenticate. Two silent traps in the configuration itself are recorded in section 8 |
 | 3 | `login/start` reveals which addresses have a passkey. Inherent to identifier-first flows. | Accepted |
 | 4 | The authenticated components are untested and unrouted. Wiring them up without tests moves that debt into the member-facing product. | Closed — rewritten to the component conventions with tests, and routed. See section 8 |
 | 5 | Staff password sign-in remains at `POST /api/auth/login`. It is not offered by the frontend but it is not restricted to staff either — an Active member with a usable password could use it. Members are created with an unusable password, so this is currently unreachable rather than closed. | **Closed by deleting the endpoint**, not by restricting it. An `is_staff` check would have left a route that opens a session on a password and relies on a second fact — the unusable hash — to be safe. Nothing called it: both frontends use the passkey and code routes, and staff use `/admin/login/`. `NoPasswordLoginTests` holds it at 404 |
+| 6 | **The test suite sent through the real `MAILERS`, not a stub.** Django's `setup_test_environment` replaces `EMAIL_BACKEND`, which nothing here sends through — so a developer with a populated `.env` had a suite aimed at their provider. Latent until C32's suspension email reached a `TransactionTestCase`, whose `on_commit` callbacks do run. | Closed — `f2c/test_runner.py` points every alias in `MAILERS` at locmem for the duration of a run, set as `TEST_RUNNER`. Nothing was ever delivered, but a suite that tries is one that can succeed against the addresses in the fixtures |

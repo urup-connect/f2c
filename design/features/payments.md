@@ -356,8 +356,10 @@ engine only by asking for it.
   by asking the club. The authenticated frontend is written but not routed
   (`frontend.md` §9), so there is nowhere to put it yet.
 - **No email when a membership is activated, lapses, or fails to renew.** The copy on `/signup/paid`
-  promises one. `MAILERS` is still the console backend, so no email this project sends is delivered
-  anywhere yet; that is the same gap `authentication.md` records for sign-in codes.
+  promises one, and nothing sends it. **The mail plumbing is no longer the obstacle** — a provider is
+  configured for both storefronts and the club mailbox authenticates (P1) — so what is missing here
+  is the three messages themselves, not somewhere to send them from. `accounts.notifications` is the
+  pattern to follow: on-commit, per storefront, and a send failure logged rather than raised.
 - **No refunds, no proration, no plan changes.** A price change applies to new members only, and
   there is no path for moving an existing member onto a different amount.
 - **No reconciliation report.** Payments are recorded and visible in the admin; nothing totals them

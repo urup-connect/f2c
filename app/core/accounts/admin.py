@@ -45,6 +45,7 @@ from django.utils.translation import ngettext
 from app.core.common import crypto
 from app.core.common.validators import normalise_id_number
 
+from . import notifications
 from .forms import UserChangeForm, UserCreationForm
 from .models import User, UserStatus
 from .roles import describe, permissions_for
@@ -351,13 +352,34 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='Suspend selected accounts (reversible)')
     def suspend_accounts(self, request, queryset):
+        """``platform.revoke_access``: off the platform, both storefronts.
+
+        Not the same action as the club register's *suspend*, which suspends a
+        club **membership** and leaves the account able to use the produce
+        market. This one blocks sign-in outright, so the member cannot reach a
+        screen that explains it -- ``authn.api._find_user`` filters to Active and
+        the endpoints answer a suspended account exactly as they answer a
+        stranger. The email is therefore the only channel there is, which is why
+        it is sent here rather than offered as an option.
+        """
         count = 0
+        told = 0
         for user in queryset:
             user.deactivate(UserStatus.SUSPENDED)
             count += 1
+            if notifications.email_access_revoked(user):
+                told += 1
+
+        untold = count - told
         self.message_user(
             request,
-            f'{count} account(s) suspended and signed out. Nothing was erased.',
+            f'{count} account(s) suspended and signed out, {told} emailed. '
+            'Nothing was erased.'
+            + (
+                f' {untold} hold no email address and were not told.'
+                if untold
+                else ''
+            ),
             messages.SUCCESS,
         )
 

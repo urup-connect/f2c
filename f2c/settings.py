@@ -556,6 +556,10 @@ def _from_email(prefix, storefront):
     return DEFAULT_FROM_EMAIL
 
 
+# The test suite must not reach a mail server. Django only stubs
+# `EMAIL_BACKEND`, which nothing here sends through -- see `f2c.test_runner`.
+TEST_RUNNER = 'f2c.test_runner.MailSafeRunner'
+
 MAILERS = {
     'club': _mailer('CC', 'club'),
     'market': _mailer('F2C', 'market'),

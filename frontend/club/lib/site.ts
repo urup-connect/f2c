@@ -23,6 +23,18 @@ export type SiteConfig = {
    * see `lib/club-documents.ts`.
    */
   readonly cdnBaseUrl: string
+  /**
+   * Where a member writes when they cannot get in.
+   *
+   * Required, and deliberately not defaulted. The blocked-membership screen exists to give
+   * somebody a way to challenge a block, and a screen that says "contact support" with no address
+   * on it is a dead end wearing a helpful message. A wrong address is better than no address only
+   * in the sense that it is visible: a missing one fails the deployment instead.
+   *
+   * Not the same thing as the `From` address Django sends as. That one is a sender a mail provider
+   * has authorised; this one is a mailbox a person reads.
+   */
+  readonly supportEmail: string
   readonly isProduction: boolean
 }
 
@@ -90,6 +102,24 @@ const readCdnBaseUrl = (value: string | undefined, appEnv: AppEnv): string => {
   return `${url.origin}${url.pathname}`.replace(/\/+$/, '')
 }
 
+/**
+ * The support mailbox.
+ *
+ * Validated only as far as "it could be an address" -- one `@`, something either side, no spaces.
+ * Anything stricter is a regular expression pretending to know RFC 5322, and the failure this
+ * guards against is a blank or a placeholder rather than an exotic-but-valid address.
+ */
+const readSupportEmail = (value: string | undefined): string => {
+  const address = (value ?? '').trim()
+  if (!address) throw misconfigured('SUPPORT_EMAIL', 'not set')
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    throw misconfigured('SUPPORT_EMAIL', `set to "${address}", which is not an email address`)
+  }
+
+  return address
+}
+
 /** Just the variables this reader needs. See `EnvRecord`. */
 export type SiteEnv = EnvRecord
 
@@ -101,6 +131,7 @@ export const readSiteConfig = (env: SiteEnv): SiteConfig => {
     appEnv,
     siteUrl: readSiteUrl(env.SITE_URL),
     cdnBaseUrl: readCdnBaseUrl(env.CDN_BASE_URL, appEnv),
+    supportEmail: readSupportEmail(env.SUPPORT_EMAIL),
     isProduction: appEnv === 'production',
   }
 }

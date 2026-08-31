@@ -143,17 +143,17 @@ services:
 
       # MySQL rather than the SQLite fallback, so the collation and constraint
       # behaviour in design/backend.md section 8 is the behaviour you get.
-      DJANGO_DB_HOST: mysql
-      DJANGO_DB_PORT: "3306"
-      DJANGO_DB_NAME: f2c
-      DJANGO_DB_USER: f2c
-      DJANGO_DB_PASSWORD: dev-password
+      DJANGO_DB_HOST: ${DJANGO_DB_HOST:-mysql}
+      DJANGO_DB_PORT: ${DJANGO_DB_PORT:-3306}
+      DJANGO_DB_NAME: ${DJANGO_DB_NAME:-f2c}
+      DJANGO_DB_USER: ${DJANGO_DB_USER:-f2c}
+      DJANGO_DB_PASSWORD: ${DJANGO_DB_PASSWORD:-dev-password}
       # `f2c/database.py` refuses to guess about TLS: name a CA or say plainly
       # that there is none. On a bridge network to a container on the same
       # machine, there is none.
       DJANGO_DB_SSL_DISABLED: "true"
 
-      DJANGO_REDIS_URL: redis://redis:6379/0
+      DJANGO_REDIS_URL: ${DJANGO_REDIS_URL:-redis://redis:6379/0}
       # `qa` requires `rediss://`, because in a deployment the access key
       # travels inside that URL. This one carries no key and never leaves the
       # compose network, so the opt-out is taken here rather than the rule being
@@ -179,22 +179,22 @@ services:
       # strings so the variables exist and the file cannot fill them in: a blank
       # mail host is the console backend under DEBUG, and a blank container is
       # the local disk fallback.
-      EMAIL_CC_HOST: ""
-      EMAIL_CC_USER: ""
-      EMAIL_CC_PASSWORD: ""
-      EMAIL_CC_PORT: ""
-      EMAIL_CC_FROM: ""
-      EMAIL_F2C_HOST: ""
-      EMAIL_F2C_USER: ""
-      EMAIL_F2C_PASSWORD: ""
-      EMAIL_F2C_PORT: ""
-      EMAIL_F2C_FROM: ""
-      DJANGO_DOCUMENT_STORAGE_CONTAINER: ""
-      DJANGO_DOCUMENT_STORAGE_ACCOUNT: ""
-      DJANGO_DOCUMENT_STORAGE_ACCOUNT_KEY: ""
-      DJANGO_DOCUMENT_STORAGE_SAS_TOKEN: ""
-      DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING: ""
-      DJANGO_AVATAR_STORAGE_CONTAINER: ""
+      EMAIL_CC_HOST: ${EMAIL_CC_HOST:-}
+      EMAIL_CC_USER: ${EMAIL_CC_USER:-}
+      EMAIL_CC_PASSWORD: ${EMAIL_CC_PASSWORD:-}
+      EMAIL_CC_PORT: ${EMAIL_CC_PORT:-}
+      EMAIL_CC_FROM: ${EMAIL_CC_FROM:-}
+      EMAIL_F2C_HOST: ${EMAIL_F2C_HOST:-}
+      EMAIL_F2C_USER: ${EMAIL_F2C_USER:-}
+      EMAIL_F2C_PASSWORD: ${EMAIL_F2C_PASSWORD:-}
+      EMAIL_F2C_PORT: ${EMAIL_F2C_PORT:-}
+      EMAIL_F2C_FROM: ${EMAIL_F2C_FROM:-}
+      DJANGO_DOCUMENT_STORAGE_CONTAINER: ${DJANGO_DOCUMENT_STORAGE_CONTAINER:-}
+      DJANGO_DOCUMENT_STORAGE_ACCOUNT: ${DJANGO_DOCUMENT_STORAGE_ACCOUNT:-}
+      DJANGO_DOCUMENT_STORAGE_ACCOUNT_KEY: ${DJANGO_DOCUMENT_STORAGE_ACCOUNT_KEY:-}
+      DJANGO_DOCUMENT_STORAGE_SAS_TOKEN: ${DJANGO_DOCUMENT_STORAGE_SAS_TOKEN:-}
+      DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING: ${DJANGO_DOCUMENT_STORAGE_CONNECTION_STRING:-}
+      DJANGO_AVATAR_STORAGE_CONTAINER: ${DJANGO_AVATAR_STORAGE_CONTAINER:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -235,6 +235,12 @@ services:
       # The landing page's brand film. Points at the QA static host because
       # nothing local serves it; the page renders without it.
       CDN_BASE_URL: ${CDN_BASE_URL:-https://qa-static.urup.com/consumer-collective}
+      # The mailbox the blocked-membership screen offers. `lib/site.ts` refuses a
+      # deployment that names none, in every environment including this one --
+      # the screen exists so somebody shut out of the club can ask about it, and
+      # a "contact support" line with no address on it is the dead end it
+      # replaced. The local default is deliberately undeliverable.
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-members@example.invalid}
     depends_on:
       - api
 

@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 from django.core.cache import cache
 from django.test import Client
 
+from app.club.membership.models import MembershipStatus
 from app.core.accounts.models import UserStatus
 from app.core.payments import gateway
 from app.core.payments.models import Payment, Subscription, SubscriptionStatus
@@ -138,6 +139,54 @@ class CheckoutEndpointTests(PaymentEndpointTests):
         self.subscription.refresh_from_db()
 
         self.assertEqual(self.subscription.checkout_expires_at, before)
+
+
+class MyCheckoutEndpointTests(PaymentEndpointTests):
+    """``GET /api/payments/me/checkout`` -- who it will and will not sell to.
+
+    Written for the suspension rule below, which is a behaviour change: this
+    endpoint had no tests at all, and the branch it turns on is the one that
+    decides whether a blocked member can buy their way back in.
+    """
+
+    MINE = '/api/payments/me/checkout'
+
+    def test_a_member_awaiting_payment_gets_a_checkout(self):
+        """The case the endpoint exists for -- a member signing in a week later
+        with no registration cookie left."""
+        self.client.force_login(self.member)
+
+        response = self.client.get(self.MINE)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('signature', self.body(response)['fields'])
+
+    def test_a_conduct_suspension_is_refused_and_not_sold_a_way_out(self):
+        """**409, not a checkout.** A suspension is lifted by an administrator
+        through ``reinstate_member``, so selling the suspended member a payment
+        would take money for access they do not thereby get -- and, until
+        ``SUSPENDED`` came out of ``ACTIVATABLE_STATUSES``, they *did* get it.
+        """
+        self.member.club_membership.status = MembershipStatus.SUSPENDED
+        self.member.club_membership.save(update_fields=['status'])
+        self.client.force_login(self.member)
+
+        response = self.client.get(self.MINE)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn('fields', self.body(response))
+
+    def test_a_lapsed_membership_is_still_sold_a_checkout(self):
+        """The other half of the rule, and why it is not simply "no blocked
+        member may pay": lapsing *is* the money question."""
+        self.member.club_membership.status = MembershipStatus.LAPSED
+        self.member.club_membership.save(update_fields=['status'])
+        self.client.force_login(self.member)
+
+        self.assertEqual(self.client.get(self.MINE).status_code, 200)
+
+    def test_it_needs_a_session(self):
+        self.assertEqual(self.client.get(self.MINE).status_code, 401)
 
 
 class NotifyEndpointTests(PaymentEndpointTests):

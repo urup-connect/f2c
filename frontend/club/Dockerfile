@@ -6,6 +6,7 @@
 #       --build-arg SITE_URL=https://f2c-cannabis.co.za \
 #       --build-arg APP_ENV=production \
 #       --build-arg CDN_BASE_URL=https://static.example.com/cc \
+#       --build-arg SUPPORT_EMAIL=members@f2c-cannabis.co.za \
 #       .
 #
 # The context is the workspace because that is where the lockfile and the
@@ -20,10 +21,11 @@
 # request time and written into the document by the root layout -- see
 # `lib/api-address.ts`. That is Block 0 P6 in design/todo.md, and it is closed.
 #
-# What remains build-time is `SITE_URL` and `APP_ENV`, which `lib/site.ts`
-# evaluates when the module is first loaded. Those are still baked, so the image
-# is still environment-specific until they move too -- but the address a member
-# browser talks to is no longer one of them, and it was the one that mattered:
+# What remains build-time is `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
+# `SUPPORT_EMAIL`, which `lib/site.ts` evaluates when the module is first loaded.
+# Those are still baked, so the image is still environment-specific until they
+# move too -- but the address a member browser talks to is no longer one of them,
+# and it was the one that mattered:
 # SITE_URL is wrong in a way that shows up in a canonical tag, and the API
 # address was wrong in a way that broke every request after sign-in.
 
@@ -56,15 +58,21 @@ COPY club ./club
 ARG SITE_URL
 ARG APP_ENV=production
 ARG CDN_BASE_URL
+# The mailbox on the blocked-membership screen. Required, and deliberately not
+# defaulted: that screen exists so somebody the club has shut out can ask about
+# it, and "contact support" with no address on it is the dead end it replaced.
+ARG SUPPORT_EMAIL
 ENV SITE_URL=$SITE_URL \
     APP_ENV=$APP_ENV \
     CDN_BASE_URL=$CDN_BASE_URL \
+    SUPPORT_EMAIL=$SUPPORT_EMAIL \
     NEXT_TELEMETRY_DISABLED=1
 
 # `lib/site.ts` throws on a missing SITE_URL during prerendering anyway; checking
 # it here names the build argument rather than the variable, which is what the
 # person running the build actually set.
 RUN test -n "$SITE_URL" || { echo "SITE_URL build-arg is required" >&2; exit 1; }
+RUN test -n "$SUPPORT_EMAIL" || { echo "SUPPORT_EMAIL build-arg is required" >&2; exit 1; }
 
 RUN npm run build --workspace @f2c/club-web
 

@@ -8,6 +8,7 @@ const configWith = (cdnBaseUrl: string): SiteConfig => ({
   appEnv: 'qa',
   siteUrl: 'https://example.invalid',
   cdnBaseUrl,
+  supportEmail: 'hello@example.invalid',
   isProduction: false,
 })
 

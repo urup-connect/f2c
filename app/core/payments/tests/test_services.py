@@ -304,6 +304,32 @@ class RenewalTests(ApplyMixin, PaymentsTestCase):
         self.assertIn('A human should look at this', logs.output[0])
         self.assertEqual(Payment.objects.count(), 1)
 
+    def test_a_payment_does_not_lift_a_conduct_suspension(self):
+        """**A suspended member cannot pay their way back in.**
+
+        ``SUSPENDED`` used to sit in ``ACTIVATABLE_STATUSES``, so this payment
+        restored the membership to Active and went around ``reinstate_member``
+        -- the function that exists so that lifting a block is a deliberate act
+        by an administrator. Nothing asserted the old behaviour, which is how it
+        survived: the tuple's comment justified it by calling ``SUSPENDED`` the
+        landing state for a subscription that stopped paying, and that is
+        ``LAPSED``.
+
+        The money is still recorded and still flagged, for the reason the
+        awaiting-verification case above gives: the payment happened. What to do
+        with it is **C11**.
+        """
+        self.member.club_membership.status = MembershipStatus.SUSPENDED
+        self.member.club_membership.save(update_fields=['status'])
+
+        with self.assertLogs('app.core.payments.services', level='WARNING') as logs:
+            self.apply(notification(self.subscription, payment_id='PF-SUSP'))
+
+        _, member = self.reload()
+        self.assertEqual(member.club_membership.status, MembershipStatus.SUSPENDED)
+        self.assertIn('A human should look at this', logs.output[0])
+        self.assertEqual(Payment.objects.count(), 1)
+
     def test_a_renewal_reactivates_a_member_who_had_lapsed(self):
         self.apply(notification(self.subscription, payment_id='PF-1'))
         self.member.refresh_from_db()

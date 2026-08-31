@@ -30,31 +30,60 @@ export type ClubGate =
 /**
  * Why somebody was turned away. Carried so the destination can say something true when they arrive,
  * and so a test asserts on the reason rather than on a path that may be renamed.
+ *
+ * **Four now, where there were three.** `not-settled-by-payment` was doing duty for three unrelated
+ * situations — a membership the club has blocked, one it has not finished checking, and a
+ * placeholder — and sent all of them to the marketing landing page with no explanation. A reason
+ * exists so the destination can say something true, and one reason covering three cases could only
+ * say something vague.
  */
 export type GateReason =
   /** No club membership at all. A produce-market customer, or an account that never joined. */
   | 'not-a-member'
   /** Owes money, and paying fixes it. */
   | 'owes-payment'
-  /** Blocked for a reason a payment does not settle. */
+  /**
+   * The club has blocked this membership. Conduct, not money — `suspend_member` on the API side.
+   * A payment does not lift it and is not offered; only `reinstate_member` lifts it.
+   */
+  | 'blocked'
+  /** The club has the application and has not finished checking it. Nothing to pay, nothing to do. */
+  | 'awaiting-verification'
+  /** Anything else the gate does not recognise. Fails closed. */
   | 'not-settled-by-payment'
 
 /** Where an unpaid member is sent. The same screen sign-up reaches, which now works signed in. */
 export const PAY_PATH = '/pay'
 
+/**
+ * Where a member who cannot use the club is sent, and told why.
+ *
+ * **Not the front door.** A blocked member used to be redirected to the marketing landing page,
+ * which says nothing about their situation and offers them a sign-up form they cannot use. This
+ * screen names the situation and carries the support address, which is the only way somebody can
+ * ask for a block to be looked at again.
+ */
+export const BLOCKED_PATH = '/blocked'
+
 /** Where anybody the club has nothing for is sent. */
 export const FRONT_DOOR = '/'
 
 /**
- * The statuses a membership payment actually resolves.
+ * The statuses a membership payment actually resolves. **The two that are about money.**
  *
  * Kept in step with `ACTIVATABLE_STATUSES` in `app/core/payments/services.py`, which is what the
  * `/payments/me/checkout` endpoint enforces. This copy decides where to *send* somebody; that one
  * decides whether to *sell* them anything, and the API is the one that counts. A drift shows up as
  * a member sent to a payment screen that refuses them, which is why the endpoint answers 409 with a
  * reason rather than an empty page.
+ *
+ * **`suspended` was in here and has been removed on both sides.** It is a conduct block written by
+ * `suspend_member`; non-payment is `lapsed`, written by `lapse_overdue`, which refuses to touch a
+ * suspension. So a suspended member was being sent to a checkout, and paying it restored them to
+ * Active automatically — around `reinstate_member`, the function that exists so that lifting a
+ * block is a deliberate act. See the note on `ACTIVATABLE_STATUSES`.
  */
-const PAYABLE: ReadonlySet<string> = new Set(['pending_payment', 'suspended', 'lapsed'])
+const PAYABLE: ReadonlySet<string> = new Set(['pending_payment', 'lapsed'])
 
 /**
  * Whether this account may use the club, and where it goes if not.
@@ -67,6 +96,11 @@ const PAYABLE: ReadonlySet<string> = new Set(['pending_payment', 'suspended', 'l
 export const clubGateFor = (user: Pick<User, 'membership_status'>): ClubGate => {
   const status = user.membership_status
 
+  /*
+   * No membership is not a block. A produce-market customer owes the club nothing and has done
+   * nothing wrong, so they get the front door — which carries the invitation to join — rather than
+   * a screen telling them to write to support about a membership they never had.
+   */
   if (status === null || status === undefined) {
     return { allow: false, redirectTo: FRONT_DOOR, reason: 'not-a-member' }
   }
@@ -77,5 +111,19 @@ export const clubGateFor = (user: Pick<User, 'membership_status'>): ClubGate => 
     return { allow: false, redirectTo: PAY_PATH, reason: 'owes-payment' }
   }
 
-  return { allow: false, redirectTo: FRONT_DOOR, reason: 'not-settled-by-payment' }
+  if (status === 'suspended') {
+    return { allow: false, redirectTo: BLOCKED_PATH, reason: 'blocked' }
+  }
+
+  if (status === 'pending') {
+    return { allow: false, redirectTo: BLOCKED_PATH, reason: 'awaiting-verification' }
+  }
+
+  /*
+   * `sharing` and anything Django has added since this bundle was built. Both go to the blocked
+   * screen rather than the front door: its generic wording is true of any membership the club
+   * cannot open, and it gives somebody an address to write to. A placeholder cannot hold a session
+   * so never arrives here at all — C6.
+   */
+  return { allow: false, redirectTo: BLOCKED_PATH, reason: 'not-settled-by-payment' }
 }
