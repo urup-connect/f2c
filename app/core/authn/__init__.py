@@ -2,8 +2,10 @@
 
 Members sign in with a passkey and fall back to a code emailed to them. Both
 are first-class credentials -- the emailed code is the only route into a new
-account, since enrolling a passkey requires an existing session. Password
-sign-in is retained for staff, who need it for Django admin.
+account, since enrolling a passkey requires an existing session. There is no
+password sign-in over the API at all: staff reach Django admin through its own
+login view, which does not come through here. See ``api`` for why the endpoint
+that used to was deleted.
 
 The layers, outermost first:
 

@@ -19,13 +19,6 @@ from typing import Any, Literal
 from ninja import Schema
 
 
-class LoginIn(Schema):
-    """Staff sign-in. Members use a passkey or an emailed code instead."""
-
-    email: str
-    password: str
-
-
 class EmailIn(Schema):
     email: str
 

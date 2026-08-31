@@ -213,7 +213,8 @@ docker compose restart club     # or market
 ```
 
 which takes about a second, because `next dev` is already warm. If you are working on the frontend
-for any length of time, `.undev.ps1` outside Docker is the better loop -- HMR works natively and
+for any length of time, `.
+undev.ps1` outside Docker is the better loop -- HMR works natively and
 the API in compose serves it either way.
 
 A dependency change needs a rebuild in both directions: `pyproject.toml`, `poetry.lock` or
@@ -346,8 +347,9 @@ passkey is enrolled afterwards from **Security** in the member area. That makes
 the code path a front door, not a back door, which is why it is rate limited
 per IP and per code.
 
-Staff keep email and password sign-in at `POST /api/auth/login`, because
-Django admin needs it. The frontend no longer offers it.
+Staff sign in with a password at Django admin's own login view,
+`/admin/login/`. There is no password endpoint on the API — one existed and was
+deleted, because nothing called it and members hold an unusable password hash.
 
 Only an account with status **Active** can sign in. Pending, Suspended and
 erased accounts are all refused identically, and the refusal never says which.
@@ -360,7 +362,6 @@ erased accounts are all refused identically, and the refusal never says which.
 | `POST /api/auth/login/passkey` | No | Verify a WebAuthn assertion and open a session |
 | `POST /api/auth/otp/start` | No | Send or resend a sign-in code |
 | `POST /api/auth/otp/verify` | No | Exchange a code for a session |
-| `POST /api/auth/login` | No | Email and password, retained for staff |
 | `POST /api/auth/logout` | No | End the session |
 | `GET /api/auth/me` | Yes | The signed-in user |
 | `POST /api/auth/passkeys/options` | Yes | Options for enrolling a passkey |

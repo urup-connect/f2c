@@ -9,8 +9,14 @@ django-ninja's built-in CSRF check, so they call ``check_csrf`` themselves.
 Login is a state-changing request and must not be forgeable.
 
 Members sign in with a passkey, falling back to a code emailed to them when
-they have not enrolled one or ask for a code instead. The password endpoint
-below is kept for staff, who also need it for Django admin.
+they have not enrolled one or ask for a code instead. **There is no password
+endpoint here.** One existed, answering `POST /api/auth/login`, and it was
+deleted rather than restricted: no frontend ever called it, members hold an
+unusable password hash so it could never have signed one in, and staff reach
+Django admin through its own login view at ``/admin/login/`` which does not
+route through django-ninja. What it left behind was a route that opened a
+session on a password with nothing enforcing the "staff only" its docstring
+claimed. See ``design/todo.md``, Block 0.
 
 Every route in here reaches an account through ``User.objects.active_by_email``
 or through ``is_active``, so only an account with status Active can ever get a
@@ -21,7 +27,7 @@ This module owns every write to the credential tables. The two services it
 calls -- ``authn.otp`` and ``authn.webauthn`` -- deliberately do not persist
 anything themselves, so there is one place to look for what touches them.
 """
-from django.contrib.auth import aauthenticate, alogin, alogout, get_user_model
+from django.contrib.auth import alogin, alogout, get_user_model
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from ninja import Router
@@ -42,7 +48,6 @@ from . import webauthn as wa
 from .models import PasskeyCredential, PasskeyUserHandle
 from .schemas import (
     EmailIn,
-    LoginIn,
     LoginStartOut,
     OtpVerifyIn,
     PasskeyLoginIn,
@@ -235,31 +240,6 @@ async def otp_verify(request, payload: OtpVerifyIn):
     # Re-read with the membership attached: UserOut serialises it, and an
     # unloaded reverse relation inside an async view raises
     # SynchronousOnlyOperation. See UserManager.with_platform_roles.
-    return await User.objects.with_platform_roles().aget(pk=user.pk)
-
-
-@router.post('/login', response=UserOut, auth=None)
-async def login(request, payload: LoginIn):
-    """Username and password sign-in, retained for staff.
-
-    Members are expected to use a passkey or an emailed code. This endpoint
-    stays because staff still need a password for Django admin, and the
-    frontend no longer offers it.
-    """
-    _require_csrf(request)
-    # ModelBackend takes the USERNAME_FIELD value under the keyword `username`
-    # whatever that field is actually called; here it is the email address.
-    user = await aauthenticate(
-        request, username=payload.email, password=payload.password
-    )
-    if user is None:
-        # Deliberately vague: do not reveal whether the address exists.
-        # aauthenticate() already refuses a non-Active account, and returns the
-        # same None for that as for a wrong password.
-        raise HttpError(401, 'Invalid credentials.')
-    # Rotates the session key, so a pre-login session cannot be fixated.
-    await alogin(request, user)
-    # As above: UserOut needs the membership loaded.
     return await User.objects.with_platform_roles().aget(pk=user.pk)
 
 

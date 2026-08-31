@@ -294,10 +294,9 @@ Next.js images; verified TLS to MySQL; the HTTPS settings `check --deploy` asks 
 container start rather than remembered; and the CI job's silent SQLite fallback.
 
 Open: an email provider, a scheduler for `lapse_memberships`, a documented backup and rotation
-procedure for the field-encryption key, an `is_staff` check on staff password sign-in, the Azure
-resources themselves, DNS and TLS for four hostnames, `DJANGO_BEHIND_PROXY` on the API container, the
-founding administrators granted their authority by hand, and the transborder disclosure West Europe
-requires under POPIA.
+procedure for the field-encryption key, the Azure resources themselves, DNS and TLS for four
+hostnames, `DJANGO_BEHIND_PROXY` on the API container, the founding administrators granted their
+authority by hand, and the transborder disclosure West Europe requires under POPIA.
 
 *Nothing in this plan is demonstrable to a third party until Block 0 is done.* A member cannot sign
 in without an email provider.

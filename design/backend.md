@@ -403,7 +403,6 @@ that cannot opt out with `auth=None`.
 | `POST /api/auth/login/passkey` | No | Verify a WebAuthn assertion, open a session |
 | `POST /api/auth/otp/start` | No | Send or resend a sign-in code |
 | `POST /api/auth/otp/verify` | No | Exchange a code for a session |
-| `POST /api/auth/login` | No | Email and password, retained for staff |
 | `POST /api/auth/logout` | No | End the session |
 | `GET /api/auth/me` | Yes | The signed-in member |
 | `POST /api/auth/passkeys/options` | Yes | Options for enrolling a passkey |

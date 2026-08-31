@@ -9,8 +9,8 @@ Passwords are the credential members reuse, phishers harvest and the club would 
 storing. A passkey cannot be phished because nothing shared is ever transmitted, and an emailed code
 is bounded to five minutes and five attempts.
 
-Staff keep email and password sign-in, because Django admin needs it. The frontend does not offer
-it.
+Staff keep email and password sign-in **at Django admin's own login view**, because Django admin
+needs it. There is no password endpoint on the API: one existed and was deleted — see risk 5.
 
 The design constraint that shapes everything else is that **the API must not reveal who is a
 member.** Membership of a cannabis club is sensitive in a way that membership of most clubs is not.
@@ -210,8 +210,9 @@ at the first sign-in. Filling in `EMAIL_CC_*` and `EMAIL_F2C_*` on QA is what re
 **Nothing enrols a passkey without a code first.** By design — see section 5 — but it means the
 mail configuration gates passkeys too, not only the fallback.
 
-**Staff password sign-in is still unrestricted.** `POST /api/auth/login` is not offered by the
-frontend and is not limited to staff either. See risk 5.
+**Staff password sign-in has been removed from the API.** `POST /api/auth/login` no longer
+exists. Staff authenticate at `/admin/login/`, which is Django's own view and does not route through
+django-ninja. See risk 5.
 
 ## 9. A defect worth recording
 
@@ -242,4 +243,4 @@ unreachable from the browser too, so no manual testing would have found it eithe
 | 2 | No email provider. The only route into a new account does not work on a deployed environment. | Partly closed — two per-storefront SMTP mailers are configurable and required outside `DEBUG` (section 7). Each environment's credentials are still outstanding |
 | 3 | `login/start` reveals which addresses have a passkey. Inherent to identifier-first flows. | Accepted |
 | 4 | The authenticated components are untested and unrouted. Wiring them up without tests moves that debt into the member-facing product. | Closed — rewritten to the component conventions with tests, and routed. See section 8 |
-| 5 | Staff password sign-in remains at `POST /api/auth/login`. It is not offered by the frontend but it is not restricted to staff either — an Active member with a usable password could use it. Members are created with an unusable password, so this is currently unreachable rather than closed. | Open — worth an explicit `is_staff` check |
+| 5 | Staff password sign-in remains at `POST /api/auth/login`. It is not offered by the frontend but it is not restricted to staff either — an Active member with a usable password could use it. Members are created with an unusable password, so this is currently unreachable rather than closed. | **Closed by deleting the endpoint**, not by restricting it. An `is_staff` check would have left a route that opens a session on a password and relies on a second fact — the unusable hash — to be safe. Nothing called it: both frontends use the passkey and code routes, and staff use `/admin/login/`. `NoPasswordLoginTests` holds it at 404 |

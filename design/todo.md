@@ -70,11 +70,18 @@ in on a deployed environment today.**
       into errors. Verified against a real Redis over TCP: the same 635 tests pass — **C31** — P3
 - [ ] Document backup and rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every
       stored identity number with no recovery path — P4
-- [ ] Restrict `POST /api/auth/login` to `is_staff`. Unreachable today only because `create_user`
-      calls `set_unusable_password()` — and **Block 0.5 narrowed that to the only thing holding the
-      door**: accounts used to be created at `PENDING_PAYMENT`, which `aauthenticate` refused on its
-      own, and they are created `ACTIVE` now. The endpoint's own docstring says it is retained for
-      staff; nothing enforces it — P5
+- [x] ~~Restrict `POST /api/auth/login` to `is_staff`~~ — **deleted instead, and the line as
+      written was misleading.** It read as though members were at risk of being locked out or let in
+      by this endpoint, and members never touched it: it was username-and-password sign-in, and the
+      club and market frontends both sign in through `login/start`, `login/passkey`, `otp/start` and
+      `otp/verify` — `frontend/club/lib/api.ts` and `frontend/market/lib/api.ts`. Its only callers in
+      the repository were two lines of its own tests. Members hold an unusable password hash from
+      `set_unusable_password()`, so it could never have signed one in, and staff reach Django admin
+      through `/admin/login/`, which does not route through django-ninja. **So `is_staff` would have
+      restricted an endpoint nobody could use to a group that does not need it.** The route, its
+      `LoginIn` schema and the `aauthenticate` import are gone; `NoPasswordLoginTests` asserts the
+      route answers 404 and that a staff password still authenticates, so the deletion is enforced
+      rather than remembered. Closes **P5** by removal — `authentication.md` risk 5
 - [x] Move the API address to runtime configuration — P6. **Done.** `NEXT_PUBLIC_DJANGO_API_URL` is
       gone; `DJANGO_API_PUBLIC_URL` is read per request by `lib/api-address.ts`, rendered into the
       document by the root layout, and read from there by `lib/api.ts`. Neither Dockerfile takes it

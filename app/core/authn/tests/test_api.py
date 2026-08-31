@@ -45,8 +45,6 @@ WEBAUTHN_SETTINGS = dict(
     WEBAUTHN_ORIGINS=['http://localhost:3000'],
 )
 
-STAFF_PASSWORD = 'Str0ng-Passphrase!'
-
 # Two storefronts on two hosts, each with its own mail server and sender. The
 # hosts have to be in ALLOWED_HOSTS as well: `storefront_for_request` reads
 # `get_host()`, so a host Django has already rejected never reaches it.
@@ -214,7 +212,6 @@ class CsrfTests(ApiTestCase):
             ('/api/auth/login/passkey', {**address, 'credential': {}}),
             ('/api/auth/otp/start', address),
             ('/api/auth/otp/verify', {**address, 'code': '000000'}),
-            ('/api/auth/login', {**address, 'password': 'irrelevant'}),
             ('/api/auth/logout', {}),
         )
 
@@ -551,45 +548,42 @@ class OtpVerifyTests(ApiTestCase):
         self.assertEqual(self.verify(self.code).status_code, 401)
 
 
-class StaffPasswordLoginTests(ApiTestCase):
-    """Retained for staff, who need a password for Django admin."""
+class NoPasswordLoginTests(ApiTestCase):
+    """``POST /api/auth/login`` is gone, and this is what keeps it gone.
 
-    def setUp(self):
-        super().setUp()
-        self.staff = User.objects.create_superuser(
-            email='staff@example.com', password=STAFF_PASSWORD
+    It was username-and-password sign-in, retained for staff. Deleted rather
+    than restricted to ``is_staff``: no frontend called it -- the club and the
+    market both sign in through ``login/start``, ``login/passkey`` and the two
+    ``otp`` routes -- members hold an unusable password hash so it could never
+    have signed one in, and staff reach Django admin through ``/admin/login/``,
+    which does not route through django-ninja. Restricting it would have
+    documented the risk; deleting it removes it.
+
+    Asserted rather than assumed, because the endpoint is easy to reintroduce
+    by reflex when somebody wants a password form.
+    """
+
+    def test_the_route_does_not_exist(self):
+        self.assertEqual(
+            self.post('/api/auth/login', {'email': 'staff@example.com', 'password': 'x'}).status_code,
+            404,
         )
 
-    def login(self, email, password):
-        return self.post('/api/auth/login', {'email': email, 'password': password})
+    def test_a_staff_password_is_still_usable_at_the_django_admin(self):
+        """The reason deleting it costs staff nothing.
 
-    def test_correct_credentials_open_a_session(self):
-        response = self.login('staff@example.com', STAFF_PASSWORD)
+        Django's own login view, session backend and password hashing are
+        untouched by removing a django-ninja route -- so this asserts the
+        credential still works, not that the admin view is configured.
+        """
+        staff = User.objects.create_superuser(
+            email='staff@example.com', password='Str0ng-Passphrase!'
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(self.body(response)['is_staff'])
-        self.assert_signed_in_as(self.staff)
-
-    def test_a_wrong_password_is_refused(self):
-        self.assertEqual(self.login('staff@example.com', 'wrong').status_code, 401)
-        self.assert_signed_out()
-
-    def test_an_unknown_address_is_refused_identically(self):
-        unknown = self.login('nobody@example.com', STAFF_PASSWORD)
-        wrong = self.login('staff@example.com', 'wrong')
-
-        self.assertEqual(self.body(unknown), self.body(wrong))
-
-    def test_a_suspended_account_is_refused(self):
-        self.staff.deactivate()
-
-        self.assertEqual(self.login('staff@example.com', STAFF_PASSWORD).status_code, 401)
-
-    def test_a_member_holding_no_password_cannot_be_signed_in_with_a_blank_one(self):
-        """Members get an unusable password, which must match nothing at all."""
-        self.make_member()
-
-        self.assertEqual(self.login('member@example.com', '').status_code, 401)
+        self.assertTrue(staff.check_password('Str0ng-Passphrase!'))
+        self.assertTrue(self.client.login(
+            username='staff@example.com', password='Str0ng-Passphrase!'
+        ))
 
 
 class SessionTests(ApiTestCase):

@@ -626,7 +626,7 @@ anybody without them.
 | P2 | Nothing schedules `lapse_memberships`. An unpaid membership keeps access indefinitely | `payments.md` risk 2 |
 | P3 | `LocMemCache` makes every rate limit per worker | `backend.md` risk 2, `authentication.md` risk 1 |
 | P4 | No documented backup or rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every stored identity number | `backend.md` risk 1 |
-| P5 | Staff password sign-in at `POST /api/auth/login` is not restricted to staff | `authentication.md` risk 5 |
+| P5 | ~~Staff password sign-in at `POST /api/auth/login` is not restricted to staff~~ — **closed by deleting the endpoint.** Nothing called it, members hold an unusable password hash so it could never have signed one in, and staff use `/admin/login/`. Restricting it would have documented the risk; removing it ends it | `authentication.md` risk 5 |
 | P6 | ~~`NEXT_PUBLIC_DJANGO_API_URL` is baked in at build time, so one artefact cannot serve two environments~~ **Closed** — now `DJANGO_API_PUBLIC_URL`, read per request | `frontend.md` risk 2 |
 ---
 
