@@ -28,8 +28,8 @@ Three commercial mechanics carry it:
 
 | Mechanic | Revenue | Status |
 | --- | --- | --- |
-| Membership subscription | Recurring, monthly, Payfast | **Built** |
-| Plant purchase with grow service | Per order, split with the cultivator | Not built. Settlement unspecified — C10 |
+| Membership subscription | Recurring, monthly, Payfast. **Collected by F2C**, 40/60 with the club — C10 | **Built** |
+| Plant purchase with grow service | Per order. **Collected by the club** through a second gateway, 15% commission to F2C — C10 | Not built. The gateway is not built either — C10.1 |
 | Plant subscription — a repeating monthly plant order | Recurring, per cultivator and strain | Not built |
 
 A fourth mechanic is now in scope and is not costed here: a **public produce market** where farming
@@ -155,7 +155,7 @@ None of that was built. **C1** records the divergence; this is what exists.
 | Data | MySQL 8.4 in QA and production, SQLite in development. `uuid7` keys need neither — C31 |
 | Identity at rest | AES field encryption plus blind indexes for ID number and email |
 | Authentication | WebAuthn passkeys, emailed six-digit code fallback, Django sessions |
-| Payments | Payfast — hosted checkout, signed server-to-server notification |
+| Payments | Payfast — hosted checkout, signed server-to-server notification. **Membership only.** Member purchases settle into a different entity's account through a second gateway, PayGate or Stitch undecided, and nothing is built — C10, C10.1 |
 | Email | Console backend. **No provider configured** |
 | Cache | Redis — Azure Managed Redis in QA and production, `redis:7-alpine` locally. `f2c/cache.py` refuses a deployed environment that names none. `LocMemCache` survives only as the no-configuration fallback, which keeps the suite runnable with no servers — C31 |
 | Hosting | Azure, West Europe. Three Container Apps — market, club, API — and a managed MySQL — C31 |
@@ -259,8 +259,10 @@ Block 0.5  Identity decomposition         ── User / ClubMembership / Produce
                                              generalised to Producer.  C27, C28.
                                              Everything below waits on it
 Block A    Commerce spine                 ── catalogue, listing, search, cart, order,
-                                             payment intent, review, settlement.
-                                             Absorbs old Blocks 1, 4, 5, 7. Pulls C10 forward
+                                             payment intent, review, settlement, and a
+                                             second payment gateway.
+                                             Absorbs old Blocks 1, 4, 5, 7.
+                                             Pulls C10 forward, and C10.1 with it
 Block B    Market vertical                ── produce types, units, stock, delivery
 Block C    Club vertical                  ── plant, batch, ownership, harvest, fulfilment
                                              (old Blocks 3 and 6)
@@ -283,7 +285,10 @@ exercises the same spine the club needs while carrying a fraction of the regulat
 does not delay the club, because Blocks 0.5 and A are the club's work as much as the market's.
 
 **What it costs.** Settlement — C10 — stops being a Block 12 concern. The market pays a farmer on
-every order from the first day it trades.
+every order from the first day it trades. It also pulls in **C10.1**, a second payment gateway: the
+membership fee is collected by F2C through the built Payfast integration, and everything a member buys
+is collected into the Cultivators Collective's account through a gateway that does not exist yet. The
+block cannot specify a payment intent without knowing which one.
 
 ---
 
@@ -562,18 +567,34 @@ Repeating monthly plant orders by cultivator and strain, cancellable on a month'
 member — `plant-subscription.md`. This is a **different mechanic from the membership subscription**
 and the old plan conflated them.
 
-Refunds and partial reversals with fee withholding — **C11**. Sales, review and activity reporting,
-and the revenue, membership, plant sales and swap dashboards.
+Refunds and partial reversals with fee withholding — **C11**, where who refunds is now answered (the
+club refunds the member; the platform's commission is not refundable) and the mechanism waits on the
+gateway choice. Sales, review and activity reporting, and the revenue, membership, plant sales and
+swap dashboards.
 
 Settlement — what the platform takes, when a cultivator earns, and how money reaches one — is
-still a launch blocker for cultivators wherever it is built, though **one of the three is now
-answered: a cultivator earns at delivery** (C9). The member's money is held from order until then, so
-the statement of account has to carry **held**, **releasable** and **paid** as separate lines. Where
-the funds sit while held is a commercial and banking matter and is **out of scope for the
-application** — the platform records the state and reports it; it does not hold the cash. Block
+still a launch blocker for cultivators wherever it is built, though **two of the three are now
+answered.** A cultivator earns **at delivery** (C9). What the platform takes is **15% of a member
+transaction and 40% of the membership fee** (C10), and the money map behind those numbers is the
+larger change: the membership fee is collected by **F2C** through the built Payfast integration and
+60% is owed onward to the club, while everything a member buys is collected by the **Cultivators
+Collective** through a second gateway that does not exist. The ratios themselves are out of scope for
+the application, but the commission has to reach it as a recorded amount, because a statement of
+account without a commission line cannot be reconciled.
+
+**How money reaches a cultivator is still unanswered, and it is now the whole of the gap.** Payfast
+collects and does not disburse; PayGate and Stitch are candidates for collection, not payout. The
+working assumption is a manual EFT run, which makes the application's obligation a **payment run** —
+a payable list per cultivator per period, the released orders behind each line, and a recorded payment
+against it — rather than a payout integration.
+
+The member's money is held from order until delivery, so the statement of account has to carry
+**held**, **releasable** and **paid** as separate lines. Where the funds sit while held is a
+commercial and banking matter and is **out of scope for the application** — the platform records the
+state and reports it; it does not hold the cash, and C10 confirms it never receives it. Block
 0.5 put a collection address and encrypted bank details on `Producer` and **stopped there on
 purpose**: a tax number or a mandate reference would have been inventing a commercial model in a
-schema.
+schema. The payment run is what those bank details are for.
 
 ---
 
@@ -661,8 +682,9 @@ it.
 | # | Decision | Holds up |
 | --- | --- | --- |
 | C9.1 | Which event confirms delivery and releases the held funds | Block A's settlement and Block C's fulfilment. The preference is Pargo's delivery or collection scan; it cannot be fixed until the integration is understood |
-| C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. The market pays a producer on every order from the day it trades. **C9 answers when a cultivator earns — at delivery** — and adds the held / releasable / paid statement lines |
-| C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10. **Narrowed by C9**: a failed crop is substituted, and where it is refunded the money is still held, so what is left here is a refund *after* release |
+| C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. **Substantially answered**: the club collects member purchases and owes F2C 15%; F2C collects the membership fee and owes the club 60%; a cultivator earns at delivery (C9). What is left is the commission base against the courier leg, whether the commission shows on a statement, **how a cultivator is actually paid** — no gateway disburses, so a payment run — and the market's leg, which is unstated and trades first |
+| C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. Also gates C11 — a gateway that reverses makes a refund a status, one that does not makes it a ledger |
+| C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10 and now of C10.1. **Narrowed by C9**: a failed crop is substituted, and where it is refunded the money is still held, so what is left here is a refund *after* release. **Who refunds is answered** — the club refunds the member and the platform's 15% is not refundable; the mechanism, a gateway reversal or a member account credit, waits on the gateway |
 | C14 | May an administrator create and manage sharing members | Block 2 and Block 9 → Block D. **C5 moved the ground under the standing decision**: the prescribed route is the operator's back office, and a Next.js-only club administrator has no access to it |
 | C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules. **Promoted by C7** — the four-plant ceiling is statutory and attaches to a named adult, so the holding check is a prerequisite of the block |
 | C16 | Does a harvested plant count toward the four | Block 10 → Block E. Promoted with C15 — it decides what the holding check counts |
@@ -688,6 +710,13 @@ holds up settlement rather than the checkout.
 **C15 and C16 move up in its place.** Both were refinements of the swap zone while the four-plant
 number was a convention. C7 made it a statutory ceiling attaching to a named adult, so the holding
 check is now a prerequisite of the block rather than a detail inside it.
+
+**C10 is narrowed and has shed a build item.** The money map is settled for the club: F2C collects the
+membership fee through Payfast and keeps 40%, the Cultivators Collective collects everything else and
+pays F2C 15%, and the split ratios themselves are out of scope for the application. What that exposes
+is **C10.1** — the platform has one gateway, billing one thing, into the wrong entity's account for
+every transaction except the subscription. That is work, not a decision waiting on the business, and
+it sits in Block A ahead of both checkouts.
 
 ### Decided, and recorded here because they restructured the plan
 

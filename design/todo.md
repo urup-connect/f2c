@@ -1044,7 +1044,8 @@ and still built after the models it scopes.
 - [x] Collection address on the farm — `drawio`, cultivator story
 - [x] Bank details on the farm — `drawio`. Encrypted through the same helper the identity number
       uses and **not** blind-indexed, because an identity number is searched and an account number is
-      only ever read back; the admin renders it write-only. Settlement itself is Block 12, **C10**
+      only ever read back; the admin renders it write-only. Settlement itself is Block 12, **C10** —
+      and these are the fields a manual EFT payment run reads, which is the likely payout mechanism
 - [~] **Object-level permission rules.** `RoleBackend` still refuses object-level questions outright,
       and that is now a **recorded decision rather than a gap**: a role is a fact about an account,
       not about that account's relationship to one record, so answering an object-level question from
@@ -1230,6 +1231,9 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] Member picks a date and a quantity; the system allocates specific serials
 - [ ] **Cart and checkout — a single full-price payment.** The member pays the whole grow price at
       order. No deposit, no balance at harvest, no receivables ledger — **C9**
+- [!] **This checkout does not run on the built gateway.** The money goes to the Cultivators
+      Collective's account through PayGate or Stitch, not to F2C through Payfast, and neither is
+      built or chosen. It gates this block's checkout — **C10**, **C10.1**
 - [ ] **Held or released state on the order**, with the event and timestamp that changed it. The club
       holds the member's money until delivery is confirmed and releases it to the cultivator then.
       Where the funds actually sit is a commercial matter and out of scope for the application; the
@@ -1549,10 +1553,26 @@ A **different mechanic** from the membership subscription. The old plan conflate
 
 ### Cultivator settlement — C10
 
-Unspecified in every document. A launch blocker for cultivators.
+**Substantially answered by the product owner, and the remainder is smaller.** The money map: the
+membership fee is collected by **F2C** through Payfast and split 40% F2C / 60% Cultivators Collective;
+everything else a member buys is collected by the **Cultivators Collective** through PayGate or Stitch,
+with a **15% commission** to F2C. The ratios themselves are out of scope for the application. Still a
+launch blocker for cultivators, because nothing here pays one.
 
-- [!] Does the platform collect and remit, or introduce and invoice a commission?
-- [!] What is the platform's take, and is it visible to the cultivator?
+- [x] Does the platform collect and remit, or introduce and invoice a commission? — **both.** It
+      collects and remits the membership fee; it invoices a commission on everything else — **C10**
+- [x] What is the platform's take — **15% of a member transaction, 40% of the membership fee** — **C10**
+- [!] **Is the commission visible to the cultivator?** Recommendation: yes, and as an amount rather
+      than a rate. A statement showing gross, commission, courier and net is the only kind that
+      reconciles — **C10**
+- [!] **What base is the 15% taken on?** C8 puts courier inside the price the member pays, so 15% of
+      the delivered price and 15% of the price net of courier are different sums. Same question for
+      VAT-inclusive versus exclusive — **C8**, **C10**
+- [ ] **Record the commission as an amount on the transaction**, at the time it is taken. A fact, not
+      a policy: no rate table, no configuration screen, no split engine, and the statement still adds
+      up — **C10**
+- [ ] **Record which gateway and which account took the money.** Two legal entities reconcile their
+      banking off the same table — **C10**, **C10.1**
 - [x] When does a cultivator earn — **at delivery**. The member pays in full at order and the club
       holds the money until delivery is confirmed — **C9**. Which event counts as confirmed is still
       open: **C9.1**, in Block 6
@@ -1566,7 +1586,32 @@ Unspecified in every document. A launch blocker for cultivators.
       mandate reference would have been inventing a commercial model in a schema. Whatever this
       section decides is what adds the fields
 - [ ] Statement of account, payments due, record payments made — `drawio`
-- [ ] Payout mechanism. Payfast collects; it does not pay cultivators
+- [!] **Payout mechanism — the whole of the remaining gap.** Payfast collects and does not disburse;
+      PayGate and Stitch are candidates for collection, not payout — **C10**
+- [ ] **Build the payment run, not a payout integration.** On the working assumption of a manual EFT
+      run: a payable list per cultivator per period, the released orders behind each line, and a
+      recorded payment against it. That is `drawio`'s "record payments made", and the encrypted bank
+      details Block 0.5 put on `Producer` are what it reads — **C10**
+- [!] **The market's leg is not answered at all.** The money map is written in club terms. A farmer
+      selling honey is not a club member and the Collective is not an obvious party to that sale —
+      whose account collects, whether the 15% applies, and who is the seller of record for
+      mostly zero-rated produce. The market trades first — **C10**, **C26**
+
+### The second gateway — C10.1
+
+**Build work, not a question about the brief.** Payfast is the only money path in the system and it
+bills exactly one thing. Member purchases settle into a **different legal entity's** account. Belongs
+in Block A with the payment intent — deciding it later means writing the checkout twice.
+
+- [!] **PayGate or Stitch — decide.** Not interchangeable: PayGate is a hosted card gateway of the
+      Payfast kind, Stitch is API-first and leads with pay-by-bank. The choice decides the checkout's
+      shape, how much ledger the platform holds itself, and **whether a reversal exists at all**,
+      which is what C11 turns on — **C10.1**, **C11**
+- [ ] Second merchant account, second credential set, second notification endpoint. `payfast_config`
+      is a single-gateway assumption with one merchant identity in it — **C10.1**
+- [ ] The payment layer stops being "the Payfast integration" and becomes a gateway per money flow —
+      **C10.1**
+- [ ] Not scoped. No integration document for either candidate has been read — **C10.1**
 
 ### Refunds — C11
 
@@ -1576,6 +1621,19 @@ Unspecified in every document. A launch blocker for cultivators.
       commonest case, a failed crop, is substituted or refunded out of funds that were never released,
       so nothing is clawed back and the cultivator carries the loss. What is left here is a refund
       *after* release
+- [x] **Who refunds — the Cultivators Collective**, which holds the money and is the seller of record.
+      **F2C's 15% is not refundable**, and how the club absorbs that is the club's problem at this
+      stage — **C10**, **C11**
+- [ ] **Build the full-refund case**: the member gets everything back and the commission is recorded
+      as retained. Refunding net of the commission is a deduction the member never agreed to, and the
+      club's recovery of it is a finance matter outside the application — **C11**
+- [!] **The mechanism, and it waits on C10.1.** A gateway reversal — PayGate may support one,
+      unconfirmed — makes a refund a transaction status. No reversal makes it a ledger — **C10.1**
+- [!] **A credit on the member's platform account** is the product owner's fallback where no reversal
+      is possible. **An option, not a requirement.** It is a real ledger and a real liability: a
+      balance per member, spendable at checkout, an expiry position, a POPIA-relevant record against
+      erasure. C9 ruled credit out as the crop-failure remedy on CPA grounds; the consent question is
+      the same one here — **C9**, **C11**
 - [ ] A **dispute path**, if C9.1 resolves to automatic release after a fixed window. The window only
       works if a member can suspend it — **C9.1**
 

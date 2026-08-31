@@ -60,7 +60,7 @@ app/market/     the produce market. No apps yet
 | `core/authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
 | `core/storefronts` | The two storefronts, who administers one, and which storefront a request is for | `accounts` |
 | `core/documents` | Documents, revisions, and the agreements given — per storefront | `accounts`, `storefronts` |
-| `core/payments` | The membership subscription, the Payfast integration, and what a payment does to a membership | `accounts`, `membership` |
+| `core/payments` | The membership subscription, the Payfast integration, and what a payment does to a membership. **One gateway, billing one thing** — member purchases settle elsewhere, into another entity's account, through a gateway that does not exist yet: C10, C10.1 | `accounts`, `membership` |
 | `commerce/producers` | The producer organisation, its appointed people, and which storefronts it sells into | `accounts`, `storefronts` |
 | `club/membership` | Club membership, its nickname, and turning a sign-up submission into a member | `accounts`, `documents`, `payments` |
 | `club/finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
@@ -913,6 +913,27 @@ around it is narrower and is set out in `design/features/payments.md` section 9:
 the command that withdraws access from an unpaid membership, no member-facing screen shows a
 subscription or offers cancellation, and no email is sent when a membership activates or lapses.
 
+**What is missing around payments is wider than that, and C10 is what made it visible.** This app is
+not "the payment layer" — it is one gateway billing one product into one merchant account. The money
+map C10 records needs two:
+
+- The **membership fee** is collected by **F2C** through Payfast, which is what is built, and 60% of
+  it is owed onward to the club. That obligation is settled outside the application; the collection is
+  not, and it is correct as it stands.
+- **Everything a member buys** is collected by the **Cultivators Collective**, a different legal
+  entity, through **PayGate or Stitch** — undecided, and the two are not interchangeable. Nothing
+  exists. `payfast_config` is a single-gateway assumption carrying one merchant identity, and no order
+  model records which gateway or which account took the money, which two entities reconciling off the
+  same table will need. This is **C10.1**, it is build work rather than a question about the brief,
+  and it sits in Block A ahead of either storefront's checkout.
+
+Two consequences reach the schema rather than the integration. The commission has to be recorded as an
+**amount on the transaction** — the rates themselves are out of scope for the application, but a
+statement of account without a commission line cannot be reconciled. And there is no disbursement path
+at all: Payfast does not pay out, and neither candidate gateway is being considered for it, so the
+realistic first release is a **payment run** — a payable list per cultivator per period over released
+orders, against the encrypted bank details already on `Producer` — rather than a payout API.
+
 Roles are the newest instance of the same gap, and the sharpest. The three roles, the action
 catalogue and the enforcement path are built and tested; almost nothing they govern exists. No
 endpoint checks a `platform.*` permission, because no endpoint performs an action the catalogue
@@ -932,7 +953,8 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | Application settings for the database | `DJANGO_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD`. Plus the MySQL client headers on the host, since `mysqlclient` has no Linux wheel. Section 8.0 |
 | Static file handling | `STATIC_ROOT` plus WhiteNoise or a CDN |
 | A real email provider | `MAILERS` uses the console backend; sign-in codes and the payment link are printed to the terminal and reach nobody |
-| A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet |
+| A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet. **This is F2C's merchant account**, which is correct for the membership fee and wrong for everything else — C10 |
+| A second gateway, and a second merchant account | Member purchases collect into the **Cultivators Collective's** account through PayGate or Stitch. Neither is chosen and nothing is built, so no plant order can be paid for at all — C10.1 |
 | Something that runs `manage.py lapse_memberships` | A daily cron or an App Service WebJob. Until it exists, an unpaid membership keeps its access indefinitely |
 | A shared cache backend | Without it the rate limits are per worker, not per deployment |
 | `manage.py check --deploy` | The Django deployment checklist |
