@@ -55,6 +55,19 @@ permissions anybody holds or lacks; they belong to the swap and profile services
 when those are built. A permission that everybody holds and nobody can be
 refused is not a permission.
 
+**That last sentence has now cost a codename, which is the point of writing it
+down.** ``platform.manage_own_profile`` was in three of the sets below and held
+by every account that could sign in. The produce market is what exposed it: a
+store customer is a ``User`` with none of the three relationships, so an empty
+permission set refused them their own name and photograph -- and the honest
+reading was not that the grant was too narrow but that the codename encoded no
+decision at all. Every endpoint behind it is scoped to ``request.user``, so the
+only question is whether there is a session, and Django answers that before this
+module is consulted. It is gone; ``accounts.profile`` checks for an active
+account instead. C29 removed two codenames the same way and for a related
+reason -- an action in this catalogue is one an API endpoint checks, and one that
+cannot be refused is not being checked.
+
 **Object-level rules are now expressible, and are still not expressed here.**
 "May this person set pricing" is answered below. "May they set pricing on *this*
 listing" is answered by the same ``ProducerMembership`` rows, in the service that
@@ -155,9 +168,19 @@ PRODUCER_ACTIONS = {
 }
 
 #: Membership. What a member does with their own account and their own plants.
+#:
+#: **``platform.manage_own_profile`` used to be the first line here and is not a
+#: permission any more.** It was held by every account that could sign in, and
+#: then the produce market arrived: a store customer holds none of the three
+#: relationships, so the catalogue refused them their own name and photograph.
+#: The fix was not to grant it more widely. This module's own rule is that *a
+#: permission that everybody holds and nobody can be refused is not a
+#: permission*, and that is exactly what it had become -- the endpoints behind it
+#: are all scoped to ``request.user``, so there is no object to authorise and no
+#: decision for a codename to encode. What replaced it is the session: see
+#: ``accounts.profile``. Removed rather than kept and always granted, so that
+#: nobody reading this file later has to discover that one entry is always true.
 MEMBER_ACTIONS = {
-    'platform.manage_own_profile':
-        'View and update their own profile details and image.',
     'platform.browse_catalogue':
         'Browse available strains and cultivators, including ratings and '
         'reviews.',
@@ -199,7 +222,6 @@ PLATFORM_ACTIONS = {
 #: recorded as an accepted limitation in the design document. It is no longer a
 #: limitation and the note has gone with it.
 CLUB_ADMINISTRATOR_PERMISSIONS = frozenset(ADMINISTRATOR_ACTIONS) | frozenset({
-    'platform.manage_own_profile',
     'platform.browse_catalogue',
     'platform.record_notes',
     'platform.respond_to_reviews',
@@ -218,7 +240,6 @@ PRODUCER_BASE_PERMISSIONS = frozenset({
     'platform.manage_plant_stock',
     'platform.change_plant_status',
     'platform.view_fulfilment_documents',
-    'platform.manage_own_profile',
     'platform.browse_catalogue',
     'platform.submit_support_request',
     'platform.record_notes',

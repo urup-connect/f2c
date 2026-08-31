@@ -71,8 +71,12 @@ class ProfileApiTestCase(TestCase):
             mobile='+27821234567',
             status=UserStatus.ACTIVE,
         )
-        # An active club membership: `manage_own_profile` is granted by a
-        # relationship since C28, so a bare account would be refused.
+        # An active club membership. It used to be load-bearing --
+        # `manage_own_profile` was granted by a relationship, so a bare account
+        # was refused -- and is now here because a club member is a realistic
+        # caller and because the nickname and identity number these tests read
+        # belong to a membership. `StoreCustomerApiTests` covers the bare
+        # account, which is the caller the codename used to lock out.
         make_member('member@example.com', 'thandi', account=self.user)
         self.client = Client()
         self.client.force_login(self.user)
@@ -339,3 +343,95 @@ class AvatarApiTests(ProfileApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()['has_avatar'])
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='avatar-customer-api-'))
+class StoreCustomerApiTests(TestCase):
+    """The profile endpoints, reached by an account with no relationship at all.
+
+    A produce-market customer -- ``design/verticals.md`` section 6 -- so
+    ``permissions_for`` returns an empty set. While these endpoints asked for
+    ``platform.manage_own_profile`` every one of them answered **403** to a
+    shopper asking for their own name, and this class is the HTTP-level statement
+    that they no longer do.
+
+    Separate from ``ProfileApiTestCase`` rather than a parameter on it, because
+    the fixture is the subject: what is under test is precisely the *absence* of
+    a membership, and a shared setUp that created one would have nowhere to put
+    that.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(settings.MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            email='shopper@example.com',
+            password=PASSWORD,
+            first_name='Ayanda',
+            last_name='Zulu',
+            mobile='+27821234567',
+            status=UserStatus.ACTIVE,
+        )
+        self.client = Client()
+        self.client.force_login(self.customer)
+
+    def test_the_customer_holds_no_permissions(self):
+        """The premise. Without it the rest could pass for the wrong reason."""
+        self.assertEqual(self.customer.get_all_permissions(), set())
+
+    def test_they_may_read_their_profile(self):
+        response = self.client.get(PROFILE_URL)
+
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        self.assertEqual(body['first_name'], 'Ayanda')
+        self.assertEqual(body['nickname'], '')
+
+    def test_they_may_write_their_profile(self):
+        response = self.client.put(
+            PROFILE_URL,
+            data=json.dumps(
+                {
+                    'first_name': 'Ayanda',
+                    'last_name': 'Khumalo',
+                    'mobile': '082 123 4567',
+                }
+            ),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.last_name, 'Khumalo')
+
+    def test_they_may_upload_and_read_their_avatar(self):
+        posted = self.client.post(AVATAR_URL, data={'image': upload()})
+        self.assertEqual(posted.status_code, 200)
+
+        fetched = self.client.get(AVATAR_URL)
+
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched['Content-Type'], 'image/jpeg')
+
+    def test_they_may_delete_their_avatar(self):
+        self.client.post(AVATAR_URL, data={'image': upload()})
+
+        response = self.client.delete(AVATAR_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.customer.refresh_from_db()
+        self.assertFalse(self.customer.has_avatar)
+
+    def test_the_identity_number_field_is_empty_rather_than_absent(self):
+        """A customer is never asked for one, so there is nothing to mask.
+
+        Empty rather than missing, so the store renders the same shape the club
+        does and a screen written against one contract works against both.
+        """
+        body = json.loads(self.client.get(PROFILE_URL).content)
+
+        self.assertEqual(body['id_number_masked'], '')
+        self.assertFalse(body['has_id_number'])

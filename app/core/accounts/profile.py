@@ -36,15 +36,27 @@ uniqueness question is already answered -- the admin. It is *reported* here, and
 it now comes from the membership rather than the account -- C27 -- so it is
 blank for somebody who never joined the club.
 
-**Who may use this is a permission, and that is now worth re-examining.** The
-catalogue grants ``platform.manage_own_profile`` to members, producers and
-administrators, which was everybody who could sign in. It is not everybody any
-more: a produce-market customer holds no relationship at all and so holds no
-permissions, and this refuses them their own name and photograph. That is the
-wrong answer, and `roles.py` already says why -- *a permission that everybody
-holds and nobody can be refused is not a permission.* Carried in `todo.md` as a
-decision for the market vertical rather than changed here in passing, because
-removing a codename from the catalogue is a contract change the frontend reads.
+**Who may use this is no longer a permission, and the reasoning is worth
+keeping.** It used to be ``platform.manage_own_profile``, granted by an active
+club membership, a storefront appointment or a producer appointment -- which was
+everybody who could sign in, right up until the produce market arrived. A store
+customer is a ``User`` with none of the three, so an empty permission set refused
+them their own name and photograph.
+
+The fix was not to grant the codename more widely. ``roles.py`` says that *a
+permission that everybody holds and nobody can be refused is not a permission*,
+and that is what it had become: every endpoint in this module is scoped to the
+caller's own record -- there is no account identifier in any of their paths, see
+``accounts.api`` -- so there is no object to authorise and no decision for a
+codename to encode. The codename is retired and the check below is what replaced
+it: **an active, authenticated account, which is the whole of the question.**
+
+That check is a floor rather than a gate, and it is worth saying which. Django's
+session authentication has already refused an inactive account before any
+endpoint here runs -- ``ModelBackend.get_user`` consults ``is_active``, which is
+derived from ``status`` under a check constraint. What this catches is the other
+callers: the shell, a management command, a future admin action. A service that
+trusted its caller would be the wrong shape to put a second endpoint in front of.
 """
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -56,10 +68,25 @@ from app.core.common.validators import validate_person_name, validate_sa_mobile_
 from . import avatars
 from .models import User
 
-#: The permission a caller must hold. Asked for by name rather than by role, so
-#: the rule is "whoever may manage their own profile" -- which today is all
-#: three signing-in roles, and tomorrow is whatever the catalogue says.
-MANAGE_OWN_PROFILE = 'platform.manage_own_profile'
+def _require_own_account(user):
+    """Refuse anybody who could not be holding a session. The floor.
+
+    Not a permission check, and the module docstring says why at length: these
+    endpoints operate on the caller's own record, so the only question is
+    whether there is an account here at all. ``platform.manage_own_profile``
+    used to ask it and was retired for encoding no decision.
+
+    ``PermissionDenied`` rather than ``ValidationError``, unchanged from the
+    check it replaces and matching ``register_sharing_member``: nothing about the
+    submission is wrong, the caller simply may not do this.
+    """
+    if user is None or not getattr(user, 'is_authenticated', False):
+        raise PermissionDenied('This account may not change its own profile.')
+    if not user.is_active:
+        # Suspended or erased. Neither can hold a session, so this is reachable
+        # only from the shell or a command -- which is exactly what a floor is
+        # for.
+        raise PermissionDenied('This account may not change its own profile.')
 
 #: The fields this module will write, and the only ones.
 #:
@@ -127,8 +154,8 @@ def update_profile(user, *, first_name, last_name, mobile):
 
     Returns the same instance, saved. The caller is the account being changed;
     there is no path here for editing somebody else, which is why no permission
-    beyond ``MANAGE_OWN_PROFILE`` is consulted and why ``user`` is not looked up
-    from an identifier the request supplied.
+    is consulted at all and why ``user`` is not looked up from an identifier the
+    request supplied.
 
     The uniqueness check and the write are one transaction. Two members claiming
     the same handset in the same instant is not a race this can lose -- the
@@ -136,13 +163,7 @@ def update_profile(user, *, first_name, last_name, mobile):
     reading a row the write then invalidates would report the wrong reason, and
     a member told nothing is wrong while nothing saved is worse than a refusal.
     """
-    if not user.has_perm(MANAGE_OWN_PROFILE):
-        # PermissionDenied rather than ValidationError, matching
-        # `register_sharing_member`: nothing about the submission is wrong, the
-        # caller simply may not do this. Reachable only for a suspended or
-        # erased account, whose permissions are empty by `roles.permissions_for`
-        # -- neither can hold a session, so this is a floor rather than a gate.
-        raise PermissionDenied('This account may not change its own profile.')
+    _require_own_account(user)
 
     changes = _validated_changes(
         first_name=first_name, last_name=last_name, mobile=mobile
@@ -196,8 +217,7 @@ def set_avatar(user, data):
     rather than in a storage subclass so that the reason sits next to the rule
     it enforces.
     """
-    if not user.has_perm(MANAGE_OWN_PROFILE):
-        raise PermissionDenied('This account may not change its own profile.')
+    _require_own_account(user)
 
     # Raises before anything is written or deleted, so a refused upload leaves
     # the member's existing photograph where it was.
@@ -229,8 +249,7 @@ def clear_avatar(user):
     success, because "there is no picture of me on file" is the state the caller
     asked for and it is already true.
     """
-    if not user.has_perm(MANAGE_OWN_PROFILE):
-        raise PermissionDenied('This account may not change its own profile.')
+    _require_own_account(user)
 
     user.clear_avatar()
     user.save()

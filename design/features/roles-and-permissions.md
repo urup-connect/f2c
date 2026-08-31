@@ -268,9 +268,9 @@ is a prose reading of that file rather than a second source of truth.
 | `platform.hide_cultivator` | Hide a cultivator and everything it offers |
 | `platform.revoke_access` | Revoke an account's access to the platform |
 
-`CLUB_ADMINISTRATOR_PERMISSIONS` adds four member-facing actions the design document gives
-administrators outright: `manage_own_profile`, `browse_catalogue`, `record_notes` and
-`respond_to_reviews`.
+`CLUB_ADMINISTRATOR_PERMISSIONS` adds three member-facing actions the design document gives
+administrators outright: `browse_catalogue`, `record_notes` and `respond_to_reviews`. It was four
+until `manage_own_profile` was retired — see 6.7.
 
 **Two actions that used to be here are not, and their absence is C29.**
 `platform.refund_transaction` and `platform.cancel_membership` are the platform operator's, done in
@@ -294,7 +294,6 @@ a feature that does not exist yet.
 | `platform.manage_plant_stock` | Upload plant stock and adjust how many plants are available |
 | `platform.change_plant_status` | Move a plant between preflowering, in bloom, harvested, processed and shipped |
 | `platform.view_fulfilment_documents` | View and print ownership certificates, packing labels and shipping documents |
-| `platform.manage_own_profile` | View and update their own profile details and image |
 | `platform.browse_catalogue` | Browse available strains and cultivators |
 | `platform.submit_support_request` | Raise a support request |
 | `platform.record_notes` | Record notes against members, strains, plants and subscriptions |
@@ -328,7 +327,6 @@ to them.
 
 | Action | What it permits |
 | --- | --- |
-| `platform.manage_own_profile` | View and update their own profile details and image |
 | `platform.browse_catalogue` | Browse available strains and cultivators, including ratings and reviews |
 | `platform.purchase_plants` | Choose and purchase plants with grow services |
 | `platform.view_own_inventory` | View their own plant inventory |
@@ -338,10 +336,6 @@ to them.
 | `platform.track_orders` | Track and trace their orders |
 | `platform.query_orders` | Query an order |
 | `platform.submit_support_request` | Raise a support request |
-
-**Active only.** A membership at `pending_payment` or `lapsed` grants none of these, which is what
-makes the pay-now redirect honest: the member signs in, reaches a screen asking them to pay, and
-holds nothing until they do. Verified rather than assumed.
 
 ### 6.5 A placeholder holds nothing
 
@@ -367,6 +361,45 @@ why this is written down.
 plant for a pre-flowering one when they approach the limit, and refuses a swap that would breach it.
 It is an invariant of the swap service, enforced on the write, and it belongs with the plant and
 swap models when they are built.
+
+### 6.7 The action that was retired
+
+**`platform.manage_own_profile` is not in the catalogue and no relationship grants it.** It was in
+three of the sets above — the member set, the club administrator set and the producer base set —
+which between them was every account that could sign in.
+
+The produce market is what exposed it. A store customer is a `User` with no `ClubMembership`, no
+`StorefrontStaff` and no `ProducerMembership` — `verticals.md` section 6 — so `permissions_for`
+returns the empty set, and every profile endpoint answered **403** to a shopper asking for their own
+name and photograph.
+
+The fix was not a wider grant. This document's own rule, stated in `roles.py`, is that *a permission
+that everybody holds and nobody can be refused is not a permission* — and that is what it had
+become. Every endpoint behind it is scoped to `request.user`: there is no account identifier in any
+of their paths, so there is no object to authorise and nothing for a codename to decide. What
+replaced it is the session, checked in `accounts.profile._require_own_account` as a floor for the
+shell and for management commands, since Django's session authentication has already turned away an
+inactive account before an endpoint runs.
+
+Two consequences worth recording:
+
+- **A member at *pending payment* can now edit their own profile.** They hold no permissions, so
+  under the codename they were refused their own details along with everything else. Somebody who
+  has not paid should still be able to correct the mobile number the club will ring.
+- **`club-navigation.ts` grew a second legal value for `permission`: `null`, meaning every signed-in
+  account.** Exactly one destination has it, and a contract test pins that list at one. The
+  navigation contract test failed the moment the codename left `roles.py`, which is the same test
+  doing the same job it did for C29.
+
+**`platform.submit_support_request` has the same shape and has deliberately been left alone.** A
+store customer cannot raise a support request either, and by the argument above raising one is
+something any account holder does rather than something a relationship grants. It is not changed
+here because Block 11 is unbuilt and neither storefront shows a support route, so nothing is refused
+that anybody can reach — `todo.md` carries it beside the market's missing administration codename.
+
+**Active only.** A membership at `pending_payment` or `lapsed` grants none of these, which is what
+makes the pay-now redirect honest: the member signs in, reaches a screen asking them to pay, and
+holds nothing until they do. Verified rather than assumed.
 
 ## 7. How a permission is checked
 

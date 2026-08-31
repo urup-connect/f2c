@@ -44,13 +44,15 @@ def jpeg_bytes(size=(600, 400)):
 def active_member(email='member@example.com', mobile=STORED_MOBILE, **extra):
     """An account with an **active club membership**.
 
-    The membership is not decoration: `manage_own_profile` is granted by a
-    relationship since C28, so a bare account holds no permissions and every
-    test here would get a 403 for the wrong reason.
+    The membership used to be load-bearing: `manage_own_profile` was granted by
+    a relationship, so a bare account held no permissions and every test here
+    would have got a 403 for the wrong reason. **It is decoration now** — the
+    codename is retired and these endpoints ask only for an active account — and
+    it is kept because a club member is still a realistic caller and because
+    `id_number` and `nickname` on the fixture belong to a membership.
 
-    That the profile endpoints refuse an account with no membership at all is
-    itself questionable — a produce-market customer has a name and a photograph
-    too — and is carried in `todo.md` rather than worked around here.
+    `StoreCustomerTests` is the class that covers the bare account, and it is
+    the one this change exists for.
     """
     user = User.objects.create_user(
         email=email,
@@ -202,10 +204,13 @@ class UpdateProfileTests(TestCase):
 
         self.assertIn('mobile', caught.exception.message_dict)
 
-    def test_an_account_holding_no_permissions_may_not_write(self):
-        # A suspended account holds nothing by `roles.permissions_for`, so this
-        # is the floor under the endpoint rather than a gate anybody meets: a
-        # suspended member cannot hold a session either.
+    def test_a_suspended_account_may_not_write(self):
+        # The floor under the endpoint rather than a gate anybody meets: a
+        # suspended account cannot hold a session, so this is reachable only
+        # from the shell or a command. It used to read as "holds no permissions"
+        # and now reads `is_active` directly, which is the same fact stated where
+        # it is decided -- `is_active` derives from `status` under a check
+        # constraint.
         self.user.status = UserStatus.SUSPENDED
         self.user.save()
 
@@ -366,3 +371,90 @@ class ProfileOfTests(TestCase):
         )
 
         self.assertNotEqual(before, profile.avatar_url(self.user))
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='avatar-customer-'))
+class StoreCustomerTests(TestCase):
+    """A produce-market customer manages their own profile.
+
+    **This is the class the codename was retired for.** A store customer is a
+    ``User`` with no ``ClubMembership``, no ``StorefrontStaff`` and no
+    ``ProducerMembership`` -- ``design/verticals.md`` section 6 -- so
+    ``permissions_for`` returns an empty set, and while the profile endpoints
+    asked for ``platform.manage_own_profile`` that empty set refused them their
+    own name and photograph.
+
+    Every assertion here is about an account with no relationship at all. If a
+    codename comes back to guard these endpoints, this class is what fails.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        from django.conf import settings
+
+        shutil.rmtree(settings.MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        self.customer = User.objects.create_user(
+            email='shopper@example.com',
+            first_name='Ayanda',
+            last_name='Zulu',
+            mobile='+27821234567',
+            status=UserStatus.ACTIVE,
+        )
+
+    def test_the_customer_really_does_hold_no_permissions(self):
+        """The premise, asserted rather than assumed.
+
+        Without this the three tests below could pass because the customer
+        quietly acquired a relationship, which is the failure they exist to
+        rule out.
+        """
+        self.assertEqual(self.customer.get_all_permissions(), set())
+
+    def test_they_may_change_their_own_name(self):
+        profile.update_profile(
+            self.customer, first_name='Ayanda', last_name='Khumalo', mobile=''
+        )
+
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.last_name, 'Khumalo')
+        self.assertEqual(self.customer.mobile, '')
+
+    def test_they_may_set_an_avatar(self):
+        profile.set_avatar(self.customer, jpeg_bytes())
+
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.has_avatar)
+
+    def test_they_may_clear_an_avatar(self):
+        profile.set_avatar(self.customer, jpeg_bytes())
+
+        profile.clear_avatar(self.customer)
+
+        self.customer.refresh_from_db()
+        self.assertFalse(self.customer.has_avatar)
+
+    def test_their_profile_reads_back_with_no_nickname(self):
+        """`display_name` falls back and `nickname` is blank, not absent.
+
+        A customer has a name and needs no pseudonym -- the nickname lives on
+        `ClubMembership` since C27 -- so the field a club member fills is empty
+        here rather than missing, and the screen renders the same shape.
+        """
+        data = profile.profile_of(self.customer)
+
+        self.assertEqual(data['nickname'], '')
+        self.assertEqual(data['id_number_masked'], '')
+
+    def test_a_suspended_customer_may_not_write(self):
+        """The floor holds for a customer exactly as it does for a member."""
+        self.customer.status = UserStatus.SUSPENDED
+        self.customer.save()
+
+        with self.assertRaises(PermissionDenied):
+            profile.update_profile(
+                self.customer, first_name='Ayanda', last_name='Zulu', mobile=''
+            )

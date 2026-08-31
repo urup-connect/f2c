@@ -545,6 +545,12 @@ It is built: `frontend/club/app/(club)/profile/page.tsx`, `app/core/accounts/pro
 
 **Action:** correct `frontend.md` section 9 and `roles-and-permissions.md` section 13.
 
+**Note, later:** the codename quoted above no longer exists. `platform.manage_own_profile` was
+retired when the produce market arrived — a store customer holds none of the three granting
+relationships and was refused their own name and photograph — and the screen is now offered on the
+session alone. `roles-and-permissions.md` section 6.7 records it. Nothing about this conflict
+changes; the quotation is kept as written so the drift it describes stays legible.
+
 ### C22 — `todo.md` said sign-up stores nothing
 
 The old `todo.md` carried "Create signup/registration process — form built, nothing is stored yet".
@@ -553,7 +559,8 @@ The old `todo.md` carried "Create signup/registration process — form built, no
 
 ### C23a — A third of the frontend was not under version control after all
 
-**Status: Cause fixed; the files still need a commit.**
+**Status: Closed.** Cause fixed, and the 133 files landed in `d3731df`; the tree is clean and
+`git ls-files frontend/club/lib frontend/market/lib` counts all of them.
 
 C23 below closed `backend.md` risk 12 on the grounds that the project is in git. It is — but
 `.gitignore` carried a bare `lib/` from GitHub's Python template, which matches a directory of that

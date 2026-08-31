@@ -769,6 +769,44 @@ is not read as an unfinished step. `frontend/market` **now exists** and fills th
 
       The `unavailable` branch in the frontend stays, but its meaning has changed: a 404 is now a
       routing fault rather than an unbuilt endpoint, and its copy no longer promises a future opening
+- [x] **A customer may manage their own profile — done, by retiring a codename.**
+      `platform.manage_own_profile` was granted by an active club membership, a storefront
+      appointment or a producer appointment, which was every account that could sign in until the
+      market arrived. **A store customer holds none of the three, so every profile endpoint answered
+      403 to a shopper asking for their own name and photograph.**
+
+      The fix was not a wider grant. `roles.py` already said why — *a permission that everybody holds
+      and nobody can be refused is not a permission* — and that is what it had become: every endpoint
+      behind that screen is scoped to `request.user`, with no account identifier in any of their
+      paths, so there was no object to authorise and nothing for a codename to decide. It is gone
+      from the catalogue and from all three sets; `accounts.profile._require_own_account` checks for
+      an active account instead, as a floor for the shell and management commands, since Django's
+      session authentication has already refused an inactive account before an endpoint runs.
+
+      - **A club member at *pending payment* gained their own profile too**, which is a correction
+        rather than a side effect: they held no permissions, so they were refused their own details
+        along with everything else, and somebody who has not paid should still be able to fix the
+        mobile number the club will ring
+      - `club-navigation.ts` grew a second legal value for `permission` — **`null`, meaning every
+        signed-in account.** Exactly one destination has it and a contract test pins that list at
+        one, so it cannot become a way around a missing permission. The navigation contract test
+        failed the moment the codename left `roles.py`, which is the same test doing the same job it
+        did for **C29**
+      - `DestinationSections`' empty state is no longer reachable from `sectionsFor`: every signed-in
+        account holds at least *Your account*. The branch stays and is now tested by handing the
+        component no bands, because a component that renders an empty list as a blank page is worse
+        than one that says the list is empty
+      - Held by 13 new tests: a bare account editing its name, its avatar and reading its profile
+        back, at both the service and the endpoint, plus the absence of the codename from the
+        catalogue and from every granting set. `roles-and-permissions.md` §6.7 is the record
+- [ ] **`platform.submit_support_request` is the same shape and was deliberately left alone.** A
+      store customer cannot raise a support request either, and by the argument above raising one is
+      something any account holder does rather than something a relationship grants. Not changed
+      with the profile because Block 11 is unbuilt and neither storefront shows a support route, so
+      nothing is refused that anybody can reach. **Decide it with Block 11 rather than in passing**,
+      and the question is one line: is support a platform-level entitlement like a profile, or does
+      the club answer its members and the store answer its customers through different queues — in
+      which case it stays a permission and gains a market twin
 - [ ] **The store's brand.** Palette, typography and a wordmark are neutral placeholders under the
       name *Farm to Consumer* (F2C), structured on the club's tokens so ratified values land in
       `frontend/market/app/globals.css` and nowhere else. `design/frontend.md` §11.5

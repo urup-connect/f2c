@@ -113,6 +113,30 @@ class CatalogueTests(TestCase):
         self.assertNotIn('platform.cancel_membership', PLATFORM_ACTIONS)
         self.assertNotIn('platform.manage_administrators', PLATFORM_ACTIONS)
 
+    def test_managing_your_own_profile_is_not_in_the_catalogue(self):
+        """Retired for encoding no decision, not for being unwanted.
+
+        ``platform.manage_own_profile`` was in three of the sets and held by
+        every account that could sign in -- until the produce market, where a
+        customer holds none of the three relationships and was refused their own
+        name and photograph. The endpoints behind it are scoped to
+        ``request.user``, so there was no object to authorise: this module's own
+        rule is that a permission nobody can be refused is not a permission.
+
+        Asserted as an absence rather than left to the absence of a test,
+        because re-adding it would look like a fix. ``accounts.profile`` checks
+        for an active account and that is the whole gate.
+        """
+        self.assertNotIn('platform.manage_own_profile', PLATFORM_ACTIONS)
+        for granted in (
+            MEMBER_PERMISSIONS,
+            CLUB_ADMINISTRATOR_PERMISSIONS,
+            PRODUCER_BASE_PERMISSIONS,
+            PRODUCER_FULL_PERMISSIONS,
+            PRODUCER_PRIMARY_PERMISSIONS,
+        ):
+            self.assertNotIn('platform.manage_own_profile', granted)
+
     def test_the_producer_sets_nest(self):
         """Being the primary is *more than* full rights, not an alternative.
 

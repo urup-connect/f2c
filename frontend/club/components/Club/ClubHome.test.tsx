@@ -23,7 +23,10 @@ const base: User = {
   // The card reads the membership's standing, not the account's — C27.
   membership_status: 'active',
   role: 'member',
-  permissions: ['platform.purchase_plants', 'platform.manage_own_profile'],
+  // No `manage_own_profile`: Django retired it, and the profile destination is offered on the
+  // session instead. Left out rather than kept as a harmless string, because a codename that
+  // grants nothing reads like one that does.
+  permissions: ['platform.purchase_plants'],
   is_staff: false,
 }
 

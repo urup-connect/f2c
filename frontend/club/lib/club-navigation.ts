@@ -1,6 +1,10 @@
 /**
  * What each signed-in account is offered, derived from its permissions and never from its role.
  *
+ * One destination is offered on the strength of the session alone — your own profile, whose
+ * `permission` is `null`. See `ClubDestination.permission` for why that is the honest encoding
+ * rather than a codename nobody can be refused.
+ *
  * Django sends `permissions` on the session — every `platform.*` codename the account holds,
  * resolved from `app/core/accounts/roles.py`. This module turns that list into things to draw. The role
  * is not consulted anywhere in here, and that is the point: a second role-to-ability map in this
@@ -78,8 +82,19 @@ export type ClubDestination = {
    * The `platform.*` codename that puts this on screen. Exactly as spelled in
    * `app/core/accounts/roles.py` — a contract test reads that file and refuses a codename it does not
    * find there, so a renamed action cannot quietly empty a menu.
+   *
+   * **`null` means every signed-in account**, and it is a deliberate value rather than a gap. One
+   * destination has it: your own profile. It used to ask for `platform.manage_own_profile`, which
+   * Django retired when the produce market arrived — a store customer holds none of the three
+   * relationships that grant, so an empty permission set refused them their own name, and the
+   * honest reading was that the codename encoded no decision. Every endpoint behind that screen is
+   * scoped to `request.user`, so the only qualification is holding a session.
+   *
+   * Do not reach for `null` to make a destination easier to show. It is correct for exactly the
+   * case where there is no object to authorise, and the contract test lets it through on that
+   * basis rather than by accident.
    */
-  readonly permission: string
+  readonly permission: string | null
   readonly section: ClubSection
   readonly state: ClubDestinationState
   /** Where it goes, once there is somewhere to go. `null` while `planned`. */
@@ -401,7 +416,17 @@ export const CLUB_DESTINATIONS = [
     label: 'Your profile',
     description:
       'Your name and mobile number, your photograph, and what the club holds from your ID.',
-    permission: 'platform.manage_own_profile',
+    /*
+     * `null`, not a codename — see `ClubDestination.permission`. This is the only destination in
+     * the catalogue with no permission behind it, and the reason is that there is nothing here to
+     * authorise: the screen edits the caller's own record and no other.
+     *
+     * One visible consequence, and it is a correction rather than a side effect: a member whose
+     * membership is at *pending payment* holds no permissions at all, so this used to disappear
+     * from their account band along with everything else. Somebody who has not paid should still be
+     * able to correct the mobile number the club will ring.
+     */
+    permission: null,
     section: 'account',
     state: 'ready',
     href: PROFILE_PATH,
@@ -432,7 +457,9 @@ export type ClubSectionContent = {
  */
 export const destinationsFor = (permissions: readonly string[]): readonly ClubDestination[] => {
   const held = new Set(permissions)
-  return CLUB_DESTINATIONS.filter((destination) => held.has(destination.permission))
+  return CLUB_DESTINATIONS.filter(
+    (destination) => destination.permission === null || held.has(destination.permission),
+  )
 }
 
 /**

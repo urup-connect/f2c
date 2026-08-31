@@ -12,10 +12,18 @@ import {
 
 /* design/features/roles-and-permissions.md sections 12 and 13. */
 
-/** A member, a cultivator and an administrator, as Django would send them. */
+/**
+ * A member, a cultivator and an administrator, as Django would send them.
+ *
+ * **None of the three carries `platform.manage_own_profile`, and that is current rather than an
+ * oversight.** Django retired the codename when the produce market arrived: a store customer holds
+ * none of the three granting relationships, so an empty set refused them their own name and
+ * photograph — and the endpoints behind that screen are scoped to `request.user`, so there was
+ * nothing for a codename to decide. `own-profile` is offered on the session instead, which is why
+ * it still appears in every expectation below.
+ */
 const MEMBER = [
   'platform.browse_catalogue',
-  'platform.manage_own_profile',
   'platform.offer_inventory_for_swap',
   'platform.purchase_plants',
   'platform.query_orders',
@@ -33,7 +41,6 @@ const CULTIVATOR = [
   'platform.change_plant_status',
   'platform.manage_own_cultivator_profile',
   'platform.manage_own_pricing',
-  'platform.manage_own_profile',
   'platform.manage_own_strain_listings',
   'platform.manage_plant_stock',
   'platform.manage_sharing_members',
@@ -54,7 +61,6 @@ const ADMIN = [
   'platform.hide_cultivator',
   'platform.manage_club_rules',
   'platform.manage_cultivators',
-  'platform.manage_own_profile',
   'platform.manage_product_types',
   'platform.manage_strain_catalogue',
   'platform.record_notes',
@@ -76,8 +82,15 @@ describe('the catalogue itself', () => {
     expect(new Set(allKeys).size).toBe(allKeys.length)
   })
 
-  test('names a permission on every destination', () => {
+  test('names a well-formed permission, or names none at all', () => {
+    /*
+     * `null` is the second legal value and it means every signed-in account — see
+     * `ClubDestination.permission`. Written as an either/or rather than relaxed to allow anything
+     * falsy: an empty string or `undefined` from a half-finished entry would be a destination
+     * shown to everybody by accident, which is the failure the strict version was catching.
+     */
     for (const destination of CLUB_DESTINATIONS) {
+      if (destination.permission === null) continue
       expect(destination.permission).toMatch(/^platform\.[a-z_]+$/)
     }
   })
@@ -112,18 +125,53 @@ describe('the codenames match Django', () => {
     'utf8',
   )
 
-  test.each(CLUB_DESTINATIONS.map((destination) => [destination.key, destination.permission]))(
-    '%s asks for a codename roles.py grants: %s',
-    (_key, permission) => {
-      expect(rolesSource).toContain(`'${permission}'`)
-    },
-  )
+  test.each(
+    CLUB_DESTINATIONS.filter((destination) => destination.permission !== null).map(
+      (destination) => [destination.key, destination.permission],
+    ),
+  )('%s asks for a codename roles.py grants: %s', (_key, permission) => {
+    expect(rolesSource).toContain(`'${permission}'`)
+  })
+
+  test('only the profile is offered without a codename', () => {
+    /*
+     * `null` is a real value in this catalogue and it is meant to stay rare — it says there is no
+     * object to authorise. Pinning the list means a second destination cannot quietly acquire it
+     * as a way around a missing permission, which would be a screen shown to everybody with an
+     * endpoint that refuses them.
+     */
+    expect(
+      CLUB_DESTINATIONS.filter((destination) => destination.permission === null).map(
+        (destination) => destination.key,
+      ),
+    ).toEqual(['own-profile'])
+  })
+
+  test('does not ask for the codename Django retired', () => {
+    /*
+     * The other half of the same contract. `manage_own_profile` grants nothing now, so a
+     * destination still asking for it would silently never appear — exactly the defect this
+     * describe block exists to catch, and it would pass the check above by finding the string in
+     * the comments that explain the removal.
+     */
+    for (const destination of CLUB_DESTINATIONS) {
+      expect(destination.permission).not.toBe('platform.manage_own_profile')
+    }
+  })
 })
 
 describe('destinationsFor', () => {
-  test('offers nothing at all to an account holding nothing', () => {
-    // An inactive account, and a sharing member, both hold the empty set.
-    expect(destinationsFor([])).toEqual([])
+  test('offers an account holding nothing its own profile, and nothing else', () => {
+    /*
+     * This used to expect `[]`, and the change is the point rather than a concession. An account
+     * with no permissions is a member who has not paid, or a store customer, or a suspended
+     * account — and the first two have a name and a photograph that are theirs to correct. What
+     * they still hold is nothing else: every other destination needs a codename.
+     *
+     * A suspended account never reaches this function anyway; it cannot hold a session, and the
+     * `(club)` layout turns an unpaid member away before any of this renders.
+     */
+    expect(keys([])).toEqual(['own-profile'])
   })
 
   test('offers a member their plants, their orders and the swap zone', () => {
@@ -173,7 +221,12 @@ describe('destinationsFor', () => {
   })
 
   test('ignores a codename it does not recognise', () => {
-    expect(destinationsFor(['platform.invented_action'])).toEqual([])
+    /*
+     * `own-profile` is the floor, not a match: it is offered on the session and an invented
+     * codename adds nothing on top of it. Asserted as "exactly the floor" rather than "empty", so
+     * a codename that quietly started matching something would still fail here.
+     */
+    expect(keys(['platform.invented_action'])).toEqual(['own-profile'])
   })
 })
 
@@ -227,8 +280,10 @@ describe('navigableFor', () => {
    * exactly the roles that hold its permission, and nothing else has quietly acquired a route.
    */
   test('offers the profile, to every role that can sign in', () => {
-    // All three hold `manage_own_profile` -- see ROLE_PERMISSIONS in accounts/roles.py -- so all
-    // three get it. A role that stopped holding it would lose it here.
+    // None of the three holds a codename for it any more -- Django retired `manage_own_profile` --
+    // so all three get it on the session alone. Kept as three cases rather than collapsed into
+    // one: what is asserted is that the profile is reachable from every home page, and that
+    // remains true whether the gate is a codename or a session.
     for (const permissions of [ADMIN, CULTIVATOR, MEMBER]) {
       expect(navigableFor(permissions).map((destination) => destination.key)).toContain(
         'own-profile',
