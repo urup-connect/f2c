@@ -1097,10 +1097,28 @@ plant carries a verifiable owner with a trail from capture — the ownership hal
       the object-level half**, so it is already the right shape to put a router in front of.
       Reachable from the admin and the shell only
 - [ ] Sharing member read, update and withdraw — `platform.manage_sharing_members`
-- [!] Decide whether an administrator may CRUD sharing members. §3.6 deliberately withholds it; both
-      drawio administrator stories ask for it — **C14**. **Current behaviour refuses, deliberately,
-      so as not to pre-empt the decision**: the register will not edit a sharing member, and
-      `roles-and-permissions.md` records the Django admin as the route an administrator uses instead
+- [x] ~~Decide whether an administrator may CRUD sharing members~~ — **decided by C14: read yes,
+      write no.** The product owner could name no reason for the create, the update or the delete,
+      and named one for the read. §3.7's "exactly one route into a person's record" stands
+      unchanged, the register's refusal to edit a sharing member stops being provisional, and the
+      read is granted as `platform.view_member_inventory` — §3.8, and the build item below
+- [ ] **The administrator's holdings view — `platform.view_member_inventory`, C14.** What each
+      member and sharing member holds, and the `PlantOwnership` trail behind each plant. Granted in
+      `ADMINISTRATOR_ACTIONS`, held by the club administration alone, and neither endpoint nor
+      screen exists. `member-holdings` is its `planned` destination in `club-navigation.ts`
+  - [ ] **Any holder, never a kind of holder.** The query filters on plants and their owners and
+        does not ask whether the owner is a sharing member — **C33** requires the role to be
+        droppable, and a branch here would be one of the branches retiring it has to delete. It is
+        also what closes the older gap the decision exposed: `disable_plant` was granted with no
+        screen on which to see the plant being disabled
+  - [ ] **Nicknames only, and the projection is where that is enforced.** No name, no identity
+        number, no blind-index reach — POPIA minimality, since oversight of stock needs no
+        identity. Identity stays on the member's own record under `platform.disable_user`, where a
+        full read already writes an `IdentityNumberDisclosure` row first. A serializer that selects
+        `first_name` here is the defect, so the test asserts the absence
+  - [ ] **The trail, not only the holding.** `tenure_by_owner` reads back to the `cultivation` row
+        C13 opens at capture, so a plant reads *farm → member → member*. A view that showed the
+        current holder and not how they became one would settle no dispute
 
 ### Two administrator tiers — C2
 
@@ -1429,8 +1447,9 @@ Everything here is split across the two tiers from C2.
       carries authority or money**: `role` stays a Django-admin appointment per `backend.md`
       section 10, and the standing moves through suspend and reinstate, which have rules a field
       assignment does not. Three writes are refused outright: an erased account, a sharing member
-      (**C14** has not decided whether an administrator may touch one), and an administrator
-      suspending themselves — that one signs the caller out and leaves nobody able to undo it
+      (**C14** has now decided, and the answer is that they may not — read yes, write no), and an
+      administrator suspending themselves — that one signs the caller out and leaves nobody able to
+      undo it
 - [x] **There is no create and no delete**, by decision. Sign-up is the only route into the
       membership, because an account typed in by hand would have no consent ledger behind it and
       `documents` is where the club's lawful basis for holding an identity number lives. Erasure
@@ -1465,7 +1484,9 @@ Everything here is split across the two tiers from C2.
 ### Cultivators
 
 - [ ] Cultivator CRUD — `platform.manage_cultivators`
-- [ ] Cultivator user CRUD, sharing member CRUD, collection addresses — `drawio`, and see C14
+- [ ] Cultivator user CRUD and collection addresses — `drawio`. **Sharing member CRUD has left this
+      line: C14 grants the read and refuses the three writes**, so what an administrator gets is the
+      holdings view under Members above, not a fourth CRUD screen here
 - [ ] Hide a cultivator and everything it offers — `platform.hide_cultivator`
 - [ ] Warnings, suspensions, expulsions
 

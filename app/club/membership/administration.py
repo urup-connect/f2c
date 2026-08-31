@@ -37,11 +37,16 @@ Six rules live here, and each is here rather than on the model for a reason.
    form. ``activate`` already refuses to resurrect one; every write here refuses
    too.
 
-3. **A sharing member is not editable from this screen.** They hold stock and
-   never sign in, their record belongs to the cultivator who registered them
-   through ``platform.manage_sharing_members``, and ``conflict.md`` C14 has not
-   decided whether an administrator may touch one at all. Refusing is the
-   answer that does not pre-empt that decision.
+3. **A sharing member is not editable from this screen, and C14 has now
+   decided that.** They hold stock and never sign in, and their record belongs
+   to the cultivator who registered them through
+   ``platform.manage_sharing_members``. This refusal was provisional -- written
+   so as not to pre-empt the decision -- and it is a ruling now: the club
+   administrator gets the *read* and none of the three writes, because creating
+   records for other people should have exactly one route. What C14 adds is
+   ``platform.view_member_inventory``, a screen of its own over what a member
+   holds; it takes nothing away from here, and the register's own
+   ``sharing_member`` filter was already the list half of it.
 
 4. **Nobody suspends themselves.** An administrator who suspends their own
    account is signed out by ``flush_sessions`` on the way and cannot sign back

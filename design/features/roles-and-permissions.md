@@ -199,6 +199,38 @@ The service asks for the **permission**, never for a relationship. So a superuse
 future grant works, without `register_sharing_member` changing. Authority is gated on status for
 free: `permissions_for` refuses an inactive account before it looks at anything.
 
+**C14 tested that and kept it — for the writes only.** Both drawio administrator stories ask for
+“sharing members crud”. The product owner could name no reason for the create, the update or the
+delete, and named one for the read: an administrator should be able to see sharing members and what
+they hold. So the c, the u and the d stay with the primary cultivator, and the r becomes
+`platform.view_member_inventory` — see 3.8. `allocate_sharing_member_stock` goes nowhere either: it
+is a stock movement, and moving somebody else’s plants is the proxy mandate C33 evidences, which an
+administrator holds no attestation for.
+
+### 3.8 Who may look at what they hold
+
+`platform.view_member_inventory`, held by the **club administrator** and nobody else. C14.
+
+The gap it closes is wider than sharing members, which is why the codename is not shaped like one.
+`ADMINISTRATOR_ACTIONS` carries `platform.disable_plant` and carried nothing that let an
+administrator look at a plant — authority to remove without authority to inspect. The read is
+therefore over **any holder**, member or sharing member, and deliberately does not ask which:
+C33 requires the sharing-member role to be droppable, so an owner-type branch in an authorisation
+path is precisely the branch that would have to be deleted to retire it.
+
+**Nicknames and plants; no name and no identity number.** The purpose is oversight of stock, and
+oversight of stock needs no identity — POPIA minimality rather than caution. Identity stays on the
+member’s own record under `platform.disable_user`, where reading an identity number in full writes an
+`IdentityNumberDisclosure` row before the decrypt.
+
+**The ownership trail comes with the holding**, back through `PlantOwnership` to the farm that grew
+the plant. That is answerable only because C13 opened a tenure at capture rather than at the first
+sale; a view that showed the current holder and not how they became one would settle no dispute.
+
+The list half already exists — `REGISTER_RELATIONSHIPS` has a `sharing_member` filter, so the
+register listed sharing members before anybody decided it should. The inventory half is an endpoint
+and a screen, and neither is built.
+
 ## 4. Why not a column, and where the groups went
 
 The column was the right answer to the question as it stood, and this section keeps both halves.
@@ -293,6 +325,13 @@ is a prose reading of that file rather than a second source of truth.
 | `platform.disable_batch` | Disable or remove any batch |
 | `platform.hide_cultivator` | Hide a cultivator and everything it offers |
 | `platform.revoke_access` | Revoke an account's access to the platform |
+| `platform.view_member_inventory` | View what any member or sharing member holds, and the ownership trail behind each plant, by nickname |
+
+**The last row is C14, and it is the only thing that decision granted.** The three sharing-member
+actions the drawio stories asked for — `register_sharing_member`, `manage_sharing_members`,
+`allocate_sharing_member_stock` — are absent here and stay absent; see 3.7 and 3.8. It is also the
+row that closes an older oversight: `disable_plant` was in this set with nothing beside it that let
+an administrator see the plant they were disabling.
 
 `CLUB_ADMINISTRATOR_PERMISSIONS` adds three member-facing actions the design document gives
 administrators outright: `browse_catalogue`, `record_notes` and `respond_to_reviews`. It was four
@@ -307,7 +346,9 @@ file, which is that test doing precisely its job.
 
 `MARKET_ADMINISTRATOR_PERMISSIONS` is an empty frozenset, and deliberately present: the market's own
 actions arrive with the market vertical, and a missing key would read as an oversight rather than as
-a feature that does not exist yet.
+a feature that does not exist yet. C14's inventory read did not go there and will not: plants,
+sharing members and the swap zone are the club's, and the market has no purpose a club member's
+holdings would serve.
 
 ### 6.3 Production
 
@@ -656,13 +697,14 @@ govern is not.
 | --- | --- |
 | Plants, strains, batches, listings, pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue names actions with nothing to perform them against |
 | ~~The cultivator organisation~~ | **Partly built.** `ProducerMembership` exists with primary, full and limited rights, and `platform.appoint_cultivator_staff` is exercisable. `CultivatorProfile` is not yet generalised to `Producer` — that is the next section of Block 0.5 |
-| Object-level rules | The person-level half is enforced, and the plant's ownership half is built: every plant carries a verifiable owner and an append-only trail from capture — **C13**. "A cultivator's own listings and pricing" and "a member's own inventory" still need writing in the services that own each record, both the shape of `plant.stock._authorise` |
+| Object-level rules | The person-level half is enforced, and the plant's ownership half is built: every plant carries a verifiable owner and an append-only trail from capture — **C13**. "A cultivator's own listings and pricing" and "a member's own inventory" still need writing in the services that own each record, both the shape of `plant.stock._authorise`. **C14 adds a third and easier one**: the administrator's holdings view is scoped to the club rather than to one record, so it needs no per-record join — only a nickname projection that never selects an identity column |
 | An admin for the three relationship tables | `ClubMembership`, `StorefrontStaff` and `ProducerMembership` are not registered. Until they are, the only routes are the shell and the services |
 | The nickname in the Django admin | It moved to `ClubMembership` and the accounts page lost the field. It comes back with the membership admin above |
 | Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action yet. The mechanism is tested directly instead |
 | What a sharing member holds in the swap zone | Four flowering plants against their own allowance — C7. Enforcement is C15, and it counts plants per member without asking what kind of member |
 | Any endpoint for registering a sharing member | `register_sharing_member` is reachable from the shell only. It authorises its own caller, so it is the right shape to put a router in front of |
 | The sharing member read-only login | Specified by C6, deliberately not built at launch. It costs the same whenever it is built, while the identity columns beside it do not |
+| The administrator's holdings view | `platform.view_member_inventory` is granted and has no endpoint and no screen — **C14**. The list half exists: the register already filters to sharing members. What is missing is the plants under a nickname, and the `PlantOwnership` trail behind each |
 | The market's administrator actions | `MARKET_ADMINISTRATOR_PERMISSIONS` is empty until the market vertical exists |
 
 ## 14. Risks

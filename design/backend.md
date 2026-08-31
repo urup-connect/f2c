@@ -905,6 +905,15 @@ exactly one, and `tenure_reason_matches_holder` keeping the reason and the holde
 alternative was a user account per farm that nobody signs into, which every membership rule would
 then have to exclude. The structure it serves is `features/cultivator-organisation.md`.
 
+**The administrator's read of that ledger is C14, and it is not built.**
+`platform.view_member_inventory` is granted to the club administration and has no endpoint: what
+each member and sharing member holds, with the `PlantOwnership` trail behind each plant. Two
+constraints on it are decisions rather than details — the query filters on plants and their owners
+and never asks what kind of member the owner is, because C33 requires the sharing-member role to
+stay droppable; and the projection carries the nickname and no identity column, because oversight of
+stock needs no identity and the full read of an identity number lives on the member's own record,
+where it writes an `IdentityNumberDisclosure` row before decrypting.
+
 What is still missing around the plant is a cultivator-facing read. Capture writes stock and nothing
 serves it back: the stock-on-hand export is `manage.py export_stock` and an admin action, and the
 browse a cultivator would use is the same queryset Block 5 reads for members. There is also no

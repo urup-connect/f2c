@@ -190,6 +190,40 @@ class CatalogueTests(TestCase):
             with self.subTest(codename=codename):
                 self.assertIn(codename, PRODUCER_FULL_PERMISSIONS)
 
+    def test_the_administrator_reads_holdings_and_writes_no_sharing_members(self):
+        """C14. The read is granted, the three writes are not.
+
+        Both drawio administrator stories say "sharing members crud". The
+        product owner could name no reason for the create, the update or the
+        delete, and named one for the read -- an administrator holding
+        ``disable_plant`` could not see what they were disabling. So the club
+        administration set gains one codename and stays without the other
+        three, and this asserts both halves: an absence nobody checks is an
+        absence somebody restores.
+        """
+        self.assertIn('platform.view_member_inventory', CLUB_ADMINISTRATOR_PERMISSIONS)
+        for codename in (
+            'platform.register_sharing_member',
+            'platform.manage_sharing_members',
+            'platform.allocate_sharing_member_stock',
+        ):
+            with self.subTest(codename=codename):
+                self.assertNotIn(codename, CLUB_ADMINISTRATOR_PERMISSIONS)
+
+    def test_the_administrators_read_is_not_the_members_own(self):
+        """Two codenames, and they answer different questions -- C14.
+
+        ``view_own_inventory`` needs no object-level rule: the endpoint behind
+        it is scoped to ``request.user``. ``view_member_inventory`` is a read
+        over somebody else's record, so it is the one that can be refused, and
+        the one whose scope the service has to decide.
+        """
+        self.assertIn('platform.view_own_inventory', MEMBER_PERMISSIONS)
+        self.assertNotIn('platform.view_member_inventory', MEMBER_PERMISSIONS)
+        self.assertNotIn(
+            'platform.view_member_inventory', MARKET_ADMINISTRATOR_PERMISSIONS
+        )
+
     def test_no_administrative_action_reaches_a_member(self):
         """The negative half, and the one that matters."""
         self.assertEqual(

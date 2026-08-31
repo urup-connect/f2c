@@ -348,8 +348,9 @@ class Editing(RegisterTestCase):
         self.assertEqual('erased', refused.exception.code)
 
     def test_a_sharing_member_refuses_every_write(self):
-        # C14 has not decided whether an administrator may touch one. Refusing
-        # is the answer that does not pre-empt the decision.
+        # C14 has now decided, and this is the decision rather than a holding
+        # position: an administrator reads a sharing member and writes none of
+        # them. The record belongs to the cultivator who registered it.
         held = self.sharing_member()
 
         with self.assertRaises(ValidationError):

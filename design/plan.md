@@ -521,10 +521,20 @@ the membership, because an account typed in by hand would have no consent ledger
 catalogue CRUD likewise has no delete — a strain the club has sold against cannot be removed, and
 retirement is the whole answer.
 
-Left: cultivator CRUD, sharing member CRUD and collection addresses; warnings, suspensions and
+Left: cultivator CRUD and collection addresses; warnings, suspensions and
 expulsions, which need a sanction model and there is none; finished product types; listings
 read-write; the platform-wide pricing and inventory views; and `GET /api/documents/outstanding`,
 which exists and has no frontend caller, so a member owing a re-acceptance is never asked.
+
+**Sharing member CRUD has left that list, and C14 is why.** The product owner could name no reason
+for an administrator to add, update or delete one, and named one for the read. So the three writes
+stay with the primary cultivator — the register already refuses them, and that refusal stops being
+provisional — and what this block gains instead is **the holdings view**: what each member and
+sharing member holds, with the ownership trail behind every plant, by nickname and with no identity
+on the screen. It is one codename, `platform.view_member_inventory`, and it also closes an older
+oversight — `disable_plant` was granted here with nothing beside it that let an administrator see
+the plant they were disabling. The query must not ask what kind of member the holder is, which is
+C33's droppability constraint reaching one screen further than expected.
 
 **The two tiers no longer split this block — C29.** The UC tier gets no Next.js surface at all:
 `platform.manage_administrators`, `platform.refund_transaction` and `platform.cancel_membership` left
@@ -700,7 +710,6 @@ it.
 | C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. **Substantially answered**: the club collects member purchases and owes F2C 15%; F2C collects the membership fee and owes the club 60%; a cultivator earns at delivery (C9). What is left is the commission base against the courier leg, whether the commission shows on a statement, **how a cultivator is actually paid** — no gateway disburses, so a payment run — and the market's leg, which is unstated and trades first |
 | C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. **No longer gates C11** — a refund only ever touches unreleased funds in the club's own account, so an EFT out of it works where a gateway reversal does not |
 | C11.1 | **How long the money stays in the club's account after delivery** | Block A's settlement, and it is the residue of C11. Release is now the moment a member's refund right ends, so an instant release on the courier scan leaves the ordinary "arrived dead" complaint with no refund at all. Recommendation: a short hold — 72 hours is the shape of it — with a dispute able to suspend it. Cannot be separated from C9.1 |
-| C14 | May an administrator create and manage sharing members | Block 2 and Block 9 → Block D. **C5 moved the ground under the standing decision**: the prescribed route is the operator's back office, and a Next.js-only club administrator has no access to it |
 | C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules. **Promoted by C7** — the four-plant ceiling is statutory and attaches to a named adult, so the holding check is a prerequisite of the block |
 | C16 | Does a harvested plant count toward the four | Block 10 → Block E. Promoted with C15 — it decides what the holding check counts |
 | C17 | Equal-value swaps versus maturity | Block 10 → Block E |
@@ -744,6 +753,7 @@ it sits in Block A ahead of both checkouts.
 | C11 | **A refund exists only while the funds are held.** After release to the cultivator there is none in the application; the remedy is a withholding on the cultivator's payment run and a settlement with the member outside the platform | Deletes the largest unbuilt thing in the register — a post-release partial reversal across two entities, and the member credit ledger that was its fallback. Moves refunds from Block 12 → Block E into **Block A**, beside the hold, and releases them from C10.1. Forces C10 to say the 15% is earned **on release**, and adds an adjustment line to the payment run. Leaves **C11.1** open, and puts a CPA constraint on copy: build it, never publish it as a term |
 | C12 | **A cultivator cannot buy, and does not see another grower’s offers.** Policy rather than an enforced rule — no purchase journey, no membership sold to a grower, and deliberately no constraint, so the club reverses it with a sale rather than a migration. The drawio parenthetical is struck: a cultivator sees **their own** listings, each carrying an above / in line / below indicator against similar products site-wide | Turns a catalogue screen into a scoped one. Adds nothing to the permission catalogue — `browse_catalogue` stays — and everything to C13’s open “their own listings, stock and pricing” row, which now has a second reason to be built. The indicator lands on Block 1’s cultivator listing screen, priced with Block 4 → Block A. Puts a Competition Act s4(1)(b) constraint on how it is computed: a cohort minimum, a band rather than a number, a period average |
 | C13 | **The cultivator organisation, as the product owner states it.** The farm is the front identity; the primary owns it and controls its identity, its staff and its sharing members; staff act as permitted by the primary, which **is** the `full`/`limited` tier; and **every plant must always have a verifiable owner with a trail to final ownership** | Moves `manage_own_cultivator_profile` from full rights to the primary — the offering stays delegable. Rules out a per-appointment grant table as a second authorisation system. Reopens the ownership ledger and closes it differently: a `cultivation` tenure held by the `Producer`, opened at capture by `Plant.save`, closed by the first transfer, with two nullable holder columns and a constraint over them. New document, `features/cultivator-organisation.md` |
+| C14 | **An administrator reads sharing members and their holdings, and writes none of them.** The three sharing-member actions stay with the primary cultivator; the read is granted as `platform.view_member_inventory`, over any holder rather than one kind of holder, showing nicknames and plants and no identity | Adds one screen to Block D's administration and takes one away: "sharing member CRUD" is off the cultivator-administration list for good. Closes the C5 pressure without conceding the writes — the read leaves the Django admin and becomes an endpoint, the writes stay the operator's under C29. Depends on C13's capture-time tenure for the trail half, and is constrained by C33: the query must not ask what kind of member the holder is |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |

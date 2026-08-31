@@ -380,6 +380,29 @@ export const CLUB_DESTINATIONS = [
     href: MEMBERS_PATH,
   },
   {
+    /*
+     * C14, and the only thing it grants. Both drawio administrator stories ask for "sharing
+     * members crud"; the product owner could name no reason for the create, the update or the
+     * delete, and named one for the read — an administrator holds `disable_plant` and had no
+     * screen on which to see what they were disabling.
+     *
+     * Separate from `accounts` rather than a panel inside it because it is asked from both ends:
+     * what does this person hold, and who holds this plant. The register answers people; this
+     * answers stock, and the trail behind each plant is `PlantOwnership` — which reads back to
+     * the farm now that C13 opens a tenure at capture.
+     *
+     * Nicknames only. The identity behind one stays on the member's own record, where reading it
+     * in full already writes an `IdentityNumberDisclosure` row first.
+     */
+    key: 'member-holdings',
+    label: 'Member holdings',
+    description: 'What each member and sharing member holds, and the ownership trail behind it.',
+    permission: 'platform.view_member_inventory',
+    section: 'administration',
+    state: 'planned',
+    href: null,
+  },
+  {
     key: 'revoke-access',
     label: 'Revoke access',
     description: 'Take away access to the platform from an account.',

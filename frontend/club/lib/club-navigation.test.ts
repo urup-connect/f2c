@@ -67,6 +67,7 @@ const ADMIN = [
   'platform.refund_transaction',
   'platform.respond_to_reviews',
   'platform.revoke_access',
+  'platform.view_member_inventory',
 ] as const
 
 const keys = (permissions: readonly string[]) =>
@@ -213,6 +214,16 @@ describe('destinationsFor', () => {
     // Not 'refunds' or 'cancel-membership': C29 makes both the platform operator's, done in the
     // Django admin, so neither is a destination here or a codename in the catalogue.
     expect(keys(ADMIN)).not.toContain('refunds')
+  })
+
+  test('offers an administrator holdings to read and no sharing member to write', () => {
+    // C14. The read is the whole of what the decision granted: registering, managing and
+    // allocating to sharing members stay with the primary cultivator, so none of those three
+    // destinations appears for an administrator however the register is filtered.
+    expect(keys(ADMIN)).toContain('member-holdings')
+    expect(keys(ADMIN)).not.toContain('register-sharing-member')
+    expect(keys(ADMIN)).not.toContain('sharing-members')
+    expect(keys(ADMIN)).not.toContain('allocate-stock')
   })
 
   test('offers an administrator nothing that belongs to a grower', () => {

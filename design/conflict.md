@@ -901,8 +901,13 @@ until it does there is no account for a market refund to come out of.
 - **The membership fee.** Collected by F2C through Payfast, never in the Collective's account, and
   untouched by this ruling. `payments.md` §9 stands as written for the subscription.
 - **The release event itself** — C9.1, and now C11.1 with it.
-- **Who may authorise a refund, and up to what value.** `platform.refund_transaction` is one codename;
-  whether a club administrator can refund any order or only their own club's is C13 and C14.
+- **Who may authorise a refund, and up to what value.** This read "`platform.refund_transaction` is
+  one codename; whether a club administrator can refund any order or only their own club's is C13
+  and C14" and is now wrong twice over. **C29 removed the codename** — refunding is the platform
+  operator's, done in the Django admin under `is_staff`, so there is no club-administrator scope to
+  decide. And **C14 was never about refunds**: it is decided, and what it decided is a read over
+  member holdings. What stays open is the operator's own authorisation ladder, which is a procedure
+  rather than a permission.
 - **The market's collecting account**, without which the market has no refund source — C10, C26.
 
 ### C12 — A cultivator cannot buy, and the drawio story says they browse
@@ -1108,19 +1113,103 @@ organisation, not after". That was right, and it is what happened.
 
 ### C14 — Whose sharing members an administrator may touch
 
-**Status: Open. Small, but it contradicts a decision already taken with reasons.**
+**Status: Decided. The administrator reads and does not write. One codename added —
+`platform.view_member_inventory` — and the three sharing-member writes stay where they were.**
 
-`features/roles-and-permissions.md` section 3.6 deliberately withholds
+`features/roles-and-permissions.md` section 3.7 deliberately withholds
 `platform.register_sharing_member`, `platform.manage_sharing_members` and
-`platform.allocate_sharing_member_stock` from the Admin role, on the argument that creating accounts
-for other people should have exactly one route.
+`platform.allocate_sharing_member_stock` from the club administrator, on the argument that creating
+accounts for other people should have exactly one route.
 
 Both drawio administrator stories list "Cultivators crud, users crud, **sharing members crud**".
 
-**Recommendation.** Keep the decision and satisfy the story through the operator's back office —
-which is what the section already prescribes. But if the club administrator is a Next.js user under
-C5 and has no Django admin access, that route does not exist for them, and the decision has to be
-revisited. Flagged because C5 moved the ground under it.
+#### The ruling, from the product owner
+
+> I can't think of a reason for admin to add, update or delete sharing members. But I think they
+> should be able to view sharing members and their inventory.
+
+That splits the four letters of "crud" and keeps only the r. The reasoning behind section 3.7 was
+never about reading — it was about a second route into creating a person's record — so the standing
+decision survives the drawio story intact, and the story turns out to have been asking for a read
+with a write-shaped word.
+
+#### What was actually missing, and it was not sharing members
+
+The interesting half is that the gap is wider than the entry described. **Nothing in
+`ADMINISTRATOR_ACTIONS` let an administrator look at anybody's holdings** — not a sharing member's,
+not an ordinary member's. The set carries `platform.disable_plant`, so the club administrator could
+remove a plant and had no screen on which to see what they were removing. An authority to destroy
+without an authority to inspect is the wrong way round, and it had gone unnoticed because the
+question had only ever been asked about sharing members.
+
+So the grant is **`platform.view_member_inventory`**, over any holder, rather than a pair of
+sharing-member-shaped codenames. Three reasons, and the third is the one that decides it:
+
+- The narrow version would have been an owner-type branch inside an authorisation path, and **C33
+  requires the sharing-member role to stay droppable** — nothing outside the sharing-member feature
+  may ask what kind of member somebody is. A permission check that branched on it would be one of
+  the branches that has to be deleted the day the role is retired, which is exactly the design
+  failure C33 names.
+- The register already lists sharing members. `membership.administration.REGISTER_RELATIONSHIPS`
+  has a `sharing_member` filter, so "view sharing members" was built before it was decided. What
+  was missing was only ever the inventory.
+- One codename that answers *may they see what somebody holds* encodes a decision. Two that answer
+  it twice, once per kind of holder, encode the same decision and a taxonomy nobody needs.
+
+#### What the read shows, and what it does not
+
+**Nicknames and plants. No name, no identity number.** POPIA minimality decides this rather than
+caution: the administrator's purpose is oversight of stock, and oversight of stock needs no
+identity. A sharing member's identity number is special personal information sitting in an
+encrypted column with an attestation behind it, and there is no version of "who holds this plant"
+that requires decrypting one.
+
+Identity has not become unreachable — it stays on the member's own record, where
+`platform.disable_user` already gates it and where reading an identity number in full writes an
+`accounts.IdentityNumberDisclosure` row *before* the decrypt. Two screens, two authorisations, and
+the one an administrator uses daily is the one that carries no identity at all.
+
+**The trail comes with the holding.** Each plant reads back through `PlantOwnership` — *Kloof → Sam
+→ Alex* — and that is only answerable because **C13 ruling 3** opened a tenure at capture rather
+than at the first sale. An oversight view that could see the current holder but not how they came
+to be one would be the half of the ledger that does not settle a dispute.
+
+#### The club's, not the market's
+
+The grant goes into `CLUB_ADMINISTRATOR_PERMISSIONS` and `MARKET_ADMINISTRATOR_PERMISSIONS` stays
+empty. Plants, sharing members and the swap zone are the club's; C26 and C30 put the produce market
+on its own storefront with its own staff, and no purpose of theirs is served by a club member's
+holdings.
+
+#### What C5 was going to force, and now does not
+
+The entry was flagged because C5 moved the ground under it: the prescribed route for an
+administrator was the operator's back office, and a Next.js-only club administrator has no Django
+admin login. That pressure is answered without conceding the writes. **The read leaves Django and
+becomes an endpoint; the writes stay in the Django admin as the operator's, exactly as C29 leaves
+every other cross-cutting correction.** An administrator who has to fix a sharing member's record
+still escalates — and the escalation is now a rarer event, because the everyday need behind the
+drawio story was to look.
+
+#### What this costs, and it is accepted
+
+A club administrator cannot correct a sharing member's misspelt nickname. They can see it is wrong,
+and they ask the cultivator or the platform operator. That is the price of one route into a person's
+record, and it is the same price section 3.7 already accepted for creating one.
+
+#### What is left to build
+
+An endpoint and a screen. `membership.administration` already refuses every write against a sharing
+member, and that refusal stops being provisional — the docstring said it was written so as not to
+pre-empt this decision, and it is now the decision. `todo.md` carries the read.
+
+#### What this does not decide
+
+- **Whether an administrator may see a member's holdings *outside* the club.** There is one
+  storefront with plants, so the question has no second case yet.
+- **A `platform.manage_members` codename.** The register is still gated on `disable_user`, so
+  correcting a mistyped address needs the authority to suspend. That is a separate gap, named in
+  `membership/administration.py`, and it belongs with the C2 tier work.
 
 ### C15 — Household limits and the dried-weight limit are not modelled
 

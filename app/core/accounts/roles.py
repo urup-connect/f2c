@@ -68,6 +68,13 @@ account instead. C29 removed two codenames the same way and for a related
 reason -- an action in this catalogue is one an API endpoint checks, and one that
 cannot be refused is not being checked.
 
+**A read can be a permission, and C14 is the case that shows where the line
+falls.** ``manage_own_profile`` went because it was held by everybody and
+refusable to nobody. ``view_member_inventory`` is the opposite: it is a read
+over *somebody else's* record, most accounts do not hold it, and refusing it is
+the ordinary answer. The test is not read against write -- it is whether there
+is a decision the codename encodes.
+
 **Object-level rules are now expressible, and are still not expressed here.**
 "May this person set pricing" is answered below. "May they set pricing on *this*
 listing" is answered by the same ``ProducerMembership`` rows, in the service that
@@ -101,6 +108,13 @@ PERMISSION_NAMESPACE = 'platform'
 #: the UC tier, which has no Next.js surface and no endpoint: the platform
 #: operator does both in the Django admin, gated by ``is_staff``. An action in
 #: this catalogue is one an API endpoint checks, and neither of those is.
+#:
+#: **One action was added by C14, and it is a read.** An administrator holds
+#: ``disable_plant`` and could not see what they were disabling: nothing in this
+#: set let them look at anybody's holdings. ``view_member_inventory`` closes
+#: that. It is deliberately the *only* thing C14 grants -- registering,
+#: managing and allocating to sharing members stay with the primary cultivator,
+#: because creating records for other people should have exactly one route.
 ADMINISTRATOR_ACTIONS = {
     'platform.manage_cultivators':
         'Create, read, update and delete cultivators.',
@@ -121,6 +135,10 @@ ADMINISTRATOR_ACTIONS = {
         'Hide a cultivator and everything it offers.',
     'platform.revoke_access':
         "Revoke an account's access to the platform.",
+    'platform.view_member_inventory':
+        'View what any member or sharing member holds, and the ownership '
+        'trail behind each plant, by nickname. Read only: C14 grants the club '
+        'administrator oversight of stock and no authority over it.',
 }
 
 #: Production. Everything scoped to the producer the appointment belongs to,
@@ -230,9 +248,24 @@ CLUB_ADMINISTRATOR_PERMISSIONS = frozenset(ADMINISTRATOR_ACTIONS) | frozenset({
     'platform.respond_to_reviews',
 })
 
+#: **What administering the club still does not include, and that is C14.**
+#: ``register_sharing_member``, ``manage_sharing_members`` and
+#: ``allocate_sharing_member_stock`` are absent above and stay absent. Both
+#: drawio administrator stories ask for "sharing members crud"; the product
+#: owner could not name a reason for the c, the u or the d, and named one for
+#: the r. So the read is granted as ``view_member_inventory`` and the three
+#: writes are refused -- ``membership.administration`` already refuses to edit a
+#: sharing member, and that refusal is now a ruling rather than a placeholder.
+#: A test asserts each of the three, because an absence nobody checks is an
+#: absence somebody restores.
+
 #: What administering the **market** holds. Empty, and deliberately present: the
 #: market's own actions arrive with the market vertical, and a missing key here
 #: would read as an oversight rather than as a feature that does not exist yet.
+#:
+#: C14's inventory read did not come here and will not: plants, sharing members
+#: and the swap zone are the club's, and market staff have no purpose that a
+#: club member's holdings would serve.
 MARKET_ADMINISTRATOR_PERMISSIONS = frozenset()
 
 #: What an active club membership holds.
