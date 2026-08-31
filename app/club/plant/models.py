@@ -75,6 +75,25 @@ PLANT_SERIAL_SEQUENCE = 'plant'
 LEAF_RATING_DIVISOR = Decimal('1000')
 LEAF_RATING_STEP = Decimal('0.5')
 
+#: What a plant rates when the formula would round it away to nothing. Anything
+#: under R250 divides to less than half a step, and a rating of 0.0 has no swap
+#: value to be equivalent to -- in an equivalent-value trade it matches nothing,
+#: or matches everything for free, depending on how Block 10 reads it. A price
+#: that low is not expected in practice; the floor is here so that the
+#: unexpected case is a plant that is merely unswappable rather than one that
+#: breaks equivalence.
+#:
+#: 0.1 deliberately is **not** a multiple of `LEAF_RATING_STEP`. A rating below
+#: swap value is then recognisable as one wherever it is read, and a R50 plant is
+#: not promoted to the same 0.5 as a R250 one.
+LEAF_RATING_FLOOR = Decimal('0.1')
+
+#: The least rating that may enter the swap zone: one whole step. Enforced by
+#: `PlantQuerySet.swappable` and `Plant.assert_swappable`, and not in SQL -- for
+#: the same reason the rating itself carries no check constraint tying it to the
+#: grow price.
+SWAP_MINIMUM_LEAF_RATING = LEAF_RATING_STEP
+
 
 def leaf_rating_for(grow_price):
     """Swap value, from grow price. ``swap-zone.md``, and C4.
@@ -95,6 +114,12 @@ def leaf_rating_for(grow_price):
     R1,250 at 1.0 rather than 1.5 and disagree with the brief on the one case the
     brief does not cover.
 
+    **A price under R250 floors at 0.1 rather than rounding to zero.** The
+    formula alone gives 0.0 there, and a plant with no swap value at all is not
+    one the swap zone can price. :data:`LEAF_RATING_FLOOR` carries the reasoning;
+    :data:`SWAP_MINIMUM_LEAF_RATING` is the threshold that keeps such a plant out
+    of a swap, and :meth:`Plant.assert_swappable` is where a caller meets it.
+
     **This is not a reputation score.** C4 records that ``plan.md`` and
     ``todo.md`` once described the leaf rating as a rating system for
     cultivators, which is the reviews feature (five stars, Block 7) wearing this
@@ -106,7 +131,10 @@ def leaf_rating_for(grow_price):
     steps = (
         Decimal(grow_price) / LEAF_RATING_DIVISOR / LEAF_RATING_STEP
     ).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-    return (steps * LEAF_RATING_STEP).quantize(Decimal('0.1'))
+    rating = (steps * LEAF_RATING_STEP).quantize(Decimal('0.1'))
+    # `max` rather than a branch: both sides are `Decimal` and quantized to one
+    # place, so there is no float comparison hiding in here.
+    return max(rating, LEAF_RATING_FLOOR)
 
 
 class SerialCounter(models.Model):
@@ -336,8 +364,17 @@ class PlantQuerySet(models.QuerySet):
         ``harvest.md``: "After harvest no further swapping for paying members."
         The sharing-member exception in the same document is a rule about *who*,
         not about the plant, so it belongs to Block 10 rather than here.
+
+        Also excludes a plant priced too low to earn a whole step of leaf rating
+        -- :data:`LEAF_RATING_FLOOR`. This is the query half of that rule and
+        :meth:`Plant.assert_swappable` is the half a caller holding one plant
+        hits; the two have to agree, and ``tests/test_leaf_rating.py`` asserts
+        that they do.
         """
-        return self.live().filter(status__in=FLOWERING_STATUSES)
+        return self.live().filter(
+            status__in=FLOWERING_STATUSES,
+            leaf_rating__gte=SWAP_MINIMUM_LEAF_RATING,
+        )
 
     def by_planting_date(self):
         """Step 3 of ``member-plant-purchase.md``, as one query.
@@ -447,8 +484,9 @@ class Plant(models.Model):
         max_digits=5,
         decimal_places=1,
         editable=False,
-        help_text='Swap value: grow price ÷ 1000, to the nearest 0.5. Never '
-                  'shown alongside a Rand value.',
+        help_text='Swap value: grow price ÷ 1000, to the nearest 0.5, with a '
+                  'floor of 0.1 for a price too low to earn a whole step. '
+                  'Never shown alongside a Rand value.',
     )
 
     minimum_yield_grams = models.DecimalField(
@@ -702,6 +740,53 @@ class Plant(models.Model):
     def is_flowering(self):
         """Whether this plant counts toward a member's four. C16."""
         return self.status in FLOWERING_STATUSES
+
+    @property
+    def is_swappable(self):
+        """Whether this plant may enter the swap zone.
+
+        The row-level twin of :meth:`PlantQuerySet.swappable`, for a plant
+        already in hand. The two must agree, and a test holds them together.
+        """
+        return (
+            self.disabled_at is None
+            and self.status in FLOWERING_STATUSES
+            and self.leaf_rating is not None
+            and self.leaf_rating >= SWAP_MINIMUM_LEAF_RATING
+        )
+
+    def assert_swappable(self):
+        """Raise unless this plant may be swapped.
+
+        Nothing calls this yet -- the swap zone is Block 10 and gated on a legal
+        opinion. It is here because *why* a plant cannot be swapped is a property
+        of the plant, and the alternative is Block 10 writing three versions of
+        the same check across an offer, a request and a match.
+
+        Raises Django's ``ValidationError`` with a code, as :meth:`transfer_to`
+        and :meth:`mark_harvested` do, so an API layer maps the code to a message
+        rather than matching on prose.
+        """
+        if self.disabled_at is not None:
+            raise ValidationError(
+                'That plant has been withdrawn and cannot be swapped.',
+                code='plant_disabled',
+            )
+        if self.status not in FLOWERING_STATUSES:
+            raise ValidationError(
+                'Only a growing plant can be swapped. That one has been '
+                'harvested.',
+                code='not_flowering',
+            )
+        if (
+            self.leaf_rating is None
+            or self.leaf_rating < SWAP_MINIMUM_LEAF_RATING
+        ):
+            raise ValidationError(
+                'That plant carries no swap value: its grow price is too low '
+                'to earn a whole leaf rating step.',
+                code='below_swap_value',
+            )
 
     # ------------------------------------------------------------------
     # Writes

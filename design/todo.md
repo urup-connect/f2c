@@ -1126,8 +1126,12 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
       that case at 1.0 and disagree with the brief on the one value the brief does not cover
 - [x] **Do not** wire it to reviews. It is swap value, not reputation. Nothing in `plant` imports or
       touches a rating
-- [!] A grow price under R250 rounds to a leaf rating of **0.0**, which has no swap value at all.
-      `swap-zone` sets no floor and its cheapest example is R500. Decide before Block 10 relies on it
+- [x] Set the floor. A grow price under R250 would round to **0.0**, which has no swap value at all,
+      so a rating **floors at 0.1** instead — not a multiple of 0.5, so it reads as below swap value
+      wherever it appears. A plant under one whole step cannot enter the swap zone:
+      `Plant.assert_swappable` raises `below_swap_value` and `Plant.objects.swappable()` excludes it.
+      Answered in `swap-zone.md`: pricing sits around R1,000, so this is a guard on the unexpected
+      rather than a price band anybody expects to use
 
 ### Administration
 

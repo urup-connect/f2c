@@ -391,8 +391,12 @@ was undefined in the brief and **is now chosen: round half up**, in `Decimal` th
 Left: there is no `api.py` in `app/club/plant` at all, so all three routes are staff-side and a
 cultivator does nothing themselves until Block 9. `platform.disable_plant` and
 `platform.disable_batch` are in the catalogue and **nothing calls `has_perm` on either** — the admin
-authorises on `is_staff` like every other Django admin page. And a grow price under R250 rounds to a
-leaf rating of 0.0, which has no swap value at all; decide before Block 10 relies on it.
+authorises on `is_staff` like every other Django admin page.
+
+The leaf-rating floor **is now decided**: a rating floors at 0.1 rather than rounding to 0.0, and a
+plant under one whole step of 0.5 cannot enter the swap zone — `Plant.assert_swappable` refuses it
+with the code `below_swap_value` and `Plant.objects.swappable()` excludes it. `swap-zone.md` carries
+the reasoning.
 
 ### Block 4 — Pricing and promotions · 1.5 weeks
 
@@ -626,7 +630,7 @@ it.
 | C18 | Where finished product types are selected | Block 1 → Block A. **The recommendation is already built** — the plant inherits from its listing — so ratifying costs nothing and reversing is a model change |
 | C19 | What a cultivator sees of a member on a packing label | Block 6 → Block C. POPIA-relevant. The stock export already implements the recommendation — nickname only |
 | C20 | Membership fee on a copy-compliance-governed page | Block 0 or Block 1. The one item still blocked on the landing page |
-| — | **The leaf-rating floor.** A grow price under R250 rounds to 0.0, which has no swap value at all. `swap-zone` sets no floor and its cheapest example is R500 | Block 10 → Block E. Recorded under C4 in `todo.md` and holding no number of its own |
+| — | ~~**The leaf-rating floor.**~~ **Closed.** A rating floors at 0.1 and a plant under 0.5 cannot be swapped. Pricing sits around R1,000, so a sub-R250 price is unexpected rather than impossible — the rule makes the unexpected case unswappable instead of equivalent to everything | Answered in `swap-zone.md`; built in Block 3 |
 
 **C7 is the one to move first.** It is the only item on this list that cannot be answered inside the
 business, it gates an entire block, and the block it gates is four weeks of work that nothing else
