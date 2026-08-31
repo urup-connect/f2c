@@ -95,8 +95,10 @@ Everything in the built list is in the repository with tests. Nothing in the not
   capture, stock-on-hand export, leaf rating, and the disable actions — Block 3.
 - Documents for two storefronts, scoped by storefront with `audience` and `agreement`, the consent
   ledger, and `ProducerAgreement` for a farm's signed terms.
-- Sharing member registration as a **placeholder** — a nickname and a producer, with no identity
-  number, no age rule and no POPIA attestation, per C6.
+- Sharing member registration, currently as a **placeholder** — a nickname and a producer, with no
+  identity number, no age rule and no POPIA attestation. **Built against a decision that has since
+  been reversed**: C6 now makes a sharing member a real person, and the identity number, age rule,
+  attestation and erasure exemption all come back. The code has not been changed yet.
 - Django admin over accounts, documents, subscriptions, payments, producers, strains and plants.
 
 **Not built — what the models are still waiting for**
@@ -222,7 +224,7 @@ Block 6  Ownership, harvest, fulfilment
 Block 7  Reviews and ratings
 Block 8  Notifications                ── harvest already needs this
 Block 9  Administration API and portal
-Block 10 Swap zone                    ── legally gated on C7
+Block 10 Swap zone                    ── no longer gated: C7 is decided, residual risk
 Block 11 Support
 Block 12 Plant subscriptions, settlement, reporting
 ```
@@ -235,10 +237,14 @@ their own listings, their own stock, their own pricing, their own sharing member
 cultivator who may appoint staff — needs it. Built after the models it scopes, it is a retrofit
 across every endpoint.
 
-**The swap zone comes last, and not only because it is hard.** It is the one feature that may be
-unbuildable as specified: C7 asks whether allocating four flowering plants to a named adult is
-lawful and whether a swap is a sale in substance. Scheduling it last means an opinion can be
-obtained without blocking anything else, and a negative answer costs no rework.
+**The swap zone comes last, and the reason has changed.** It was scheduled last because it might be
+unbuildable as specified — C7 asked whether allocating four flowering plants to a named adult is
+lawful and whether a swap is a sale in substance. **C7 is now decided as residual risk**: the swap
+model is in use by other clubs and treated as defendable, and the plants do consume the sharing
+member's own allowance. So the block is no longer gated, and it comes last on ordinary grounds — it
+is four weeks of work, it depends on the plant and the leaf rating, and nothing else depends on it.
+What it now depends on that it did not before: C15, the four-flowering-plant holding check, which
+became a statutory ceiling rather than a convention the moment C7 was answered.
 
 ### 4.1 Revised sequence — two storefronts
 
@@ -260,7 +266,7 @@ Block C    Club vertical                  ── plant, batch, ownership, harves
                                              (old Blocks 3 and 6)
 Block D    Notifications, admin, support  ── old Blocks 8, 9, 11. Two administration
                                              areas, one per storefront. No UC tier — C29
-Block E    Swap zone, subscriptions       ── old Blocks 10 and 12. Still gated on C7
+Block E    Swap zone, subscriptions       ── old Blocks 10 and 12. Ungated: C7 decided
 ```
 
 Two things drive it.
@@ -359,7 +365,8 @@ override — so ratifying it costs nothing and reversing it is a model change.
 Built: the farm as a record — `Producer`, with collection address and encrypted bank details, written
 so a farmer supplying the produce market is the same record with a different storefront row; the
 primary cultivator flag on `ProducerMembership`; appointed staff carrying full or limited rights; and
-sharing member registration as a placeholder, per **C6**.
+sharing member registration, built as a placeholder under the **superseded** reading of C6 and now
+requiring the identity number, age rule and attestation back.
 
 **C13 and roles risk 9 are closed.** *Only the primary may appoint staff* was an object-level rule
 the catalogue could not express, and it is a column now.
@@ -432,9 +439,16 @@ the brief and both change this block's shape.
 and the transfer that writes it landed with Block 3.
 
 A member's plant inventory. The cultivator converting an estimated harvest date to an actual one.
-The notification that sends a member to finalise: finished product type, delivery address, and — if
-**C8** says so — a courier fee. Certificates of ownership, packing labels and courier documents.
-Order tracking and order queries.
+The notification that sends a member to finalise: finished product type and delivery address, with
+**no money in it** — **C8** folds courier into the price paid at order and settles it to Pargo, and
+the launch product types carry no manufacturing charge. Certificates of ownership, packing labels
+and courier documents. Order tracking and order queries.
+
+**That confirmation is what makes ownership final**, and it closes the swap window on the plant —
+C8 again, and it is a constraint on Block 10 as much as on this block. Build the finalisation as a
+zero-total transaction rather than a two-field form: **C35** puts a real charge on this screen the
+moment a priced product type is listed. **C8 leaves one thing open** — what happens when the owner
+never answers the notification. Answer it before this block is specified.
 
 Needs a delivery address model, which does not exist. **C19** decides what a cultivator sees of a
 member on a packing label; the recommendation is nothing but a nickname, serials and a waybill, and
@@ -487,8 +501,14 @@ it is the only UC-tier item with anything left to build.
 
 ### Block 10 — Swap zone · 4 weeks
 
-**Status: not started and still gated on C7. Do not start without a legal opinion.** The leaf rating
-it matches on is built and stored, which is the one dependency that will not hold it up.
+**Status: not started, and no longer gated.** C7 is decided as residual risk — the swap model is
+defendable and a sharing member's plants consume their own allowance. The leaf rating it matches on is
+built and stored, which is the one dependency that will not hold it up.
+
+**Two things now sit in front of it that did not before.** C15, the four-flowering-plant holding
+check, is a prerequisite rather than a refinement — the ceiling is statutory and attaches to a named
+adult. And the holding check must count plants per member without asking what kind of member, because
+C33 requires the sharing-member role to be droppable once the platform has momentum.
 
 Leaf-rating display with no Rand values anywhere in the zone. Sharing-member stock seeding the zone.
 Instant swaps against sharing-member plants, confirmed swaps against member plants. Equivalent-value
@@ -549,7 +569,7 @@ it packages.
 | **R3** | Blocks 4–5 | A member can find and buy a plant. **First plant revenue** |
 | **R4** | Blocks 6–8 | A member receives product. **The loop closes** |
 | **R5** | Block 9 | The club is run from the portal, not from the Django admin |
-| **R6** | Block 10 | Swap zone, if C7 permits |
+| **R6** | Block 10 | Swap zone — C7 decided, no longer conditional |
 | **R7** | Blocks 11–12 | Support, plant subscriptions, settlement, reporting |
 
 Against the revised sequence in section 4.1 the releases become — **and this is the one to plan
@@ -563,7 +583,7 @@ against**:
 | **R3** | Block B | **The market trades. First order revenue, no legal opinion required** | Storefront and accounts built; the produce vertical is not |
 | **R4** | Block C | A member buys a plant and receives product. The club's loop closes | Not started. The plant itself is built — Block 3 |
 | **R5** | Block D | Each storefront is run from its own administration area. The UC tier stays in the Django admin — C29 | Three of twenty-nine destinations live |
-| **R6** | Block E | Swap zone, if C7 permits. Plant subscriptions and reporting | Not started, gated on C7 |
+| **R6** | Block E | Swap zone. Plant subscriptions and reporting | Not started. **Ungated** — C7 decided as residual risk |
 
 **R1 is complete and R0 is not, and that is deliberate rather than a slip.** What is left of R0 is
 provisioning and one commercial decision about a mail provider; it needs an Azure subscription and a
@@ -618,29 +638,38 @@ it.
 
 | # | Decision | Holds up |
 | --- | --- | --- |
-| C7 | Is the sharing-member scheme lawful — **legal opinion, not a product call** | Block 10 → Block E, entirely. Do not start without it |
-| C8 | Is a courier fee payable at harvest | Block 6 → Block C |
 | C9 | When is the grow price paid, and what happens on crop failure | Block 5 → Block A. Both change the block's shape |
 | C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. The market pays a producer on every order from the day it trades |
 | C11 | How do partial refunds work, with fees withheld | Block 12 → Block E. Downstream of C10 |
 | C14 | May an administrator create and manage sharing members | Block 2 and Block 9 → Block D. **C5 moved the ground under the standing decision**: the prescribed route is the operator's back office, and a Next.js-only club administrator has no access to it |
-| C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules |
-| C16 | Does a harvested plant count toward the four | Block 10 → Block E |
+| C15 | Household and dried-weight limits | Block 10 → Block E, and the club rules. **Promoted by C7** — the four-plant ceiling is statutory and attaches to a named adult, so the holding check is a prerequisite of the block |
+| C16 | Does a harvested plant count toward the four | Block 10 → Block E. Promoted with C15 — it decides what the holding check counts |
 | C17 | Equal-value swaps versus maturity | Block 10 → Block E |
 | C18 | Where finished product types are selected | Block 1 → Block A. **The recommendation is already built** — the plant inherits from its listing — so ratifying costs nothing and reversing is a model change |
 | C19 | What a cultivator sees of a member on a packing label | Block 6 → Block C. POPIA-relevant. The stock export already implements the recommendation — nickname only |
 | C20 | Membership fee on a copy-compliance-governed page | Block 0 or Block 1. The one item still blocked on the landing page |
+| C35 | How a priced finished product type is paid for at harvest | Nothing in the MVP. Blocks the second product release, and shapes Block 6 now — the finalisation has to be built so a charge can be added to it without reopening ownership finality |
+| C34 | May a sharing member become a full member, on the same account | Nothing yet. Cheap while sharing members are few, unpleasant once they are not — the person is refused at sign-up by their own record and their allowance is already spent |
 | — | ~~**The leaf-rating floor.**~~ **Closed.** A rating floors at 0.1 and a plant under 0.5 cannot be swapped. Pricing sits around R1,000, so a sub-R250 price is unexpected rather than impossible — the rule makes the unexpected case unswappable instead of equivalent to everything | Answered in `swap-zone.md`; built in Block 3 |
 
-**C7 is the one to move first.** It is the only item on this list that cannot be answered inside the
-business, it gates an entire block, and the block it gates is four weeks of work that nothing else
-depends on — so it is also the one most easily left until it is the critical path.
+**C7 has come off this list.** It was the only item that could not be answered inside the business,
+and it is now decided as residual risk: the swap model is in use by other clubs and defendable, and a
+sharing member's plants consume their own statutory allowance. A legal opinion is still worth having,
+but its brief is narrow — the proxy leg and the physical location of the plants, R-C7.1 and R-C7.2 —
+and it blocks nothing.
+
+**C15 and C16 move up in its place.** Both were refinements of the swap zone while the four-plant
+number was a convention. C7 made it a statutory ceiling attaching to a named adult, so the holding
+check is now a prerequisite of the block rather than a detail inside it.
 
 ### Decided, and recorded here because they restructured the plan
 
 | # | Decision | What it changed |
 | --- | --- | --- |
-| C6 | A sharing member is a **placeholder, not a person** | Block 10 → Block E. Registration is a nickname and a producer, with no identity number, no age rule and no POPIA attestation — an attestation that a placeholder had consented was a ceremony around a fiction |
+| C6 | A sharing member is a **real person who does not transact** — decided, acted on as a placeholder, then **reversed** | Block 0.5 and Block E. Registration takes the identity number, the age rule and the POPIA attestation back, and the erasure route with them. A read-only login is specified and deferred. The code still implements the superseded reading |
+| C7 | The swap model is **defendable** — residual risk, not a gate | Ungates Block 10 → Block E. Makes the four-plant allowance a statutory ceiling, which promotes C15 and C16 to prerequisites |
+| C8 | **Nothing is payable at harvest.** Courier sits inside the price paid at order and is remitted to Pargo at settlement | Removes a checkout from Block 6 → Block C. Makes the harvest confirmation the point where ownership becomes final, which closes the swap window and constrains Block 10. Adds a third leg to C10's settlement split, and opens C35 |
+| C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |
 | C28 | Retiring the single role column | Block 0.5, and every permission test |

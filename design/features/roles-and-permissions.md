@@ -37,8 +37,10 @@ Four things are worth reading before the tables:
 - **`is_staff` is the platform operator's tier, entire.** It opens the Django admin and grants
   nothing in this catalogue. There is no `uc_admin`, no fifth role, and no third administrative
   front end — **C29**, section 9.
-- **A relationship need not be an actor.** A sharing member is a placeholder holding stock so the
-  swap zone is not empty. It holds nothing and signs in nobody, and section 3 is about that alone.
+- **A relationship need not be an actor — yet.** A sharing member is a real person holding stock so
+  the swap zone is not empty. They hold no permissions and do not sign in at launch, and both of
+  those are sequencing rather than nature: **C6** gives them a read-only login, built later. Section
+  3 is about that alone.
 
 ## 2. The three relationships that grant
 
@@ -48,7 +50,7 @@ Four things are worth reading before the tables:
 | `StorefrontStaff` (club) | A club administrator: authority over the collective's own records | By hand in the Django admin |
 | `StorefrontStaff` (market) | A produce-market administrator | By hand in the Django admin |
 | `ProducerMembership` | A grower or farmer, primary or appointed staff | By an administrator, or by the producer's primary |
-| `ClubMembership` at `sharing` | A placeholder holding flowering plants. Signs in nobody | Created by a cultivator |
+| `ClubMembership` at `sharing` | A person holding flowering plants they do not transact in. No sign-in at launch — **C6** | Created by a cultivator |
 
 **One person may hold several at once, and that is the point of the change.** An administrator who
 also buys plants holds the union of both sets. Under the column that person needed two accounts, and
@@ -62,41 +64,46 @@ deliberately.
 ## 3. The sharing member
 
 A new club has a swap zone with nothing in it, and a swap zone with nothing in it is not a feature.
-So cultivators create **sharing members**: a nickname, and flowering plants held against it, so the
+So cultivators register **sharing members**: real people, each holding four flowering plants, so the
 zone has stock for members to choose against.
 
-**C6 decided what one is: a placeholder, not a person.** The build had committed to the other
-reading — a real individual with a name, an identity number and a POPIA attestation — and most of
-this section used to describe that machinery. It is gone. What follows records both the decision and
-what it removed, because the removed half is the more instructive one.
+**C6 was decided twice, and this section records the second answer.** The first read
+`member-roles.md`'s "no login" as a definition and made a sharing member a placeholder — no name, no
+identity number, no consent. That reading is withdrawn. "No login" was a cost control against a
+per-user licence on the platform this one replaced, not a statement about what a sharing member is,
+and the sentence beside it — "minimum info will be name, ID and nickname" — was the definition all
+along.
 
-### 3.1 They are a `User` row, and two of the four reasons no longer apply
+**So the machinery this section used to describe, then described the removal of, comes back.** What
+follows is written against the decision rather than the code: the code still implements the
+superseded reading, and C6 lists every place it does.
 
-A sharing member has no email address, no password, no subscription and no permissions. Every
-instinct says put them in their own table. The instinct was rejected on four arguments, and honesty
-requires noting that C6 knocked out two of them:
+### 3.1 They are a `User` row, and all four reasons apply again
 
-- **One nickname namespace.** *Still holds.* The swap zone shows nicknames and nothing else. A
-  separate table means a placeholder and a member could wear the same name in the same list, which
-  is impersonation rather than a collision.
-- **One kind of owner.** *Still holds, and is now the strongest of the four.* Plants, swaps,
-  ownership certificates and packing labels all point at whoever holds the plant. Two owner types
-  means every one of those grows a nullable pair of foreign keys and a "which is it" check at every
-  call site.
-- **One encrypted identity column.** *Gone.* A placeholder has no identity number, so there is no
-  second AES column and no second blind index to get wrong.
-- **One erasure route.** *Gone.* A placeholder holds no personal data, so there is nothing to erase.
+A sharing member has no subscription, no cart and — for now — no password. Every instinct says put
+them in their own table. The instinct was rejected on four arguments, two of which the placeholder
+decision knocked out and the reversal restores:
 
-Two arguments are enough, and the decision stands. It is recorded this way rather than quietly
-rewritten because the two that fell away were doing real work in the original reasoning, and a
-reader who finds only the surviving two will wonder why the question was ever close.
+- **One nickname namespace.** The swap zone shows nicknames and nothing else. A separate table means
+  a sharing member and a member could wear the same name in the same list, which is impersonation
+  rather than a collision.
+- **One kind of owner.** Plants, swaps, ownership certificates and packing labels all point at
+  whoever holds the plant. Two owner types means every one of those grows a nullable pair of foreign
+  keys and a "which is it" check at every call site.
+- **One encrypted identity column.** A sharing member has an identity number, and it is the same
+  AES column and the same blind index as everybody else's. Two would be two chances to get key
+  rotation wrong.
+- **One erasure route.** A sharing member is a data subject with a right to erasure. `soft_delete`
+  is that route, and it is one route.
 
-### 3.2 They sign in nobody, and the database still says so
+The last two are also why the reversal is cheap to state and not cheap to defer: they are schema, and
+schema is free to change only while the database is empty.
 
-A placeholder's account sits at `UserStatus.NON_AUTHENTICATING`. The value is named for the fact the
-authentication stack needs — this row authenticates nobody — rather than for the club concept on top
-of it, so that whatever the swap zone eventually makes of a placeholder, the column does not need
-renaming.
+### 3.2 They sign in nobody — for now, and by sequencing rather than by nature
+
+A sharing member's account sits at `UserStatus.NON_AUTHENTICATING`. The value is named for the fact
+the authentication stack needs — this row authenticates nobody — rather than for the club concept on
+top of it, and that naming is why it survives a reversal that changed nearly everything else.
 
 Two mechanisms, not one:
 
@@ -108,48 +115,42 @@ Two mechanisms, not one:
 The second exists because the first is a property of the *data*: somebody typing an address into the
 admin, or a fixture supplying one, would otherwise turn stock into a sign-in-capable account.
 
-This is simpler than what it replaces. There used to be a dedicated
-`sharing_member_never_signs_in` constraint over the role and the status together; with the role
-column gone, the general `is_active`-follows-`status` rule already says it. `User.activate()` also
-refuses `NON_AUTHENTICATING` outright, so a bulk admin action reports something useful instead of
-failing on an index name.
+**This is now a launch position rather than a permanent one.** C6 gives a sharing member a read-only
+login — they see the plants they own and their status, and they get no cart, no swap action and no
+payment method. It is deferred because it costs the same whenever it is built, while the identity
+columns below cost far more once records exist. When it is built, a sharing member moves to `ACTIVE`
+and this section describes a state the account passes through rather than sits in.
 
-### 3.3 What C6 removed, and why it was removed now
+### 3.3 What a registration collects, and why each piece is there
 
-Three columns and a rule went out of the schema:
-
-| Removed | Why |
+| Collected | Why |
 | --- | --- |
-| `sharing_consent_attested_by` / `_at` / `_version` | A placeholder consents to nothing and is given no collection notice. An attestation over one recorded a ceremony around a fiction |
-| The identity number | Not collected. Holding one for a person who is not being registered as a person is personal data gathered for no lawful purpose |
-| The age rule read off the document | There is no document and nobody to be under age |
-| `sharing_member_is_complete` | Required the attestation and a nickname. Now `sharing_member_has_a_cultivator`, requiring only the cultivator whose stock it holds |
+| Name and surname | They are a person. Their plants are theirs |
+| Identity number | Age, and the one-account-per-identity-document rule. Encrypted, with a blind index for the uniqueness check |
+| Nickname | What the swap zone displays. The only identifier other members ever see |
+| `registered_by` | The cultivator whose stock they hold. `PROTECT`, so a cultivator with sharing members cannot be hard-deleted |
+| `sharing_consent_attested_by` / `_at` / `_version` | A cultivator captures a third party's identity number and offers that person's plants on their behalf. POPIA needs a lawful basis the person did not give on a form, and C33 needs the mandate evidenced |
 
-**The timing was the decision, not just the content.** C6's own recommendation warned that unwinding
-"real people" later means a migration that deletes stored identity numbers. Block 0.5 dropped the
-development database and cleared every migration, so the deletion was free exactly once — and would
-have cost that migration the moment the columns were written into the new initial schema. Adding
-columns back to a defined feature is ordinary work; deleting columns that have held encrypted
-identity numbers is not.
+It is called an **attestation** rather than a consent because it is weaker evidence than the person's
+own tick, and naming it accurately is what stops the two being confused later. The version is what
+tells one wording from another when it is revised.
 
-What survives is `registered_by`, naming the cultivator whose stock the placeholder holds, and the
-nickname the swap zone displays. Both are on `ClubMembership`.
+Two rules sit on top of the fields: eighteen years, read off the identity document, the same rule as
+sign-up; and `sharing_member_is_complete`, a check constraint requiring the cultivator, the
+attestation and a nickname, with erased rows exempt — because `soft_delete` blanks the nickname, and
+the POPIA erasure route must never be the thing the database refuses.
 
-**C7 is changed by this and not resolved.** The legal question was whether allocating four flowering
-plants to a named adult who never consented is lawful. With nobody being allocated anything, the
-question becomes whether the club may hold that stock itself, above whatever ceiling applies to it.
-Still a legal opinion, still gating the swap zone, different brief.
+### 3.4 The refusal that leaks
 
-### 3.4 The refusal that leaked — closed
+One account per identity document is enforced on a unique blind index, so a cultivator registering
+somebody already on file is refused — and the refusal tells them that identity number is known to the
+club. The wording is deliberately vague: it names no record, no role and no other cultivator.
 
-This section used to describe an unavoidable disclosure: one account per identity document is
-enforced on a unique blind index, so a cultivator registering somebody already on file was refused,
-and the refusal told them that identity number was known to the club. The wording was made
-deliberately vague and the leak was carried as risk 4.
+**It is a real leak and it is carried, not solved.** The placeholder decision appeared to dissolve it
+by collecting no identity number; the reversal brings it back exactly as it was. This is risk 4.
 
-**It is gone, because no identity number is collected.** There is nothing to collide with and
-nothing to disclose. Risk 4 is closed, and the disappearance is worth noticing: it was not solved,
-it was dissolved by a decision taken for unrelated reasons.
+C34 is the case that makes it sting: the person refused may be a sharing member trying to join the
+club properly, standing in front of a refusal caused by a record somebody else created about them.
 
 One nickname collision remains possible and is disclosed on purpose, exactly as it is at sign-up: a
 nickname is a claim against other people in the swap zone, so a taken one has to be replaced, and
@@ -158,13 +159,23 @@ knowing it is spoken for reveals nothing about who holds it.
 ### 3.5 The four plants
 
 `services.SHARING_MEMBER_PLANT_ALLOCATION` is `4` — the same limit members live under, which is why
-it is one number and not two. `register_sharing_member` returns it so a caller does not hard-code it.
+it is one number and not two.
 
-It is **enforced nowhere**, because there is no plant to count, and under C6 it is no longer even
-obviously the right number: the limit exists per person, and a placeholder is not one. What a
-placeholder may hold is the swap zone's to define, and is deliberately not guessed at here.
+**C7 settles what that number means: it consumes the sharing member's own statutory allowance.** So a
+sharing member holding four flowering plants may hold nothing else, and the limit is a ceiling
+attaching to a named adult rather than a convention the platform may interpret. It is still enforced
+nowhere, and the enforcement is C15 — a holding check counting flowering plants per member, which
+does not ask what kind of member they are. That last point is deliberate: C33 requires the sharing
+member role to be droppable, and a holding check that branches on owner type would be one of the
+branches that has to be deleted to drop it.
 
-### 3.6 Who may create one
+### 3.6 Who may move their plants
+
+The cultivator. The sharing member views and does not transact — C33, which also records why that is
+the weakest of the three positions available and what closes it: the read-only login, extended with a
+withdrawal action once it exists.
+
+### 3.7 Who may create one
 
 `platform.register_sharing_member` and `platform.manage_sharing_members` belong to the **primary
 producer appointment alone** — not to appointed staff, and not to the club administrator.
@@ -177,7 +188,7 @@ gap was carried as risk 9. `ProducerMembership.is_primary` is now a column, read
 
 Not granting it to administrators is deliberate and unchanged: creating accounts for other people is
 the one thing on this platform that should have exactly one route. An administrator who has to fix a
-placeholder does it in the Django admin.
+sharing member’s record does it in the Django admin.
 
 The service asks for the **permission**, never for a relationship. So a superuser works, and any
 future grant works, without `register_sharing_member` changing. Authority is gated on status for
@@ -228,10 +239,12 @@ Nobody decided that cultivators may buy; it became possible for one human being 
 cultivator and a member, which is what the club meant all along. **Risk 2 is closed.**
 
 One thing the old rule did that nothing now does: a person could not be a member and a sharing
-member at once, because one identity document meant one account. Under C6 a placeholder is not a
-person and holds no identity document, so the question no longer arises. Converting a placeholder
-into a member is not a conversion at all — a joining member is a new account, and the placeholder is
-a record the club made.
+member at once, because one identity document meant one account. **The reversal of C6 puts that
+question back**, and it is now the harder version of itself — a sharing member is a person, holds an
+identity document, and has already spent their four-plant allowance before they ever apply to join.
+It is carried as **C34** and it is open. The likely answer is an upgrade of the same account rather
+than a second one, which is what many relationships per person makes possible and the column never
+did.
 
 ## 6. The permission catalogue
 
@@ -308,15 +321,15 @@ stock:
 | `platform.manage_own_strain_listings` | CRUD the producer's own strain listings |
 | `platform.respond_to_reviews` | View and respond to reviews and ratings |
 | `platform.request_catalogue_addition` | Ask an administrator to list a new strain or product type |
-| `platform.allocate_sharing_member_stock` | Allocate flowering plants to a placeholder |
+| `platform.allocate_sharing_member_stock` | Allocate flowering plants to a sharing member |
 
 `PRODUCER_PRIMARY_PERMISSIONS` — the primary appointment alone:
 
 | Action | What it permits |
 | --- | --- |
 | `platform.appoint_cultivator_staff` | Appoint other people to this producer, with full or limited rights |
-| `platform.register_sharing_member` | Create a sharing-member placeholder |
-| `platform.manage_sharing_members` | Read, update and withdraw this producer's placeholders |
+| `platform.register_sharing_member` | Register a sharing member |
+| `platform.manage_sharing_members` | Read, update and withdraw this producer's sharing members |
 
 The primary holds all three sets. Being the primary is *more than* full rights, not an alternative
 to them.
@@ -337,13 +350,17 @@ to them.
 | `platform.query_orders` | Query an order |
 | `platform.submit_support_request` | Raise a support request |
 
-### 6.5 A placeholder holds nothing
+### 6.5 A sharing member holds nothing
 
 There is no set for a sharing member and no key naming one. Under the role column there was an
 empty `SHARING_MEMBER_ACTIONS` dictionary and a `ROLES_WITHOUT_PERMISSIONS` guard, so that an empty
-role could not be confused with a mistake. Neither is needed now: a placeholder holds nothing
-because it has no active membership and no appointment, which is the ordinary answer for any account
-with no relationships rather than a special case.
+role could not be confused with a mistake. Neither is needed now: a sharing member holds nothing
+because they have no active membership and no appointment, which is the ordinary answer for any
+account with no relationships rather than a special case.
+
+**The read-only login deferred by C6 is the one thing that will change this**, and it changes it by
+the smallest possible amount: the right to see the plants you own, and nothing that moves a plant or
+spends money — C33.
 
 ### 6.6 Two rules that are deliberately not permissions
 
@@ -516,8 +533,9 @@ and a subscription with no member is a mandate against nobody, so either all fou
 
 `register_sharing_member` lives in `accounts`, not in `membership`, and the distinction is not
 cosmetic. `membership` exists because turning a submission into a member spans `accounts` and
-`documents`, which must not know about each other; creating a placeholder spans nothing, and a
-placeholder is not a membership in any sense but the table it is stored in.
+`documents`, which must not know about each other; registering a sharing member spans neither, and a
+sharing member is not a membership in any sense but the table it is stored in — no subscription, no
+payment, no agreements.
 
 A registered member holds a membership row and **no permissions at all** until a payment activates
 it. Both halves are tested, because a row in the table and authority in the hand are different
@@ -540,7 +558,7 @@ cultivators" is now a question about `ProducerMembership`, answered on that page
 somebody to a producer or to a storefront is not, and a bulk action that hands out authority over
 other members' records is a mis-click with consequences.
 
-**Activate skips placeholders and says so.** The bulk activate action already skipped erased
+**Activate skips sharing members and says so.** The bulk activate action already skipped erased
 accounts; a `NON_AUTHENTICATING` row lands in the same bucket, and the message names both reasons
 rather than reporting the wrong one.
 
@@ -603,8 +621,9 @@ govern is not.
 | An admin for the three relationship tables | `ClubMembership`, `StorefrontStaff` and `ProducerMembership` are not registered. Until they are, the only routes are the shell and the services |
 | The nickname in the Django admin | It moved to `ClubMembership` and the accounts page lost the field. It comes back with the membership admin above |
 | Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action yet. The mechanism is tested directly instead |
-| What a placeholder holds in the swap zone | Deferred to the swap zone by decision — C6 settled what a placeholder *is*, not what it does |
-| Any endpoint for creating a placeholder | `register_sharing_member` is reachable from the shell only. It authorises its own caller, so it is the right shape to put a router in front of |
+| What a sharing member holds in the swap zone | Four flowering plants against their own allowance — C7. Enforcement is C15, and it counts plants per member without asking what kind of member |
+| Any endpoint for registering a sharing member | `register_sharing_member` is reachable from the shell only. It authorises its own caller, so it is the right shape to put a router in front of |
+| The sharing member read-only login | Specified by C6, deliberately not built at launch. It costs the same whenever it is built, while the identity columns beside it do not |
 | The market's administrator actions | `MARKET_ADMINISTRATOR_PERMISSIONS` is empty until the market vertical exists |
 
 ## 14. Risks
@@ -614,10 +633,10 @@ govern is not.
 | 1 | ~~`role` and `is_staff` are independent, so privilege is granted in two places and they can disagree.~~ | **Closed by C28 and C29.** There is no role column. `is_staff` and a `StorefrontStaff` row remain two grants, made in the same admin, which is intended — section 9 |
 | 2 | ~~One role per account means a cultivator cannot buy or swap. Anyone who does both needs a second account.~~ | **Closed by C28.** Verified: an administrator who also holds a membership resolves to the exact union of both sets. No set was widened to achieve it |
 | 3 | ~~The role-to-group mirror is best-effort and drifts.~~ | **Closed.** The groups are gone with the column — section 4, and `migrations.md` §3.3 |
-| 4 | ~~A refused sharing-member registration tells the cultivator that the identity number is known to the club.~~ | **Closed by C6.** No identity number is collected, so there is nothing to collide with and nothing to disclose — section 3.4 |
-| 5 | ~~The consent attestation is a cultivator's word, not the sharing member's own act, and would carry less weight with the Information Regulator.~~ | **Closed by C6.** There is no attestation, because there is nobody to consent |
-| 6 | ~~Nothing re-attests when the attestation wording changes.~~ | **Closed by C6**, with risk 5 |
-| 7 | A cultivator creates `User` rows. It is the only non-administrator route to an account on the platform. | **Narrowed, still accepted.** It no longer captures a third party's identity number — the row holds a nickname and nothing else. It remains why `register_sharing_member` authorises on a permission and records who created it |
+| 4 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. | **Reopened by the reversal of C6**, having been closed on the placeholder reading. Accepted and unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. The refusal names no record, role or other cultivator — section 3.4, and C34 for the case that makes it sting |
+| 5 | The consent attestation is a cultivator's word, not the sharing member's own act, and would carry less weight with the Information Regulator. | **Reopened by the reversal of C6**, and widened: under C33 the attestation also evidences the mandate to offer that person's plants, so the wording covers two facts rather than one. Wants legal review. The read-only login is what eventually closes it — a person who signs in can consent for themselves. R-C7.4 |
+| 6 | Nothing re-attests when the attestation wording changes. | **Reopened with risk 5.** `sharing_consent_version` records which wording was sworn, which makes a stale attestation findable; nothing yet re-asks |
+| 7 | A cultivator creates `User` rows for other people, capturing their names and identity numbers. It is the only non-administrator route to an account on the platform. | **Accepted, at full width again after the reversal of C6.** It is why `register_sharing_member` authorises on a permission rather than a relationship, checks the caller against *this* producer, and records who created the row |
 | 8 | The catalogue names actions against models that do not exist. Codenames may not survive contact with the real models, and a renamed codename is a silent loss of authority rather than an error. | **Accepted, and partly mitigated in practice.** The frontend contract test caught two stale codenames the moment C29 removed them, which is the failure mode working as intended in the one direction it can |
 | 9 | ~~`platform.appoint_cultivator_staff` is a role-level codename for an object-level rule, so it goes to every cultivator rather than the primary.~~ | **Closed by C28.** It is granted from `ProducerMembership.is_primary`. C13's remaining half is per-record scoping, which is work rather than a design question |
 | 10 | `permissions` in `UserOut` is a rendering hint that looks like an authorisation decision. A future endpoint that trusts it instead of checking server-side would be an authorisation bypass that tests could pass. | Open — mitigated by documentation in three places; wants a lint or a review habit |

@@ -29,7 +29,7 @@ not multi-tenancy.
 | Who sells | Cultivator organisations | Farming organisations |
 | Revenue | Membership subscription, plus a split on each plant order | A split on each produce order |
 | After the sale | The member owns the plant while a cultivator grows it, may swap it, and takes delivery of a finished product at harvest | It is picked, packed and delivered |
-| Regulatory load | Statutory plant ceiling, copy compliance, age gate, a legal opinion still outstanding on the swap zone — **C7** | Ordinary consumer trade. VAT treatment differs by line: most fresh produce is zero-rated, a club subscription is not |
+| Regulatory load | Statutory plant ceiling, copy compliance, age gate, and a swap model carried as assessed residual risk rather than a gate — **C7** | Ordinary consumer trade. VAT treatment differs by line: most fresh produce is zero-rated, a club subscription is not |
 | Status | Partly built — see `plan.md` section 2 | Nothing built |
 
 The categories the market carries are the ones C3 recorded and planned for nothing: biltong, fruit,
@@ -153,17 +153,28 @@ session-authenticated, about `request.user` alone, taking no member identifier. 
 there was no second way in because there was no second way to arrive: an unpaid member could not
 sign in at all.
 
-**And one open question was closed while this was being built. C6: a sharing member is a
-placeholder, not a person.** The old `UserStatus.SHARING` became `NON_AUTHENTICATING`, named for
+**And one open question was closed while this was being built — then reopened. C6: a sharing member
+is a placeholder, not a person.** The old `UserStatus.SHARING` became `NON_AUTHENTICATING`, named for
 the fact the authentication stack needs — this identity holds records and signs in nobody — rather
 than for the club concept on top of it. The POPIA consent attestation went out of the schema
 entirely, because a placeholder consents to nothing.
 
-That deletion was taken now rather than with the swap zone for one reason: C6's own recommendation
-is that unwinding "real people" after launch means a migration that deletes stored identity numbers,
-and Block 0.5 is the one moment when there is no data to migrate. **C7 is changed by this and not
-resolved** — the club now holds the stock itself rather than allocating it to named adults, which is
-a different legal question, not the absence of one.
+That deletion was taken now rather than with the swap zone for one reason: C6's own recommendation is
+that unwinding "real people" after launch means a migration that deletes stored identity numbers, and
+Block 0.5 is the one moment when there is no data to migrate.
+
+**C6 has since been reversed.** A sharing member is a real person who does not transact, their four
+flowering plants consume their own statutory allowance, and a read-only login is specified and
+deferred — the "no login" in the brief was a cost control against a per-user licence on the platform
+this one replaces, not a definition. The attestation, the identity number, the age rule and the
+erasure exemption all come back, and they come back on the same argument that took them out: the
+schema is free to change only while there is nothing to migrate. `NON_AUTHENTICATING` survives
+unchanged, which is what naming a status for the fact rather than the concept buys.
+
+**C7 is decided by the reversal rather than reopened by it.** The swap model is in use by other clubs
+and treated as defendable, so the swap zone is no longer gated on a legal opinion. What is carried
+instead is a named list of residual risks — chiefly the proxy leg, where a cultivator offers plants
+on behalf of a person who never paid for them and never transacts (C33).
 
 ---
 
@@ -508,7 +519,7 @@ here as **risk 3** so that it stays a decision rather than becoming a discovery.
 | 4 | **Market** — produce types, units, stock, delivery | The shorter of the two verticals |
 | 5 | **Club** — plant, batch, ownership, harvest, fulfilment | The old Blocks 3 and 6 |
 | 6 | Notifications, administration portal, support | The old Blocks 8, 9 and 11 |
-| 7 | Swap zone, plant subscriptions, reporting | The old Blocks 10 and 12. Still gated on **C7** |
+| 7 | Swap zone, plant subscriptions, reporting | The old Blocks 10 and 12. **Ungated** — C7 decided as residual risk |
 
 **The market is the shorter path to a transacting platform.** No ownership chain, no swap zone, no
 statutory ceiling, no age gate, no copy-compliance corpus and no outstanding legal opinion. It

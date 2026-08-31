@@ -406,8 +406,13 @@ verifies it.
 - [x] **`UserStatus.SHARING` became `NON_AUTHENTICATING`**, named for the fact the auth stack needs
       rather than the club concept — **C6** is now decided and the name still holds
 
-**C6 is decided: a sharing member is a placeholder, not a person.** Acted on here rather than
+**C6 was decided: a sharing member is a placeholder, not a person.** Acted on here rather than
 deferred, because the deletion is free exactly once — see C6 and `verticals.md` §5.
+
+> **Superseded.** C6 has since been **reversed**: a sharing member is a real person who does not
+> transact. Everything ticked below was done, and now has to be undone. The list is kept because the
+> work is real history and the restoration list points at it. See *C6 reversed* immediately after
+> this block.
 
 - [x] Drop `sharing_consent_attested_by`, `_at` and `_version` from `ClubMembership`
 - [x] `sharing_member_is_complete` becomes `sharing_member_has_a_cultivator` — orphaned stock was
@@ -417,6 +422,47 @@ deferred, because the deletion is free exactly once — see C6 and `verticals.md
 - [x] `accounts.services.register_sharing_member` stops collecting an identity number and stops
       validating the age rule. Done under *Retire the role column* — the signature is now
       `(*, actor, producer, nickname)` and nothing else
+
+### C6 reversed — restore the person. **Not started, and the window is open**
+
+**The decision above was reversed on 31 August 2026.** A sharing member is a real person who does not
+transact: name, identity number, nickname, an attestation by the cultivator, and — later — a
+read-only login. The "no login" in `member-roles.md` was a cost control against a per-user licence on
+the platform this one replaces, not a definition. See **C6**, and **C33** for who transacts on their
+behalf.
+
+**Do this while the database is still disposable.** The argument that made the deletion free — one
+`0001_initial` per app and nothing to migrate — is the same argument that makes the restoration free,
+and it expires the moment real sharing members exist. The read-only login does *not* expire that way
+and is deliberately not in this list.
+
+- [ ] `ClubMembership` regains `sharing_consent_attested_by`, `sharing_consent_attested_at` and
+      `sharing_consent_version`, edited into `0001_initial` rather than added by a migration
+- [ ] `sharing_member_has_a_cultivator` becomes `sharing_member_is_complete` again — the cultivator,
+      the attestation and a nickname, with erased rows exempt
+- [ ] `erased_at` and the erasure exemption come back. A sharing member is a data subject
+- [ ] `accounts.services.register_sharing_member` takes `(*, actor, producer, first_name, last_name,
+      id_number, nickname, attested_version)`. It validates the identity number, applies the same
+      eighteen-year rule as sign-up, and refuses a duplicate in words that name no record
+- [ ] `IdentityNumberUnavailable` becomes reachable again — it is defined and dead today
+- [ ] `MembershipStatus.SHARING`'s label stops saying "no sign-in" as though it were permanent
+- [ ] The attestation wording covers **two** facts, not one: the POPIA basis for holding the identity
+      number, *and* the mandate for the cultivator to offer that person's plants — C33. Version it
+- [ ] `accounts/tests/test_sharing_members.py` — `AbsenceTests` asserted the removals and must invert.
+      Restore the tests deleted with C6: the attestation without which nothing is written, the age
+      rule, the vague refusal, erasure
+- [ ] `membership`'s `sharing_member` fixture takes a person again
+- [ ] The Django admin sharing-member panel regains the attestation fields, write-only identity number
+      included
+- [ ] `frontend/club/components/Admin/MemberForm.tsx` — check what it collects for a sharing member
+- [ ] Module and model docstrings across `accounts/services.py` and `membership/models.py` currently
+      argue for the placeholder at length. They argue the wrong case now
+
+**Deferred by decision, not forgotten:** the read-only login — sign in, see the plants you own, and
+nothing that moves a plant or spends money. It costs the same whenever it is built. When it lands,
+the account moves to `ACTIVE`, `UserStatus.NON_AUTHENTICATING` needs no renaming, and risk 5 closes
+because the person can consent for themselves.
+
 
 **The call sites — done.** Roughly 200 references to `nickname`, `UserStatus.PENDING`,
 `UserStatus.PENDING_PAYMENT`, `UserStatus.SHARING`, `registered_by` and `sharing_consent_*`.
@@ -469,7 +515,8 @@ outside one docstring naming the call it replaced.
       somebody may do, and the two can legitimately disagree
 - [x] `register_sharing_member` rewritten for **C6**: no names, no identity number, no age rule, no
       attestation. A nickname and the cultivator, written as a `User` at `NON_AUTHENTICATING` plus a
-      `ClubMembership` at `SHARING`, in one transaction
+      `ClubMembership` at `SHARING`, in one transaction. **C6 is since reversed — this is undone by
+      *C6 reversed — restore the person*
 - [x] Call sites: `strains/admin.py`, `strains/services.py`, `plant/.../_cultivator.py`,
       `membership/administration.py`, `membership/schemas.py`, `membership/services.py`,
       `accounts/{admin,forms,profile,schemas,services}.py`. `User.objects.producers()` replaces
@@ -722,7 +769,8 @@ end up differing in a way nobody intended, in exactly the suites that exist to c
 - [x] `payments`' `assertStillPendingPayment` now asserts on the **membership**. Checking the
       account would have passed trivially — it is Active from the moment it exists — so the
       assertion could no longer have failed
-- [x] `membership`'s `sharing_member` fixture reduced to a nickname and a producer, per **C6**
+- [x] `membership`'s `sharing_member` fixture reduced to a nickname and a producer, per **C6**.
+      **Reversed — the fixture takes a person again**
 
 **The suite found a second real bug, of the same family as the first.** `User.get_short_name()`
 returned the club nickname, which since C27 lives one table away — and both callers are wrong to
@@ -1010,10 +1058,10 @@ and still built after the models it scopes.
   - [ ] A member's own inventory
   - [x] Primary versus appointed staff — the `role` column on the appointment, read in
         `permissions_for`
-- [x] Sharing member registration — `accounts.services.register_sharing_member`. **Without the POPIA
-      attestation, and that is the point**: C6 made a sharing member a placeholder, and an
-      attestation that a placeholder had consented was a ceremony around a fiction. The signature is
-      `(*, actor, producer, nickname)` and nothing else
+- [~] Sharing member registration — `accounts.services.register_sharing_member`. Built **without the
+      POPIA attestation** under the superseded reading of C6. **The reversal puts it back**, widened
+      to evidence the cultivator's mandate as well as the POPIA basis — C33. The signature
+      `(*, actor, producer, nickname)` is not the final one
 - [ ] An endpoint for registering a sharing member. The service authorises its own caller **including
       the object-level half**, so it is already the right shape to put a router in front of.
       Reachable from the admin and the shell only
@@ -1206,9 +1254,16 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] Harvest notification to the owner to finalise the transaction — needs Block 8
 - [ ] Member chooses the finished product type at harvest — `product-types`
 - [ ] **Delivery address model.** Does not exist. Members need to manage several — `drawio`
-- [ ] Member confirms the delivery address at harvest
-- [!] Courier booking and fee. `harvest` says the member books and pays; `product-types` says nothing
-      is due. Recommendation is to fold the courier cost into the grow price — **C8**
+- [ ] Member confirms the delivery address at harvest. Months can pass between order and harvest,
+      so the address is confirmed here rather than reused from the order — **C8**
+- [ ] **Nothing is payable at harvest.** The finalisation screen takes no money: courier sits inside
+      the price paid at order and the launch product types carry no manufacturing charge — **C8**
+- [ ] Courier booking against **Pargo**, triggered by the confirmation. The booking happens here; the
+      fee does not — it is separated out at settlement and remitted — **C8**, **C10**
+- [ ] **Confirmation makes ownership final and removes the plant from the swap zone.** A plant is
+      swappable up to harvest and not after — **C8**, and a constraint on Block 10
+- [ ] Build the finalisation as a zero-total transaction with its own status, not as a form writing
+      two fields. A priced product type puts a real charge on this screen — **C35**
 - [ ] Plants for processing — confirmed product type and address, awaiting confirmation — `drawio`
 - [ ] Ready for collection
 - [ ] Delivered, proofs of delivery, delivery tracking, escalations — `drawio`
@@ -1222,6 +1277,12 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [!] What a cultivator sees of a member on a packing label. Members are concealed behind a nickname,
       and a packing label carries a name and an address. Recommendation: nickname, serials and a
       waybill number, with the club as shipper of record — **C19**
+- [!] What happens when the owner never confirms. Harvest to delivery is the longest silence in
+      the journey and nothing ships without an address, so the plant sits in a cultivator's
+      storage. Reminders then default, reminders then administrator escalation, or an
+      indefinite hold — three different products. Answer before specifying this block — **C8**
+- [!] How a priced finished product type is paid for. Not in the MVP, but it lands on this
+      screen the moment oil or gummies are listed — **C35**
 
 ---
 
@@ -1357,14 +1418,26 @@ registration, or already done by the Django admin that exists.
 
 ## Block 10 — Swap zone
 
-**Gated on C7. Do not start without a legal opinion.**
+**No longer gated.** C7 is decided as residual risk: the swap model is in use by other clubs and
+treated as defendable, and a sharing member's four flowering plants consume their own statutory
+allowance. A legal opinion is still worth having on the proxy leg and on where the plants physically
+sit (R-C7.1, R-C7.2), and it blocks nothing.
+
+**Two prerequisites arrived with that answer.** The four-flowering-plant holding check is now a
+statutory ceiling rather than a convention, so it is a precondition of this block rather than a rule
+inside it. And it must count plants per member **without branching on what kind of member** — C33
+requires this role to be droppable once the platform has momentum, and a branch on owner type is
+exactly what would have to be deleted to drop it.
 
 - [ ] Swap zone listing. **No Rand values anywhere in it** — `swap-zone`
 - [ ] Leaf rating displayed on every plant in the zone
 - [ ] An explanation of how the leaf rating works — `drawio`, member story
 - [ ] Sharing-member stock seeds the zone. Four flowering plants per sharing member —
-      `platform.allocate_sharing_member_stock`. `SHARING_MEMBER_PLANT_ALLOCATION` is `4` and is
-      enforced nowhere, because there is no plant to count
+      `platform.allocate_sharing_member_stock`. `SHARING_MEMBER_PLANT_ALLOCATION` is `4`, it is the
+      person's own statutory ceiling (C7), and it is enforced nowhere yet
+- [ ] The cultivator offers and swaps a sharing member's plants; the sharing member does neither —
+      **C33**. When the read-only login lands, revisit: a person who signs in can withdraw their own
+      plant, which is most of R-C7.1 gone
 - [ ] Instant swaps against sharing-member plants
 - [ ] Confirmed swaps against member plants — the member story draws this distinction already
 - [ ] Members offer their own plants, and withdraw them again —
@@ -1376,28 +1449,35 @@ registration, or already done by the Django admin that exists.
 - [ ] Prompt a member to trade a flowering plant for a pre-flowering one before refusing —
       `stock-holding-limit`
 - [ ] Refuse any swap that would leave a member overstocked
-- [ ] No swapping after harvest for paying members — `harvest`
+- [ ] No swapping after harvest for paying members — `harvest`. The trigger is the owner's harvest
+      confirmation: confirming product type and address makes ownership final and takes the plant out
+      of the zone — **C8**
 - [ ] A sharing member's harvested item may sit in the zone; a member swapping for it locks in and
-      receives the harvested plant — `harvest`
+      receives the harvested plant — `harvest`. Not an exception to the line above: sharing-member
+      stock has no confirming owner (**C33**), so the swap comes first and the new owner confirms
+      afterwards — **C8**
 - [ ] Swap audit trail, and ownership history through every swap
 - [ ] Administrator oversight: manage plants in the zone, handle disputes, moderate listings
 
 ### Open before this block starts
 
-- [x] Is a sharing member a real person or a placeholder? **Decided and built in Block 0.5: a
-      placeholder.** The identity number, the age rule and the POPIA attestation are gone, and the
-      fixture is a nickname and a producer — **C6**
-- [ ] **Everything about how a placeholder behaves in this zone was deferred here, by decision.** It
-      has no personal data, no erasure path and no statutory allowance of its own, so every rule
-      above that reads *sharing member* needs restating against a placeholder before it can be
-      built. `sharing_member_is_complete` became `sharing_member_has_a_cultivator` for the same
-      reason — orphaned stock was always the real failure, and this block is where it tightens
-      against a defined feature
-- [!] Is the scheme lawful — does allocating four flowering plants consume that person's own
+- [x] Is a sharing member a real person or a placeholder? **Decided as a placeholder, built, then
+      reversed: a real person who does not transact** — **C6**. The identity number, the age rule and
+      the POPIA attestation come back; the read-only login is specified and deferred. The restoration
+      list is *C6 reversed — restore the person*, in Block 0.5
+- [x] **What a sharing member is, and what they hold here.** Deferred here under the placeholder
+      reading and answered by the reversal instead: a real person, four flowering plants against
+      their own allowance, offered on their behalf by the cultivator — C6, C7, C33. The rules above
+      that read *sharing member* mean a person, and need no restating
+- [ ] **C34 is the one this block should not discover for itself**: a sharing member who wants to
+      join the club properly is refused at sign-up by their own record, and their allowance is
+      already spent. Open, and cheap while sharing members are few
+- [x] Is the scheme lawful — does allocating four flowering plants consume that person's own
       statutory allowance, where are the plants physically, and is a swap a sale in substance?
-      **Legal opinion** — **C7**. **Changed by Block 0.5, not resolved by it**: under C6 the club
-      holds the stock itself rather than allocating it to named adults, so the opinion is still
-      required and still gates this block — on a different brief
+      **Decided as residual risk — C7.** Yes to the first, which makes C15 a prerequisite. The second
+      is argued on private cultivation plus ownership attaching at flowering, and carried as R-C7.2.
+      The third is a swap: the model is in use by other clubs and defendable, mitigated by keeping
+      the leaf rating a rounding of a disclosed price and moving **no money in the zone**
 - [!] Does a harvested plant count toward the four? `harvest` permits a swap the holding rule might
       refuse. Recommendation: count only preflowering and in bloom — **C16**
 - [!] Equal-value matching versus maturity. Leaf rating derives from grow price alone, so a plant
@@ -1480,7 +1560,8 @@ Recorded so that this list is a complete picture rather than only the remainder.
       the session payload. **No role column** — it was four values under a check constraint and C28
       retired it; authority now resolves from the three relationship tables
 - [x] Sharing member registration as a **placeholder** — a nickname and a producer. No identity
-      number, no age rule and no POPIA attestation: C6 decided a sharing member is not a person
+      number, no age rule and no POPIA attestation: C6 decided a sharing member is not a person.
+      **C6 has since been reversed** and this has to be undone — *C6 reversed — restore the person*
 - [x] Member, cultivator and administrator home pages rendering from `permissions`, never from `role`
 - [x] Member profile: name, nickname, mobile; avatar upload, crop and delete
 - [x] Club document publication, versioning and consent ledger

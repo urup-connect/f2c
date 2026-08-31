@@ -19,10 +19,15 @@ intent, not a defect report — unless it is marked otherwise below.
 | **Decided** | Ruled on. The decision and its reason are recorded; `plan.md` and `todo.md` reflect it |
 | **Open** | Needs a product decision before the work it touches can be specified. Blocks the item named |
 | **Drift** | Not a real disagreement — a design document has fallen behind the code. Fixed by editing the document |
-| **Legal** | Needs an opinion from outside this project before it can be built either way |
+| **Legal** | Needs an opinion from outside this project before it can be built either way. **Nothing carries this status now** — C7 was the only one, and it is decided as residual risk |
 
 Conflicts are numbered and kept. A resolved one is marked resolved rather than deleted, because the
 rejected reading is usually the more useful half.
+
+**A decision can be reversed, and one has been.** C6 was decided, acted on, and then reversed when
+the product owner supplied information the register did not have. The superseded reading stays in
+the entry alongside the new one — a decision that was wrong for a stated reason is worth more than a
+clean entry, because the reason is usually still live somewhere else.
 
 ---
 
@@ -160,7 +165,8 @@ rather than moving, so the reasoning that made it open is still next to the answ
 
 ### C6 — What a sharing member actually is
 
-**Status: Decided — a placeholder, not a person. The mechanics are deferred to the swap zone.**
+**Status: Decided, reversed 31 August 2026. A sharing member is a real person who does not transact.
+The identity machinery comes back. The login is specified now and built later.**
 
 `twp-tasks/member-roles.md` says two things that do not sit together:
 
@@ -169,100 +175,166 @@ rather than moving, so the reasoning that made it open is still next to the answ
 > Sharing member is actually not a role, no login. They are essentially **placeholders** to keep
 > stock that is already in flower.
 
-The build takes the first sentence literally: a sharing member is a real person, a `User` row with
-an encrypted identity number, registered under a cultivator's POPIA attestation
-(`features/roles-and-permissions.md` section 3.3), and covered by the one-account-per-identity-document
-rule.
+The first pass read the second sentence as the definition and decided the placeholder. That reading
+is now withdrawn.
 
-If they are placeholders, almost none of that is needed, and the attestation machinery is ceremony
-around a fiction. If they are real people, the machinery is right and C7 is a live legal question.
+#### Why it was wrong
 
-| | Real people | Placeholders |
+The product owner's position, given after the placeholder decision was taken and acted on:
+
+- A sharing member **is a real person**. They simply do not transact on the platform.
+- They should **probably have a login** to view their plants. The role was written as a placeholder
+  because Glide charged per user; **that constraint no longer applies.**
+- Legally they **have some form of access and control over what they own**.
+- Their plants **consume that person's own statutory allowance**.
+
+The load-bearing sentence is the second one. "No login" was never a statement about what a sharing
+member *is* — it was a cost control against a per-user licence on a platform that has since been
+replaced. The placeholder decision inferred a product intention from a pricing artefact, and once
+the pricing went, the sentence stopped meaning what it appeared to mean. "Name, ID and nickname" —
+the sentence that reads as an accident of drafting next to it — was the definition all along.
+
+#### The decision, against the table that framed it
+
+| | **Decided: real person** | Superseded: placeholder |
 | --- | --- | --- |
 | Identity number | Required, encrypted, POPIA-relevant | Not collected |
 | Attestation | Necessary and load-bearing | Meaningless |
-| One account per ID | Applies, and leaks (roles risk 4) | Does not apply |
-| Four-plant allocation | Consumes that person's legal allowance | Consumes nobody's |
-| Legal exposure | Real — see C7 | The club holds the stock itself, which is its own problem |
+| One account per ID | Applies, and leaks — risk 4 reopens | Does not apply |
+| Four-plant allocation | Consumes that person's legal allowance — **confirmed**, see C7 | Consumes nobody's |
+| Sign-in | Read-only, deferred — see below | Never |
+| Legal exposure | Real, and now assessed — C7 | The club holds the stock itself |
 
-**Recommendation.** Decide before any swap-zone work starts. The build has already committed to
-"real people", and unwinding it later means a migration that deletes identity numbers.
+#### What comes back into the schema
 
-**Decision — the right-hand column.** A sharing member is a placeholder that exists so flowering
-stock can be put into the swap zone. It is not a person, collects no identity number, and consents
-to nothing.
+Everything Block 0.5 removed on the strength of the superseded reading, in
+`membership.ClubMembership` unless noted:
 
-**Taken now rather than with the swap zone, and the timing is the point.** The recommendation above
-warns that unwinding "real people" later means a migration that deletes stored identity numbers.
-That cost does not exist today — Block 0.5 dropped the database and cleared every migration — and it
-returns the moment the attestation columns are written into the new initial schema. Deleting them
-was free exactly once. Adding columns back to a defined feature is ordinary work.
+- `sharing_consent_attested_by`, `sharing_consent_attested_at`, `sharing_consent_version`. A
+  cultivator captures a third party's identity number, so POPIA needs a lawful basis the person did
+  not give on a form. It is an attestation rather than a consent because it is weaker evidence than
+  the person's own act, and the naming is what stops the two being confused later.
+- The age rule read off the identity document. Eighteen, the same rule as sign-up.
+- The identity number, collected by `accounts.services.register_sharing_member` again. The column
+  never left `User` — C27 — so this is a service change, not a schema one.
+- The erasure route and the `erased_at` exemption. A real person has personal data and a right to
+  have it erased, and the erasure route must never be the thing the database refuses.
+- `sharing_member_is_complete`, requiring the registering cultivator, the attestation and a
+  nickname, with erased rows exempt. It replaces `sharing_member_has_a_cultivator`, which required
+  only the cultivator.
 
-What went, in `membership.ClubMembership`:
+#### What is new, and was in neither column
 
-- `sharing_consent_attested_by`, `sharing_consent_attested_at` and `sharing_consent_version`. A
-  placeholder consents to nothing and is given no collection notice, so an attestation over one
-  recorded a ceremony around a fiction.
-- The `sharing_member_is_complete` constraint, which required the attestation and a nickname, is now
-  `sharing_member_has_a_cultivator` and requires only the cultivator whose stock it holds. Orphaned
-  stock was always the real failure; the rest belongs to the swap zone and can be tightened there.
-- The erasure exemption, and the `erased_at` column that carried it. A placeholder has no personal
-  data to erase, so the whole interaction disappears.
-- The identity number is no longer collected. The column stays on `User` for the people who do need
-  one — C27 — and `accounts.services.register_sharing_member` stops asking for it.
+**A login.** Read-only: the sharing member signs in, sees the plants they own and their status, and
+does nothing else. No cart, no swap action, no subscription, no payment method. This is the "access
+and control of what they own" point, and it is the half of the reversal that has no precedent in
+either of the original readings.
 
-What stays: `registered_by`, naming the cultivator the placeholder was created under, and the
-nickname the swap zone displays. `UserStatus.NON_AUTHENTICATING` also stays, named for the fact
-rather than the concept.
+**It is specified now and built later.** The two halves have very different costs and very different
+deadlines:
 
-**What is deferred, deliberately.** Everything about how a placeholder behaves in the swap zone:
-whether it holds plants directly or by allocation, how many, who may move stock on and off it,
-whether it appears to members at all. That is the swap zone's to define and it is not guessed at
-here. See risk 4 below.
+- The identity and consent machinery is **cheap now and expensive later**. The argument that carried
+  the placeholder decision — Block 0.5 dropped the database and cleared every migration, so the
+  deletion was free exactly once — runs identically in reverse. Adding these columns to an empty
+  schema is an edit to `0001_initial`. Adding them once real sharing members exist is a migration
+  plus a backfill of data nobody collected at the time.
+- The login is **the same cost whenever it is built**. It is an authentication path, a screen and a
+  permission set, and none of that gets harder for waiting.
 
-**Risk 4 — the four-plant allocation now belongs to nobody.** Under "real people" a placeholder
-consumed a named adult's statutory allowance. Under this decision the club holds the stock itself,
-which is a different legal exposure rather than none — see C7, which this decision changes and does
-not resolve.
+So: restore the person, keep the account non-authenticating for launch, and turn sign-in on as its
+own piece of work. A sharing member registered in the interim is a complete record with an
+attestation and an identity number — the person can be given access later without anyone having to
+go back and ask them for anything.
+
+`UserStatus.NON_AUTHENTICATING` survives the reversal unchanged, and the reason it does is the reason
+it was named that way: it describes what the authentication stack needs to know — this row signs in
+nobody — rather than the club concept sitting on top of it. When the login is built, a sharing member
+moves to `ACTIVE` and the status column needs neither renaming nor a new value.
+
+#### What the build says today, and now contradicts this decision
+
+Changed under the superseded reading and not yet changed back. This pass is documents only; none of
+it is touched.
+
+| Where | What it says |
+| --- | --- |
+| `app/core/accounts/services.py` | Module docstring and `register_sharing_member` both state a sharing member is not a person. Takes `nickname` only — no names, no identity number, no age check, no attestation |
+| `app/core/accounts/services.py` | `IdentityNumberUnavailable` is defined and unreachable — nothing collects an identity number to collide with |
+| `app/club/membership/models.py` | `sharing_member_has_a_cultivator` constraint; the attestation columns are absent; `MembershipStatus.SHARING` is labelled "Sharing member (no sign-in)" |
+| `app/core/accounts/tests/test_sharing_members.py` | `AbsenceTests` asserts the removals — it will fail on the restoration, which is what it is for |
+| `design/features/roles-and-permissions.md` §3.1–3.5 | Records the placeholder decision as settled, and closes risks 4, 5 and 6 on the strength of it |
+| `design/backend.md` §3.6 | Describes the *pre*-C6 build and is therefore closer to this decision than the code is — but names `UserStatus.SHARING` and `sharing_member_never_signs_in`, which no longer exist |
+
+`SHARING_MEMBER_PLANT_ALLOCATION = 4` needs no change and is a stronger rule than it was: under the
+placeholder it was a convention with no obvious owner, and it is now a statutory ceiling attaching to
+a named adult. Enforcing it is C15.
+
+#### What this does not decide
+
+Who may move a sharing member's stock, and on whose authority — **C33**. Whether a sharing member may
+also hold a full membership — **C34**. Both were raised by this reversal and neither is answered here.
 
 ### C7 — Whether the sharing member scheme is lawful as described
 
-**Changed by C6, not resolved.** The question was whether allocating four flowering plants to a
-named adult who never consented is lawful, and whether a swap is a sale in substance. With the
-placeholder decision the first half becomes a different question: nobody is being allocated
-anything, and the club is holding the stock itself, above whatever ceiling applies to it. The legal
-opinion is still required and the swap zone is still gated on it — the brief for that opinion just
-changed.
-
-**Status: Legal. Blocks the swap zone.**
+**Status: Decided — residual risk. No longer blocks the swap zone.**
 
 `twp-tasks/stock-holding-limit.md` sets out the Cannabis for Private Purposes Act position: four
 flowering plants per adult in a private place, strictly for personal use, and **selling cannabis
 remains illegal**.
 
-The sharing-member scheme has a cultivator allocate four flowering plants to a named adult so those
-plants appear in the swap zone. Three questions follow, none of them a software question:
+The product owner's position, on which this is decided:
 
-1. Does allocating four flowering plants to a person consume that person's own statutory allowance,
-   such that they may hold nothing else?
-2. Where are those plants physically? The Act's limit attaches to cultivation in a private place. If
-   the plants are on the cultivator's premises, the sharing member is not cultivating them.
-3. Does a member giving up a plant and receiving a flowering plant in return constitute a swap, or a
-   sale in substance? The platform charges a grow price in Rands at purchase, and the swap zone
-   deliberately hides Rands behind leaf ratings.
+> The whole principle is that people can grow, share and swap cannabis in private — growing by a
+> cultivator is private and each specific plant has an owner when it becomes cannabis (flowering).
+> The general opinion is that this could be argued as within the law. The consensus is that the swap
+> model is legit and it's used already by other clubs, so swapzone should be defendable.
 
-This is also risk 5 in `features/roles-and-permissions.md`, which asks for legal review of the
-attestation wording. That review should be widened to cover the scheme itself, not only its wording.
+The three questions this entry opened, answered:
 
-**Recommendation.** Get an opinion before building the swap zone. It is the feature most exposed to
-being unbuildable as specified, and it is scheduled late enough that an opinion can be obtained
-without blocking anything else.
+**1. Does allocating four flowering plants to a person consume that person's own statutory allowance?
+— Yes.** Settled by the product owner. This is the answer that costs something: the four is no longer
+a convention the platform may interpret, it is a ceiling attaching to a named adult, and a sharing
+member holding four flowering plants may hold nothing else. It makes C15 (enforce four per member)
+and C16 (whether a harvested plant still counts) prerequisites of the swap zone rather than
+refinements of it.
+
+**2. Where are the plants physically? — Unresolved, and the weakest leg.** The Act's limit attaches
+to cultivation in a private place. The plants are on the cultivator's premises and the sharing member
+is not cultivating them. The position is that the cultivator's grow is itself private, and that
+ownership attaches at flowering rather than at cultivation. That is an argument, not a settled point,
+and it is carried below rather than claimed as resolved.
+
+**3. Is a swap a sale in substance? — Working position: a swap.** The model is in use by other clubs
+and is treated as defendable. The residual exposure is of the platform's own making: it charges a
+grow price in Rands at purchase, then hides Rands behind leaf ratings in the swap zone. Deliberate
+obfuscation reads badly if the model is ever tested, and the mitigation is to keep the leaf rating
+honest — a coarse rounding of a real, disclosed price, never a currency, and never a unit anything is
+settled in. **No money moves in the swap zone.**
+
+#### The residual risks, carried by name
+
+| | Risk | Position |
+| --- | --- | --- |
+| **R-C7.1** | The proxy leg: a sharing member's plants are offered by the cultivator, who paid for them, to members who pay for them — the sharing member never transacts | The named grey area. Held as C33, with the role designed to be droppable |
+| **R-C7.2** | The plants are on the cultivator's premises, and the owner is not the cultivator | Accepted. Argued on private cultivation plus ownership attaching at flowering. Worth an opinion; does not gate the build |
+| **R-C7.3** | Leaf ratings obscure a Rand price the platform itself set | Mitigated by construction — the rating is a rounding of a disclosed price, and the swap zone moves no money |
+| **R-C7.4** | The attestation is a cultivator's word, not the sharing member's own act | Reopened by C6, having been closed on the placeholder reading. Risk 5 in `roles-and-permissions.md` returns, and the login is what eventually closes it: a person who signs in can consent for themselves |
+
+#### What changes in the plan
+
+Block 10 / Block E is **no longer gated on a legal opinion**. It proceeds on the working position
+above. An opinion is still worth obtaining and its brief is now narrow: the proxy leg (R-C7.1) and
+the physical-location argument (R-C7.2), not the swap model as a whole.
+
+This does not make the scheme safe by decision. It records that the risk has been assessed by the
+person entitled to carry it, and that the build proceeds on that basis.
 
 ### C8 — Is anything payable at harvest
 
-**Status: Open. Blocks order fulfilment.**
+**Status: Decided — nothing is payable at harvest in the MVP. Courier is carried inside the price
+the member pays at order and settled to Pargo out of that transaction.**
 
-Two briefs disagree in one sentence each:
+Two briefs disagreed in one sentence each:
 
 > `product-types.md`: Pre-rolls and loose will not have a cost to start with, so **nothing is due to
 > be paid** when the member makes this choice.
@@ -272,9 +344,7 @@ Two briefs disagree in one sentence each:
 
 The old `plan.md` Phase 4 said "Capture final payment", which assumes the second.
 
-The question is whether the courier fee is a fee to the member. If it is, fulfilment needs a second
-payment flow — and the payments app today handles a recurring membership subscription only, with no
-order payments and no stored payment methods.
+Three readings were available:
 
 - **Courier fee charged to the member at harvest.** Fulfilment needs a checkout. Largest build.
 - **Courier fee included in the grow price.** Fulfilment is a confirmation screen with no money in
@@ -283,8 +353,62 @@ order payments and no stored payment methods.
 - **Charged only for non-default delivery.** Standard courier included, express or outlying-area
   surcharged. Middle path; needs a rate card the platform does not have.
 
-**Recommendation.** Include it in the grow price for launch. It removes a payment integration from
-the critical path and matches the sentence a member will actually read.
+**Decision: the second, with one correction to where the money actually sits.**
+
+*The launch catalogue has no manufacturing cost.* Loose flower and pre-rolls are the only finished
+product types at launch, neither carries a charge, and `product-types.md`'s sentence is therefore
+true as written — the member reaches the harvest screen and is asked for nothing. Oil, gummies and
+anything else that has to be manufactured are planned, they do carry a cost, and they will want a
+payment at exactly this point. That build is **C35** and it is not in the MVP.
+
+*`harvest.md` is half right.* The courier **booking** is real and belongs here. The **fee** is not a
+second charge to the member: it is inside the price paid at order, and it is separated out at
+transaction settlement and remitted to **Pargo**, the courier service the platform will transact
+through. This is not the same as a cultivator quietly absorbing delivery — settlement becomes a
+three-way split rather than two, and **C10 carries the consequence**: what reaches a cultivator is
+the listed price less the platform's commission *and* less the courier component. C10 has to say who
+sets that component and who carries it when the actual Pargo charge exceeds it.
+
+**The confirmation step survives with no money in it, and it is not ceremonial.** Months can pass
+between purchase and harvest, and more between harvest and delivery. An address captured at order is
+stale by the time anything ships, and a finished product type cannot sensibly be chosen against a
+plant that does not exist yet. So the harvest notification stands exactly as `harvest.md` describes
+it, minus the payment: when the plant is harvested and enters processing, the owner confirms the
+**finished product type** and the **delivery address**, and that confirmation is what makes
+ownership final.
+
+**Ownership final means the swap window closes.** A plant may be swapped up to harvest. Once its
+owner has confirmed product type and address it is locked to them and leaves the zone. A confirmed
+address and a confirmed product type are facts about one specific person, and a swap after that
+point invalidates both silently — which is the failure mode the rule exists to prevent.
+
+**One case is not covered by that rule, and it is the one C16 is about.** The lock is triggered by
+the owner's confirmation. Sharing-member stock sitting in the zone has no such event — a sharing
+member does not transact (C33), so nobody confirms a product type or an address on their behalf, and
+`harvest.md` deliberately lets that item stay in the zone and be swapped for after it harvests. That
+is consistent with what is written here rather than in tension with it: the rule is that
+**confirmation ends swapping**, and for a member-owned plant confirmation follows its own harvest,
+which is why `harvest.md` says there is no swapping after harvest *for paying members*. For
+sharing-member stock the swap comes first and the confirmation follows it — the member who swaps in
+locks in, becomes the owner, and confirms product type and address as any other owner does.
+
+**So C16 stays open and keeps its exact shape.** A member can still come to hold a harvested plant,
+by swapping for one. Whether that plant counts toward the four flowering while it waits in
+processing is still the holding check's question, and C8 does not answer it.
+
+**What this does not decide: the member who never confirms.** The gap between harvest and delivery
+is the longest silence in the journey, and no document says what happens when the notification goes
+unanswered. Reminders and then a default to the no-cost product type, reminders and then escalation
+to a club administrator, and an indefinite hold are three different products, and the plant is
+physically somewhere the whole time. Nothing ships without an address, so this is not a data
+question — it is a storage and liability question for the cultivator. Recorded as open, deliberately
+not decided here, and it should be answered before Block 6 is specified rather than during it.
+
+**One favourable coincidence, to be checked rather than assumed.** Pargo is a pickup-point network,
+so a delivery may resolve to a collection point rather than a residential address. If that is how it
+is integrated, C19's pseudonymity problem shrinks considerably — the fulfilment document carries a
+pickup point and a waybill, not a member's home. Worth confirming against the actual Pargo
+integration before C19 is decided on it.
 
 ### C9 — When the grow price is paid, and what happens when a crop fails
 
@@ -322,6 +446,10 @@ What has to be decided before it can be specified:
 - When does a cultivator earn — at order, at harvest, at delivery?
 - Who carries a refund (C11) — the platform or the cultivator?
 - Payfast is a collection gateway. Payouts need something else, or a manual EFT run.
+- **The courier component.** C8 puts delivery inside the price the member pays and remits it
+  to Pargo at settlement, so a cultivator is paid the listed price less commission *and* less
+  courier. Who sets that component, whether it is visible to the cultivator, and who carries
+  the difference when the actual Pargo charge exceeds it, are all unanswered.
 
 **Recommendation.** Treat as its own discovery item with the finance owner. It is a launch blocker
 for cultivators even though no member-facing screen depends on it.
@@ -456,6 +584,15 @@ transaction.
 **Recommendation.** Harvested plants do not count toward the flowering limit; the holding check
 counts only `preflowering` and `in_bloom`. This is also the reading the Act supports.
 
+**Sharpened by C8, not closed by it.** C8 ends swapping at the owner's harvest confirmation, and
+`harvest.md`'s "no swapping after harvest" is now understood as a statement about *paying members* —
+whose plants harvest into a confirmation. Sharing-member stock has no confirming owner, so it does
+sit in the zone after harvest, exactly as `harvest.md` says, and a member who swaps for it becomes
+the owner and confirms in the ordinary way. That leaves this entry's question untouched and gives it
+two live cases rather than one: a member's own plant awaiting processing, and a harvested plant
+swapped in. The recommendation is unchanged — the Act's limit is on flowering plants, and neither of
+those is flowering.
+
 ### C17 — Swapping for equal value defeats the reason to swap
 
 **Status: Open. Worth resolving before the swap rules are written.**
@@ -481,6 +618,11 @@ and the rules as written cannot arbitrate.
   change to a rule that already exists.
 
 **Recommendation.** The third. It uses a distinction the brief already draws.
+
+**The window now has an end.** C8 locks a plant to its owner at the harvest confirmation, so the
+most mature thing in the zone is one that has not yet been harvested. That caps the maturity
+spread the leaf rating fails to price. It does not remove it — a plant a week from harvest and
+a seedling of the same grow price still carry the same rating.
 
 ### C18 — Where the finished product types live
 
@@ -1024,3 +1166,125 @@ first audit.
 West Europe has availability zones, so the upgrade path exists and the decision can wait for real
 traffic. And whether Azure Front Door eventually fronts the three containers, which buys a WAF and
 edge TLS termination that matters more from South Africa than it would from inside the region.
+
+---
+
+## F. Raised by the sharing-member reversal
+
+C6 was reversed after it had been decided and acted on. The reversal answers the question C6 asked
+and opens two it never had to.
+
+### C33 — The cultivator acts as proxy for an owner who does not transact
+
+**Status: Decided — the cultivator transacts, the sharing member views. Carries R-C7.1.**
+
+C6 makes a sharing member a real person whose plants consume their own statutory allowance, and
+gives them a read-only login so they can see what they own. C7 accepts the swap model. Between the
+two sits the question neither answers: **who offers a sharing member's plant into the swap zone, and
+who accepts a swap of it.**
+
+The product owner names this as the grey area:
+
+> The grey area which could be challenged is the sharing member offering plants that they didn't pay
+> for essentially as proxy for the cultivator — but this role can be dropped at a later stage once
+> the platform has momentum.
+
+Three readings were available:
+
+- **Cultivator proxy, owner views only.** The cultivator offers and swaps. The sharing member sees
+  their plants and does nothing.
+- **Mandate at registration, revocable.** The cultivator transacts under a written mandate the
+  sharing member grants and may withdraw.
+- **Owner approves each swap.** Every movement waits on a person who does not transact.
+
+**Decision: cultivator proxy, owner views only.** It is what `member-roles.md` describes, it is the
+only one that keeps the zone liquid, and the swap zone exists precisely to hold stock that moves. A
+sharing member's login shows them their plants; it does not give them a swap action, a withdrawal
+action or an approval queue.
+
+**Two things follow, and both are build constraints rather than notes.**
+
+**The role must stay droppable.** The product owner expects to retire it once the platform has
+momentum. So nothing outside the sharing-member feature may assume a sharing member exists: the swap
+zone matches on plants and their owners, not on owner *type*; the holding check counts plants per
+member without asking which kind of member; the seeding of a new club's zone is a data question, not
+a code path. If retiring the role means deleting a branch in the swap-zone matcher, the design was
+wrong. Retiring it should mean registering no more of them, and eventually erasing the ones that
+exist.
+
+**The proxy has to be evidenced.** "Views only" is the weaker legal position of the three, and the
+attestation is what carries it: the cultivator records that this person agreed to hold these plants
+and to have them offered on their behalf. That is a widening of what the C6 attestation covers — it
+was a POPIA consent for holding an identity number, and it now has to cover the mandate as well.
+Two facts, one record, and the attestation version is what tells them apart when the wording changes.
+
+**Revisit when the login is built.** A person who can sign in can withdraw a plant from the zone for
+themselves, which converts this decision into the second reading at very little cost and removes most
+of R-C7.1. That is the natural moment, and it is not brought forward.
+
+### C34 — A sharing member who wants to be a member
+
+**Status: Open. Small today, unpleasant later. Blocks nothing yet.**
+
+C6 makes a sharing member a real person under the one-account-per-identity-document rule, and gives
+their four flowering plants against their own statutory allowance. Neither the brief nor the build
+says what happens when that person then wants to join the club properly.
+
+Three collisions, in order of how soon they bite:
+
+1. **Registration is refused and the refusal cannot explain itself.** Sign-up finds the identity
+   number already on file and refuses in words that deliberately name no record — the leak control
+   that risk 4 carries. The person is standing in front of a refusal caused by a record a cultivator
+   created about them, possibly without their remembering it.
+2. **Their allowance is already spent.** Four flowering plants are held in their name, so a new
+   member may buy nothing until those plants harvest or move. The platform would be enforcing a
+   statutory limit correctly and looking broken doing it.
+3. **One account, two relationships.** This is C28 — one role per account cannot express one
+   person's several relationships to the club — arriving from a new direction. A sharing member who
+   becomes a member is not a status change if the sharing plants stay where they are.
+
+**Recommendation.** Treat it as an upgrade of the existing account rather than a new one: the
+`ClubMembership` moves from `SHARING` to the ordinary member lifecycle, the person consents for
+themselves and supersedes the cultivator's attestation, and the plants held in their name stay theirs
+and count against their four. That resolves 1 and 3 and makes 2 true rather than fixing it — which is
+correct, if the limit means anything.
+
+Worth deciding before sharing members are registered in numbers, and cheap while they are not.
+
+---
+
+## G. Raised by closing C8
+
+### C35 — Priced finished product types need an order payment flow
+
+**Status: Open. Blocks nothing in the MVP; blocks the second product release.**
+
+C8 empties the harvest confirmation of money on the strength of one fact: loose flower and pre-rolls
+cost nothing to manufacture. Oil, gummies and everything after them do, and the product owner intends
+to introduce them. The moment one is listed, the confirmation screen stops being a confirmation and
+becomes a checkout — at precisely the point in the journey C8 has just cleared.
+
+What that needs, and none of it exists:
+
+- **An order payment, not a subscription.** `features/payments.md` handles one recurring membership
+  fee and nothing else. There are no order payments, no stored payment methods and no ledger a
+  second charge against a single plant could be written to.
+- **A way to charge months after the first transaction.** The member paid at order; this charge lands
+  at harvest, possibly a season later. That is a stored mandate or a fresh checkout, and the two have
+  very different POPIA and gateway consequences.
+- **A price per product type, and somewhere for it to live.** C18 decides whether the catalogue, the
+  strain listing or the plant owns the list of available types; whichever wins also has to carry the
+  price and its history, because a plant bought under one price sheet may finalise under another.
+- **A position when the member does not pay.** Hold the plant, downgrade it to a no-cost type, or
+  cancel — three different products, and the plant is in physical storage while it is decided. This
+  is the same silence C8 flagged for the member who never confirms, with money added to it.
+- **A refund path.** C11 already has none. A manufacturing charge is the first thing a member could
+  reasonably ask back after the product type is chosen but before it is made.
+- **A fourth party at settlement.** Manufacturing is work somebody performs — the cultivator or a
+  third-party processor — so C10's split of price, commission and courier gains a manufacturing leg.
+
+**Recommendation.** Do not build it now. Do build the harvest finalisation so that adding it is not a
+rebuild: model the finalisation as a transaction with a zero total rather than as a form that writes
+two fields, and give the plant a finalisation record with a status the payment can later attach to.
+The cost of doing that in Block 6 is small. The cost of not doing it is that the first priced product
+type reopens ownership finality, the swap-window rule and the notification flow at the same time.

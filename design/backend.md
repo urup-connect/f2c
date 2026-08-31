@@ -210,10 +210,11 @@ member's sign-in codes.
 value grants access.
 
 Keeping six states rather than a boolean matters because "not yet approved", "not yet paid", "in
-trouble", "erased on request" and "holds stock and never signs in" are different situations with
+trouble", "erased on request" and "holds stock and does not sign in" are different situations with
 different operational answers, and a single `is_active` flag cannot tell them apart. Sharing is the
-one value that is not a stage in a lifecycle: it is where a sharing member sits permanently, and
-`design/features/roles-and-permissions.md` section 3.2 says why reusing Pending was rejected.
+one value that is not a stage in a lifecycle: it is where a sharing member sits until the deferred
+read-only login is built, and `design/features/roles-and-permissions.md` section 3.2 says why reusing
+Pending was rejected.
 
 But `is_active` still exists, as a denormalised copy of `status == 'active'`. That is not
 redundancy by accident:
@@ -319,38 +320,59 @@ because `UserOut` serialises the permission list inside async views.
 
 ### 3.6 The sharing member
 
-A **sharing member** is an identity a cultivator registers so that it can hold four flowering plants
-and put them in the swap zone — a new club's zone is otherwise empty. They give a name, an identity
-number and a nickname, hold no email address, and never sign in.
+A **sharing member** is a real person a cultivator registers so that they can hold four flowering
+plants and have them appear in the swap zone — a new club's zone is otherwise empty. They give a
+name, an identity number and a nickname, and they do not transact: no cart, no subscription, no swap
+action.
 
-They are a `User` row all the same, which is the decision worth defending. A separate model would
-have meant a second nickname namespace (two people wearing one name in the swap zone is
-impersonation, not a collision), a second encrypted identity column, a second erasure route, and two
-kinds of owner for every plant, swap and certificate. As a row here they also inherit the club's "one
-account per identity document" rule.
+> **This section describes the decision, and the code does not match it yet.** C6 was decided as
+> "a sharing member is a placeholder, not a person", acted on in Block 0.5, and then **reversed** —
+> the "no login" in the brief was a cost control on the platform this one replaces, not a definition.
+> The identity number, the age rule, the attestation and the erasure exemption all come back. C6 in
+> `design/conflict.md` lists every place the code still says otherwise. Nothing below is built as
+> written.
 
-Three mechanisms carry the weight:
+They are a `User` row, which is the decision worth defending. A separate model would have meant a
+second nickname namespace (two people wearing one name in the swap zone is impersonation, not a
+collision), a second encrypted identity column, a second erasure route, and two kinds of owner for
+every plant, swap and certificate. As a row here they also inherit the club's "one account per
+identity document" rule.
 
-- `UserStatus.SHARING`, plus a check constraint (`sharing_member_never_signs_in`) refusing the role in
-  the Active status. Having no email address already makes them unauthenticatable, but that is a
-  property of the *data* — the constraint is what stops somebody typing an address into the admin from
-  silently turning stock into an account.
-- A **consent attestation**: a cultivator captures a third party's identity number, so POPIA needs a
-  lawful basis the person never gave on a form. `sharing_consent_attested_by`, `_at` and `_version`
-  record who swore what and when. It is called an attestation rather than a consent because it is
-  weaker evidence than a member's own tick, and naming it accurately is what stops the two being
-  confused later.
+Four mechanisms carry the weight:
+
+- `UserStatus.NON_AUTHENTICATING`, plus `is_active` derived from `status` under
+  `user_is_active_matches_status`. Having no email address already makes them unauthenticatable, but
+  that is a property of the *data* — the constraint is what stops somebody typing an address into the
+  admin from silently turning stock into an account. The value is named for the fact rather than the
+  club concept, which is why it survives the reversal: when the deferred login is built, a sharing
+  member moves to `ACTIVE` and nothing needs renaming.
+- A **consent attestation**: a cultivator captures a third party's identity number and offers that
+  person's plants on their behalf, so POPIA needs a lawful basis the person never gave on a form.
+  `sharing_consent_attested_by`, `_at` and `_version` record who swore what and when. It is called an
+  attestation rather than a consent because it is weaker evidence than a member's own tick, and
+  naming it accurately is what stops the two being confused later.
 - `sharing_member_is_complete`, a check constraint requiring the registering cultivator, the
   attestation and a nickname — with erased rows exempt, because `soft_delete` blanks the nickname and
-  the POPIA erasure route must never be the thing the database refuses.
+  the POPIA erasure route must never be the thing the database refuses. It replaces the narrower
+  `sharing_member_has_a_cultivator` currently in the schema.
+- The **four-plant allocation is the person's own statutory ceiling**, not a platform convention —
+  C7. A sharing member holding four flowering plants may hold nothing else. Enforcement is C15, and
+  it counts plants per member without asking what kind of member, because the role is meant to be
+  droppable later — C33.
 
-`accounts/services.py` is the write. It authorises on the permission rather than the role, refuses a
-submission with no attestation before validating any field, applies the same eighteen-year rule as
-sign-up, and refuses a duplicate identity number in words that name no record — a leak it reduces
-rather than closes, and one the design document records as a risk.
+`accounts/services.py` is the write. It authorises on the permission rather than the role, checks the
+caller is the primary of *this* producer, refuses a submission with no attestation before validating
+any field, applies the same eighteen-year rule as sign-up, and refuses a duplicate identity number in
+words that name no record — a leak it reduces rather than closes, and one the design document records
+as a risk.
 
 `registered_by` is `PROTECT`, so a cultivator who has registered sharing members cannot be
 hard-deleted. Deleting a grower must not delete people; the routine answer, erasure, keeps the row.
+
+**The login is specified and deferred.** A sharing member gets a read-only sign-in — the plants they
+own and their status, nothing that moves a plant or spends money. It is deferred because it costs the
+same whenever it is built, while the identity columns above are cheap only while the database is
+empty.
 
 `design/features/roles-and-permissions.md` is the full record: the catalogue, the rejected
 alternatives, and what the roles govern that is not built.
@@ -789,7 +811,7 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `accounts/tests/test_models.py` | Status/`is_active` coupling, the encrypted ID number, erasure, display names |
 | `accounts/tests/test_admin_forms.py` | Setting, replacing and clearing an encrypted field staff cannot read |
 | `accounts/tests/test_roles.py` | The catalogue's own shape, the check constraint, `has_perm` through both backends, the group mirror |
-| `accounts/tests/test_sharing_members.py` | Registering one, the attestation without which nothing is written, the constraints that stop them signing in, the vague refusal, erasure |
+| `accounts/tests/test_sharing_members.py` | Registering one, the attestation without which nothing is written, the constraints that stop them signing in, the vague refusal, erasure. Currently asserts the *absence* of all of that, per the superseded reading of C6 |
 | `membership/tests/test_services.py` | The registration write: duplicates, the age rule, the role and status it lands on |
 | `membership/tests/test_api.py` | The endpoints sign-up posts to, and what they refuse |
 | `payments/tests/test_gateway.py` | The Payfast protocol: the signature, its two orderings, the PHP-compatible encoding, every configuration refusal |
@@ -892,7 +914,8 @@ endpoint checks a `platform.*` permission, because no endpoint performs an actio
 names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. A
 sharing member can be registered and holds no plants — the plant model now exists, so
 `platform.allocate_sharing_member_stock` is finally *expressible*, but there is no swap zone for them
-to seed and Block 10 is gated on a legal opinion, which is the entire purpose of the role. See
+to seed. **Block 10 is no longer gated on a legal opinion** — C7 is decided as residual risk — so the
+purpose of the role is now reachable rather than blocked. See
 `design/features/roles-and-permissions.md` section 13, which lists this properly.
 
 Production deployment is deliberately out of scope. When a target is chosen it needs:
@@ -921,8 +944,8 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted                                                                                     |
 | 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3                                        |
 | 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage                                                                       |
-| 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator                             |
-| 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. | Open — wants legal review of the wording, and a decision on notifying sharing members directly |
+| 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator. C34 is the case that makes it sting: a sharing member trying to join the club properly |
+| 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. Under C33 it now evidences the mandate to offer that person's plants as well as the POPIA basis. | Open — wants legal review of the wording. The deferred read-only login is what closes it: a person who signs in can consent for themselves |
 | 11 | A cultivator creates `User` rows. It is the only non-administrator route to an account, and it captures a third party's identity number. | Accepted — authorised on a permission, and every record carries who attested                 |
 | 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Closed                                                 |
 | 13 | Three constraints silently disappeared on MySQL, because it builds no partial index and Django omits what the backend will not build. Nickname uniqueness, mobile uniqueness and one-live-subscription-per-member were absent from any deployed schema while the models, the migrations and the suite all still described them. Section 8.2. | **Closed** — `accounts/0007` and `payments/0002` moved all three onto derived columns with unconditional unique indexes, each tied to its source by a check constraint |
