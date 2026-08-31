@@ -349,24 +349,36 @@ money back from a cultivator who may already have been paid.
 
 ### C12 — A cultivator cannot buy, and the drawio story says they browse
 
-**Status: Open. Low urgency, cheap to resolve.**
+**Status: Substantially closed by C28. One question left, and it is about the brief rather than
+about the build.**
 
-`features/roles-and-permissions.md` section 5 records the decision that one account holds one role,
-and its accepted cost: the Cultivator role does not hold `platform.purchase_plants`,
-`platform.use_swap_zone` or `platform.offer_inventory_for_swap`. A test asserts this, so the set
-cannot be widened without a decision.
+`features/roles-and-permissions.md` section 5 recorded the decision that one account holds one role,
+and its accepted cost: the Cultivator role did not hold `platform.purchase_plants`,
+`platform.use_swap_zone` or `platform.offer_inventory_for_swap`.
+
+**That cost is gone.** `permissions_for` reads three relationships rather than one column, and its
+docstring strikes the limitation in as many words — *somebody who does both needs a second
+account*, and *it is accepted no longer*. All three codenames sit in `MEMBER_ACTIONS`, granted by an
+active `ClubMembership`, so a cultivator who takes out a club membership **on the same account**
+holds them. Nothing needs widening and no permission set needs a new member.
 
 The drawio cultivator story lists "View all plants available (**includes other cultivators' offers**)"
 under The Plantation. Browsing is granted — cultivators hold `platform.browse_catalogue` — so the
 story is satisfiable. But a grower shown a competitor's offers and unable to act on them is an odd
 screen, and the story may intend more.
 
-**Recommendation.** Confirm browsing is all that is meant. If cultivators should buy, that is roles
-risk 2 and the answer is a second account, not a widened role.
+**Recommendation.** Confirm browsing is all the story meant, and close this. If cultivators should
+also buy, that is answered too: they take out a club membership on the same account. What is left is
+a commercial decision for the club — whether a grower may hold a membership at all — and not a
+schema change, a catalogue change or a second account. **The old answer was "a second account, not a
+widened role"; both halves of it are now obsolete.**
 
 ### C13 — Object-level rules do not exist, and half the brief needs them
 
-**Status: Open. Structural. Blocks most of Blocks 4 to 9 in `todo.md`.**
+**Status: The design question is answered by C28 — what remains is implementation, not a
+decision.** Kept in this section because the object-level rules themselves are still unwritten
+and `todo.md` still carries them, but **nobody has to decide anything here.** The paragraph
+below is the record.
 
 `RoleBackend` refuses object-level questions outright — `has_perm(perm, obj)` returns `False` rather
 than answering from the role. That is correct, and it means these requirements have nothing to

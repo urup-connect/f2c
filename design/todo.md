@@ -1190,7 +1190,16 @@ Everything here is split across the two tiers from C2.
       masked last four remain the default everywhere else, per `backend.md` section 10
 - [ ] Warnings, suspensions, expulsions — `drawio`. Needs a sanction model, and there is none
 - [ ] Revoke access — `platform.revoke_access`
-- [ ] Membership pauses and cancellations — `platform.cancel_membership`. UC tier alone, per **C2**
+- [x] ~~Membership cancellations — `platform.cancel_membership`~~ — **struck by C29.** The codename
+      left `ADMINISTRATOR_ACTIONS` in Block 0.5 and `test_roles` asserts it is absent, so cancelling
+      a membership is a Django admin operation under `is_staff` and not an endpoint. This line read
+      *UC tier alone, per C2* and **contradicted the two-tiers section at the foot of this block**,
+      which had already recorded the removal
+- [ ] **Membership pauses — never a codename, and never a state either.** Nothing in the catalogue
+      names one and `MembershipStatus` has no paused value: it carries pending, pending payment,
+      active, suspended, lapsed and sharing. Suspension is a sanction and lapsing is non-payment;
+      **a pause is neither**, so pausing rather than lapsing is a new decision and a new state, not
+      a permission somebody forgot to build
 - [ ] **A `platform.manage_members` codename.** The register is gated on `platform.disable_user`
       because that is the only action in the catalogue over a member's account — so correcting a
       mistyped address currently needs the authority to suspend one. `manage_cultivators` has no
