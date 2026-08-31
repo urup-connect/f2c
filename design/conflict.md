@@ -907,8 +907,9 @@ until it does there is no account for a market refund to come out of.
 
 ### C12 — A cultivator cannot buy, and the drawio story says they browse
 
-**Status: Substantially closed by C28. One question left, and it is about the brief rather than
-about the build.**
+**Status: Closed on the buying question, by ruling. The browsing half is answered too, but with a
+different screen from the one the drawio story describes, and that screen is a build item rather than
+a decision.**
 
 `features/roles-and-permissions.md` section 5 recorded the decision that one account holds one role,
 and its accepted cost: the Cultivator role did not hold `platform.purchase_plants`,
@@ -918,18 +919,70 @@ and its accepted cost: the Cultivator role did not hold `platform.purchase_plant
 docstring strikes the limitation in as many words — *somebody who does both needs a second
 account*, and *it is accepted no longer*. All three codenames sit in `MEMBER_ACTIONS`, granted by an
 active `ClubMembership`, so a cultivator who takes out a club membership **on the same account**
-holds them. Nothing needs widening and no permission set needs a new member.
+would hold them. Nothing needs widening and no permission set needs a new member.
 
-The drawio cultivator story lists "View all plants available (**includes other cultivators' offers**)"
-under The Plantation. Browsing is granted — cultivators hold `platform.browse_catalogue` — so the
-story is satisfiable. But a grower shown a competitor's offers and unable to act on them is an odd
-screen, and the story may intend more.
+#### The ruling, from the product owner
 
-**Recommendation.** Confirm browsing is all the story meant, and close this. If cultivators should
-also buy, that is answered too: they take out a club membership on the same account. What is left is
-a commercial decision for the club — whether a grower may hold a membership at all — and not a
-schema change, a catalogue change or a second account. **The old answer was "a second account, not a
-widened role"; both halves of it are now obsolete.**
+**Cultivators cannot buy.** The catalogue view exists so that a grower can compete on price and
+specials against the rest of the site — not so that they can transact on it.
+
+**It is a commercial policy and it is deliberately not enforced in code.** No purchase journey is
+built for a cultivator, and the club does not sell memberships to growers, so the case never arises.
+There is no constraint forbidding a `ClubMembership` on an account with a `ProducerMembership`, and
+`permissions_for` does not suppress the member grant when a producer appointment is present. **That
+is not an oversight to be fixed later** — it is the escape hatch. If the club ever decides a grower
+may hold a membership, the decision is a sale, not a migration. Recorded here so that nobody reads
+the absent check as a gap and closes it.
+
+#### The drawio story does not survive intact
+
+The cultivator story lists "View all plants available (**includes other cultivators' offers**)" under
+The Plantation. **The parenthetical is struck.** A grower does not see another grower's offers.
+
+What replaces it: **the cultivator sees their own listings, each carrying an indicator of where its
+price sits against similar products across the site** — above average, in line, below average. The
+grower gets the thing the story was actually for, which is knowing whether they are priced into or
+out of the market, and gets it in a form they can act on. The original screen was the odd one: a
+competitor's listing is information a grower cannot do anything with except read it.
+
+#### The narrower screen is the safer one, and that is the larger reason for it
+
+A club buys from several growers who compete with each other for the same members. Under the
+Competition Act **section 4(1)(b)**, giving horizontal competitors a live view of each other's prices
+is a price-signalling facility, and the intent — *so that they can compete* — is not a defence if the
+effect is that growers converge on each other's numbers. An aggregate carries the same commercial
+signal with none of that exposure, which is why the indicator is the right build and not merely the
+cheap one.
+
+It only stays an aggregate if it is built as one. Four constraints, none expensive, all much harder
+to add after the screen ships:
+
+- **A minimum cohort.** Suppress the indicator unless the comparison set holds enough independent
+  producers that no single price can be inferred from it. With two growers of a strain, "below
+  average" is the other one's price after one line of arithmetic. Four to five is the usual shape;
+  the number is open.
+- **Compared on the product, not the grower.** The cohort is every listing of a comparable strain,
+  grade or product type, whoever offers it — never "your price against cultivator X".
+- **A band, not a number.** Above, in line, below. Never the mean itself and never a rank, both of
+  which are competitor pricing recovered by subtraction or by watching the ranking move.
+- **A period average, not a live one.** A figure that moves the instant a competitor reprices is a
+  real-time signalling channel however it is labelled.
+
+#### What is left to build, and where it lands
+
+**The permission is not the problem and does not change.** `platform.browse_catalogue` stays in
+`PRODUCER_BASE_PERMISSIONS` (`app/core/accounts/roles.py:225`). What changes is the scope of what it
+returns to a producer, which is an object-level rule of exactly the shape `plant.stock._authorise`
+already has — the caller's `ProducerMembership` decides which rows they see. That is **C13's open row,
+"a cultivator's own listings, stock and pricing"**, and the benchmark indicator rides with it rather
+than with the member-facing catalogue. Recorded in `todo.md` against cultivator listings.
+
+#### What this does not decide
+
+- **Whether a grower may ever hold a club membership.** Commercial, the club's, and reversible at any
+  time without a schema change — which is the point of not enforcing it.
+- **The cohort threshold and the averaging period.** Both are numbers, both are cheap now, and both
+  are what decides whether the indicator is an aggregate or a competitor's price wearing a label.
 
 ### C13 — Object-level rules do not exist, and half the brief needs them
 

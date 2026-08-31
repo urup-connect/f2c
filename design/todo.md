@@ -1005,6 +1005,18 @@ administrator screens.
       are here. **Strains are done** — `/admin/strains` and the three routes under it, over
       `app/club/strains/api.py`. **Finished product types are not**, and neither is the cultivator's own
       listing screen: staff still write a listing in the Django admin
+- [ ] **The cultivator's own listing screen shows that producer's listings and no other's — C12.**
+      Ruled: a cultivator cannot buy, and the drawio story's "includes other cultivators' offers" is
+      struck. `platform.browse_catalogue` is unchanged and still held by every appointed cultivator;
+      what changes is the rows it returns to one, which is the object-level rule below and the same
+      shape as `plant.stock._authorise`
+  - [ ] **The price indicator that replaces the competitor view.** Each of the grower's own listings
+        carries an above / in line / below marker against comparable listings site-wide. It has to be
+        an aggregate **by construction**, because the alternative is a price-signalling facility
+        between competitors under Competition Act s4(1)(b): a minimum cohort of independent producers
+        before the marker appears at all, a cohort defined by strain, grade or product type rather
+        than by cultivator, a band and never the mean or a rank, and a period average rather than a
+        live one. The threshold and the period are open — **C12**
 
 ---
 
@@ -1051,7 +1063,9 @@ and still built after the models it scopes.
       not about that account's relationship to one record, so answering an object-level question from
       it would come back yes for every listing on the platform. The rules arrive with the models they
       are scoped to, and two of them have:
-  - [ ] A cultivator's own listings, stock and pricing
+  - [ ] A cultivator's own listings, stock and pricing. **Now load-bearing twice over**: it is what
+        scopes the cultivator's catalogue view to their own rows under **C12**, not only what stops
+        one grower editing another's listing
   - [~] The sharing members that cultivator registered. **Creation is checked** —
         `register_sharing_member` refuses a primary of one farm creating a placeholder for another,
         with a superuser exemption and a test covering both. Read, update and withdraw are not, and

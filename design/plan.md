@@ -359,6 +359,11 @@ live.
 Left: administrator CRUD for finished product types, the cultivator's own listing screen, and the
 member-facing catalogue page, which belongs to Block 5.
 
+**C12 scopes the cultivator's listing screen.** It shows that producer's own listings and no other's,
+each price carrying an above / in line / below marker against comparable listings site-wide. The
+scoping is C13's object-level rule; the marker has to be an aggregate by construction, for the
+Competition Act reason recorded in C12.
+
 **C18** decides how the three levels of finished-product-type selection relate. **The
 recommendation is already built** — the plant inherits from its listing with no per-plant
 override — so ratifying it costs nothing and reversing it is a model change.
@@ -731,6 +736,7 @@ it sits in Block A ahead of both checkouts.
 | C8 | **Nothing is payable at harvest.** Courier sits inside the price paid at order and is remitted to Pargo at settlement | Removes a checkout from Block 6 → Block C. Makes the harvest confirmation the point where ownership becomes final, which closes the swap window and constrains Block 10. Adds a third leg to C10's settlement split, and opens C35 |
 | C9 | **Payment in full at order, held by the club until delivery**, then released to the cultivator, who **guarantees delivery**. A failed crop is substituted; refunded only where no equivalent plant exists | Fixes the Block 5 → Block A checkout as a single full-price payment and rules out a receivables ledger. Puts a held / released state on the order, and answers C10's "when does a cultivator earn". Made C11 answerable, and C11 then removed the after-release case entirely. Leaves C9.1 open, and creates copy that has to appear in the intros, the sign-up journey and the club documents |
 | C11 | **A refund exists only while the funds are held.** After release to the cultivator there is none in the application; the remedy is a withholding on the cultivator's payment run and a settlement with the member outside the platform | Deletes the largest unbuilt thing in the register — a post-release partial reversal across two entities, and the member credit ledger that was its fallback. Moves refunds from Block 12 → Block E into **Block A**, beside the hold, and releases them from C10.1. Forces C10 to say the 15% is earned **on release**, and adds an adjustment line to the payment run. Leaves **C11.1** open, and puts a CPA constraint on copy: build it, never publish it as a term |
+| C12 | **A cultivator cannot buy, and does not see another grower’s offers.** Policy rather than an enforced rule — no purchase journey, no membership sold to a grower, and deliberately no constraint, so the club reverses it with a sale rather than a migration. The drawio parenthetical is struck: a cultivator sees **their own** listings, each carrying an above / in line / below indicator against similar products site-wide | Turns a catalogue screen into a scoped one. Adds nothing to the permission catalogue — `browse_catalogue` stays — and everything to C13’s open “their own listings, stock and pricing” row, which now has a second reason to be built. The indicator lands on Block 1’s cultivator listing screen, priced with Block 4 → Block A. Puts a Competition Act s4(1)(b) constraint on how it is computed: a cohort minimum, a band rather than a number, a period average |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |
@@ -744,7 +750,6 @@ it sits in Block A ahead of both checkouts.
 | # | Position |
 | --- | --- |
 | C13 | **Object-level permissions: the design question is answered by C28.** "Their own" pointed at nothing while a role was a column, which is why `RoleBackend` refused every object-level question rather than answer one wrongly. `ProducerMembership` is a row per person per producer now, and the primary-appoints-staff rule is enforced off it. The rest are joins against the same rows, written in the services that own each record. What stays open is that work, not a decision |
-| C12 | **A cultivator who wants to buy: substantially closed by C28.** The old recommendation was "a second account, not a widened role", which was the accepted cost of one role per account. That cost is gone: `permissions_for` reads three relationships, so a cultivator who takes out a club membership on the same account holds `purchase_plants`, `use_swap_zone` and `offer_inventory_for_swap` from that membership. What is left is commercial — may a grower hold a membership — and confirming that browsing is all the drawio story meant |
 
 C21 through C25 are documentation drift in `conflict.md` section C and need no decision. **C25 is the
 exception worth tracking**: a test that fails about one run in thirty, which is a Block 0 line and a

@@ -238,6 +238,14 @@ and also holds a membership resolves to exactly the union of the two — verifie
 Nobody decided that cultivators may buy; it became possible for one human being to be both a
 cultivator and a member, which is what the club meant all along. **Risk 2 is closed.**
 
+**And the club has since decided that they may not — C12.** A cultivator cannot buy. It is a
+commercial policy, held deliberately outside the code: no purchase journey is built for a grower, no
+membership is sold to one, and there is **no constraint forbidding a `ClubMembership` on an account
+that holds a `ProducerMembership`**. If such an account ever existed, `permissions_for` would return
+the union and the person could buy. That is the escape hatch rather than a defect — the club reverses
+its own policy by making a sale, not by running a migration. Read the absent check as the record of a
+decision, not as a gap to be closed.
+
 One thing the old rule did that nothing now does: a person could not be a member and a sharing
 member at once, because one identity document meant one account. **The reversal of C6 puts that
 question back**, and it is now the harder version of itself — a sharing member is a person, holds an
@@ -310,6 +318,16 @@ a feature that does not exist yet.
 | `platform.browse_catalogue` | Browse available strains and cultivators |
 | `platform.submit_support_request` | Raise a support request |
 | `platform.record_notes` | Record notes against members, strains, plants and subscriptions |
+
+**`browse_catalogue` means something narrower here than it does on a membership — C12.** A
+cultivator holds the codename and sees **their own** listings through it, never another grower's.
+The drawio story that had them viewing "all plants available, including other cultivators' offers"
+is struck: a grower who cannot buy has nothing to do with a competitor's listing except read its
+price, and a platform that shows competing suppliers each other's prices is a signalling facility
+under Competition Act s4(1)(b) whatever it is called. What the grower gets instead is an
+above / in line / below marker on their own price against comparable listings site-wide — an
+aggregate, built as one. The scope is an object-level rule of the same shape as
+`plant.stock._authorise` and it is not in this catalogue, because a codename cannot say *whose*.
 
 `PRODUCER_FULL_PERMISSIONS` — what full rights add. The commercial decisions, as against moving
 stock:

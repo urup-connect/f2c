@@ -236,6 +236,15 @@ MARKET_ADMINISTRATOR_PERMISSIONS = frozenset()
 MEMBER_PERMISSIONS = frozenset(MEMBER_ACTIONS)
 
 #: What any appointment to a producer holds, whatever its rights.
+#:
+#: ``platform.browse_catalogue`` is narrower here than it is on a membership, and
+#: the codename cannot say so: a cultivator sees **their own** listings, never a
+#: competing grower's. That is C12 -- a cultivator cannot buy, so a competitor's
+#: listing is information they can do nothing with, and showing competing
+#: suppliers each other's prices is a signalling facility under Competition Act
+#: s4(1)(b) however it is labelled. The scope is an object-level rule on the
+#: catalogue query, the same shape as ``plant.stock._authorise``, and it is not
+#: expressible in this catalogue.
 PRODUCER_BASE_PERMISSIONS = frozenset({
     'platform.manage_plant_stock',
     'platform.change_plant_status',
