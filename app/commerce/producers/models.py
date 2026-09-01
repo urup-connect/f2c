@@ -12,7 +12,7 @@ and its bank details. Those arrive here.
 ``member-roles.md`` conceals members behind a nickname, and
 ``plant-id-numbers.md`` puts a "cultivator pseudonym" on the certificate of
 ownership -- so the club clearly needs a public name for a grower. What it does
-not need is a *second namespace* for one. ``backend.md`` section 3.6 already
+not need is a *second namespace* for one. ``backend.md`` section 4.6 already
 settled the same question for sharing members and gave the reason in one line:
 "two people wearing one name in the swap zone is impersonation, not a
 collision". A ``pseudonym`` column here would be exactly that second namespace,

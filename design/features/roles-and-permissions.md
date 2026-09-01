@@ -568,7 +568,7 @@ join, and the services that own each record make it. Section 13 lists what is st
 4. Otherwise, the union of what its relationships grant.
 
 Step 2 is the load-bearing one. `is_active` is derived from `status` and held to it by a check
-constraint (`design/backend.md` section 3.1), so suspension and erasure make an account powerless
+constraint (`design/backend.md` section 4.1), so suspension and erasure make an account powerless
 without either of them having been taught about permissions.
 
 **There is now a second gate below it, and the two are not the same.** `User.status` decides whether
@@ -713,12 +713,12 @@ govern is not.
 
 | Not built | Consequence |
 | --- | --- |
-| Plants, strains, batches, listings, pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue names actions with nothing to perform them against |
-| ~~The cultivator organisation~~ | **Partly built.** `ProducerMembership` exists with primary, full and limited rights, and `platform.appoint_cultivator_staff` is exercisable. `CultivatorProfile` is not yet generalised to `Producer` — that is the next section of Block 0.5 |
+| Pricing, orders, swaps, reviews, transactions, support tickets | Most of the catalogue still names actions with nothing to perform them against. **Plants, strains, batches and listings have come off this row** — all four are built, with an admin, and two of them with a router |
+| ~~The cultivator organisation~~ | **Built as a record, with no route.** `Producer` and `ProducerMembership` exist with primary, full and limited rights, and `platform.appoint_cultivator_staff` is exercisable. The generalisation of `CultivatorProfile` to `Producer` is done — Block 0.5. What is missing is an endpoint and a screen: a primary cultivator appoints staff in the Django admin |
 | Object-level rules | The person-level half is enforced, and the plant's ownership half is built: every plant carries a verifiable owner and an append-only trail from capture — **C13**. "A cultivator's own listings and pricing" and "a member's own inventory" still need writing in the services that own each record, both the shape of `plant.stock._authorise`. **C14 adds a third and easier one**: the administrator's holdings view is scoped to the club rather than to one record, so it needs no per-record join — only a nickname projection that never selects an identity column |
-| An admin for the three relationship tables | `ClubMembership`, `StorefrontStaff` and `ProducerMembership` are not registered. Until they are, the only routes are the shell and the services |
-| The nickname in the Django admin | It moved to `ClubMembership` and the accounts page lost the field. It comes back with the membership admin above |
-| Endpoints that check a platform permission | No API endpoint calls `has_perm` for a `platform.*` action yet. The mechanism is tested directly instead |
+| ~~An admin for the three relationship tables~~ | **Built.** `ClubMembership` and `StorefrontStaff` have admins of their own and `ProducerMembership` is an inline on `Producer`, so every grant is now made in the admin rather than only in a shell |
+| ~~The nickname in the Django admin~~ | **Back.** It moved to `ClubMembership`, and the `ClubMembership` admin is where it is now read and edited |
+| ~~Endpoints that check a platform permission~~ | **Four services do.** `membership.administration` asks `platform.disable_user`, `plant.stock` asks `platform.manage_plant_stock` *and* the object-level question against `ProducerMembership`, `strains.services` asks `platform.manage_strain_catalogue`, and `accounts.services` asks `platform.register_sharing_member`. The check lives in the service rather than the router in all four, so a management command meets the same rule. The remaining twenty-odd codenames still have nothing calling them |
 | ~~What a sharing member holds in the swap zone~~ | **Built.** Four flowering plants against their own allowance — C7 — refused in `Plant.transfer_to` by C15, counting plants per member and never asking what kind of member. The swap zone that will meet the refusal is still Block 10 |
 | Any endpoint for registering a sharing member | `register_sharing_member` is reachable from the shell only. It authorises its own caller, so it is the right shape to put a router in front of |
 | The sharing member read-only login | Specified by C6, deliberately not built at launch. It costs the same whenever it is built, while the identity columns beside it do not |

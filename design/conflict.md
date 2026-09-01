@@ -52,7 +52,7 @@ recorded here rather than in the plan, because a roadmap naming a technology nob
 every future reader to the wrong place.
 
 **Both of the things this entry left open have since been closed, and neither closed the way it was
-written.** The database is MySQL 8.4, not PostgreSQL — `f2c/database.py`, `app/common/checks.py`
+written.** The database is MySQL 8.4, not PostgreSQL — `f2c/database.py`, `app/core/common/checks.py`
 and the CI job were built against it, and `uuid7` keys turn out not to have needed PostgreSQL after
 all. The hosting target is Azure, in West Europe, as three containers and a managed database. Both
 are recorded in **C31**, which supersedes this paragraph.
@@ -279,7 +279,7 @@ it is touched.
 | `app/club/membership/models.py` | `sharing_member_has_a_cultivator` constraint; the attestation columns are absent; `MembershipStatus.SHARING` is labelled "Sharing member (no sign-in)" |
 | `app/core/accounts/tests/test_sharing_members.py` | `AbsenceTests` asserts the removals — it will fail on the restoration, which is what it is for |
 | `design/features/roles-and-permissions.md` §3.1–3.5 | Records the placeholder decision as settled, and closes risks 4, 5 and 6 on the strength of it |
-| `design/backend.md` §3.6 | Describes the *pre*-C6 build and is therefore closer to this decision than the code is — but names `UserStatus.SHARING` and `sharing_member_never_signs_in`, which no longer exist |
+| `design/backend.md` §4.6 | Describes the *pre*-C6 build and is therefore closer to this decision than the code is — but names `UserStatus.SHARING` and `sharing_member_never_signs_in`, which no longer exist |
 
 `SHARING_MEMBER_PLANT_ALLOCATION` is a stronger rule than it was: under the placeholder it was a
 convention with no obvious owner, and it is now a statutory ceiling attaching to a named adult.
@@ -2191,7 +2191,7 @@ codebase, provided whichever is canonical is the one in `SITE_URL`.
 
 **C1** left two things open: no production database, and no hosting target. Both are now fixed, and
 the database half was already built before it was written down — `f2c/database.py`,
-`app/common/checks.py`, `.env.example` and the CI job all target MySQL, while `plan.md` and
+`app/core/common/checks.py`, `.env.example` and the CI job all target MySQL, while `plan.md` and
 `todo.md` still said PostgreSQL. That drift is what this entry closes.
 
 | | Decision |
@@ -2206,7 +2206,7 @@ the database half was already built before it was written down — `f2c/database
 **`uuid7` did not need PostgreSQL.** C1 records the keys as "chosen anticipating PostgreSQL", which
 made the database choice look load-bearing. It is not: `uuid.uuid7` is a Python 3.14 standard
 library function and the column is a `char(32)` either way. Nothing in the schema depends on the
-engine except the constraints `app/common/checks.py` already guards — which is why the MySQL work
+engine except the constraints `app/core/common/checks.py` already guards — which is why the MySQL work
 could be done without revisiting the key strategy at all.
 
 **Containers rather than Azure Static Web Apps, and the reason is in the frontends.** SWA was the

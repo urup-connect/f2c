@@ -18,8 +18,12 @@ destroyed along with their personal data.
 
 Sections 4 and 5 are how those two are reconciled. The rest of the backend is conventional.
 
-The API surface is authentication and a health check, and nothing else. There is no membership, no
-payment, no cultivation record. Section 12 sets out what that means.
+The API surface is no longer only authentication. Forty-four routes are mounted across nine
+routers: authentication, the club documents, member registration and the administrator's member
+register, the profile, the membership payment, the produce store's customer registration, the strain
+catalogue and plant stock capture. What is still absent is everything the money and the fulfilment
+need — no cart, no order, no second gateway, no harvest. Section 6 is the surface; section 12 is the
+gap.
 
 ## 2. Why Django serves no pages
 
@@ -64,8 +68,8 @@ app/market/     the produce market. No apps yet
 | `commerce/producers` | The producer organisation, its appointed people, and which storefronts it sells into | `accounts`, `storefronts` |
 | `club/membership` | Club membership, its nickname, and turning a sign-up submission into a member | `accounts`, `documents`, `payments` |
 | `club/finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
-| `club/strains` | The strain catalogue, the aroma and effect vocabularies, and each producer's listing against a strain. No endpoints | `producers`, `finished_product` |
-| `club/plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. No endpoints | `producers`, `strains`, `finished_product` |
+| `club/strains` | The strain catalogue, the aroma and effect vocabularies, and each producer's listing against a strain. Nine administrator endpoints at `/api/catalogue` | `producers`, `finished_product` |
+| `club/plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. Three capture endpoints at `/api/stock` | `producers`, `strains`, `finished_product` |
 | `f2c` | Settings, URLs, and the API root | all of them |
 
 **Every app sets `label` explicitly**, so a table is `accounts_user` rather than
@@ -101,8 +105,9 @@ disagree with the first, and the half that disagreed would be whichever was used
 Four interfaces, none of them an endpoint: `manage.py plant_template` and `manage.py upload_plants`
 for a batch, `manage.py add_plant` for one, and the admin's add form for one. The admin form
 assembles a row in the reader's own shape and hands it to the same two functions, then maps each
-complaint back onto the field it came from — which is what `RowError.key` is for. Block 9 is where a
-cultivator gets to do any of this themselves.
+complaint back onto the field it came from — which is what `RowError.key` is for. **A cultivator now
+does capture themselves**: `plant/api.py` is mounted at `/api/stock` and serves all three. What still
+waits on Block 9 is the read back — the stock-on-hand screen and the withdrawal.
 
 The other half of the cultivator story's "SOH imports and exports" is
 `manage.py export_stock`, with an admin action beside it for whatever staff have filtered on the
@@ -122,12 +127,16 @@ and each lookup be tested without a workbook. It also puts one rule in exactly o
 cultivator is never read from the file.** `cultivator-stock-upload.md` lists "Cultivator ID" among the
 upload fields, and it is deliberately not a column — a column naming the cultivator is one that could
 be filled in with somebody else's name, and the upload would load stock into their inventory. Who is
-uploading is an argument to the command, and will be the session in Block 9.
+uploading is an argument to the command, and **is the session over the endpoint** — `plant/api.py`
+takes the producer from the payload and then asks `ProducerMembership` whether the caller is
+appointed to it.
 
-The four newest apps are the first to be built with no router at all, which is a deliberate
-consequence of the sequencing rather than an oversight: `todo.md` puts the models in Blocks 1 and 3
-and every endpoint over them in Block 9, so the Django admin is the whole interface until then. What
-they do own is a full admin, which is where `member-roles.md`'s administrator CRUD over strains and
+The four newest apps were the first to be built with no router at all, and two of them still are.
+`strains` and `plant` have since gained one — the administrator's catalogue and the cultivator's
+capture — while `finished_product` and `producers` are reached through the Django admin alone. That
+was a deliberate consequence of the sequencing rather than an oversight: `todo.md` put the models in
+Blocks 1 and 3 and their endpoints later, and the endpoints arrived unevenly because the screens
+did. What all four own is a full admin, which is where `member-roles.md`'s administrator CRUD over strains and
 product types, and its "trace serials and batches", actually live today.
 
 The dependency direction is the thing to check when reading them. `finished_product` knows nothing
@@ -219,7 +228,7 @@ Case-sensitive local parts are legal and universally ignored by real mail provid
 would let someone register `Member@example.com` alongside `member@example.com` and receive the other
 member's sign-in codes.
 
-### 3.1 Status is the source of truth, not a boolean
+### 4.1 Status is the source of truth, not a boolean
 
 `status` is one of Pending, Pending payment, Active, Suspended, Inactive, Sharing. Exactly one
 value grants access.
@@ -249,7 +258,7 @@ The constraint is the backstop for writes that bypass the model entirely — a q
 data migration, raw SQL. Without it, such a write silently locks a member out or lets a suspended
 one back in. With it, the write fails loudly.
 
-### 3.2 The identity number is encrypted, and still searchable
+### 4.2 The identity number is encrypted, and still searchable
 
 `user.id_number` is a property over two columns.
 
@@ -275,7 +284,7 @@ Decryption failure raises `crypto.DecryptionError` and is never swallowed. Retur
 would quietly present unrecoverable data as absent — the worst available outcome, because nobody
 would know to look.
 
-### 3.3 Two secrets, both separate from `SECRET_KEY`
+### 4.3 Two secrets, both separate from `SECRET_KEY`
 
 | Setting | Protects | If lost |
 | --- | --- | --- |
@@ -292,7 +301,7 @@ worse than not booting.
 
 **`DJANGO_FIELD_ENCRYPTION_KEY` must be backed up somewhere other than the database.**
 
-### 3.4 RSA identity numbers
+### 4.4 RSA identity numbers
 
 A 13-digit number is validated as `YYMMDD SSSS C A Z` — birth date, sequence, citizenship digit, a
 legacy digit, Luhn check digit. Structure, embedded date, citizenship digit and checksum are all
@@ -309,31 +318,41 @@ Members without an RSA ID are expected. Nothing in the model requires these vali
 foreign document is stored as given — a passport has no checksum to test, so there is nothing to
 check.
 
-### 3.5 Roles are a column, and permissions are a dictionary
+### 4.5 Roles are relationships, and permissions are a dictionary
 
-`role` is one of Admin, Cultivator, Member or Sharing member. Exactly one per account, defaulting to
-Member, held to the four known values by a check constraint.
+**This section described a `role` column, and C28 retired it.** What follows is the built state; the
+reasoning behind the change is `features/roles-and-permissions.md` section 4, and the migration that
+dropped the column and its mirrored groups is `migrations.md` section 3.3.
 
-A Django group was the obvious alternative and was rejected as the source of truth: a group is
-runtime data, an account can belong to none or to all four, and no constraint can express "exactly
-one". The groups exist anyway, mirrored from the column by `save()`, so that the model permissions
-the strain and plant apps will bring can be attached to a role in one place — but nothing reads them
-to decide anything today.
+There is no `role` column and no group mirroring one. Standing and authority are carried by three
+relationships — `club/membership.ClubMembership`, `core/storefronts.StorefrontStaff` and
+`commerce/producers.ProducerMembership` — and an account may hold all three at once. That is the
+point of the change: one person administers the club, holds a membership and is appointed to a farm,
+and a single column could only ever record one of the three.
 
-What each role may do is a dictionary in `accounts/roles.py`, not `auth.Permission` rows. Almost
-every action is against a model that does not exist yet, and a permission row needs a content type,
-which needs a model. `accounts/backends.py` registers a second authentication backend that resolves
-the dictionary, so `user.has_perm('platform.purchase_plants')` works today and one call still covers
-both kinds of permission. It authenticates nobody: `ModelBackend` stays the only backend that can
-open a session.
+The column was rejected on the same ground a Django group had been rejected before it. A group is
+runtime data, an account can belong to none or to all of them, and no constraint can express
+"exactly one" — but the deeper objection is that "exactly one" was the wrong rule.
 
-Three couplings matter and each is deliberate. **Role is not status** — an inactive account holds
-nothing whatever its role, which is what makes suspension and erasure safe without either knowing
-about permissions. **Role is not `is_staff`** — the two are independent by decision, and the cost of
-that (privilege granted in two places) is on the register. **The resolution issues no query**,
-because `UserOut` serialises the permission list inside async views.
+What each relationship grants is a dictionary in `accounts/roles.py`, not `auth.Permission` rows.
+Many of the actions are against a model that does not exist yet, and a permission row needs a
+content type, which needs a model. `accounts/backends.py` registers a second authentication backend
+that resolves the dictionary, so `user.has_perm('platform.purchase_plants')` works today and one
+call still covers both kinds of permission. It authenticates nobody: `ModelBackend` stays the only
+backend that can open a session.
 
-### 3.6 The sharing member
+`UserOut.role` survives as a **routing hint** and nothing more — a single word naming the club
+destination an account belongs on, resolved by precedence because there is no single true value.
+Risk 12 in `features/roles-and-permissions.md` is what happens if a caller reads it as an authority.
+
+Three couplings matter and each is deliberate. **Authority is not status** — an inactive account
+holds nothing whatever it is appointed to, which is what makes suspension and erasure safe without
+either knowing about permissions. **Authority is not `is_staff`** — the two are independent by
+decision, and section 9 of `features/roles-and-permissions.md` carries the cost. **The resolution
+issues no query**, provided `User.objects.with_platform_roles()` has loaded the three relationships;
+`UserOut` serialises the permission list inside async views, where an unloaded relation is fatal.
+
+### 4.6 The sharing member
 
 A **sharing member** is a real person a cultivator registers so that they can hold four flowering
 plants and have them appear in the swap zone — a new club's zone is otherwise empty. They give a
@@ -421,9 +440,10 @@ personal data is gone.
 `user.deactivate()` is the reversible half: it blocks sign-in and cuts live sessions but erases
 nothing.
 
-`role` deliberately survives erasure too, along with the group mirroring it. A role is a fact about
-the collective's own structure rather than about the person, and it confers nothing on an account
-erasure has left Inactive.
+**The three relationships deliberately survive erasure**, as the `role` column and its mirrored
+groups did before C28 retired both. An appointment or a membership is a fact about the collective's
+own structure rather than about the person, and it confers nothing on an account erasure has left
+Inactive — `permissions_for` returns an empty set for one.
 
 `flush_sessions()` is what makes either of those real. Changing `status` does not touch the session
 store, so without it an already signed-in browser keeps working until its cookie expires. Sessions
@@ -435,6 +455,10 @@ and is the one part of erasure that will need attention at scale.
 Mounted at `/api/` by the project URLconf. Endpoints require a valid session by default; the handful
 that cannot opt out with `auth=None`.
 
+Forty-four routes across nine routers, plus the health probe on the API root.
+
+*Authentication — `core/authn`*
+
 | Endpoint | Session | Purpose |
 | --- | --- | --- |
 | `GET /api/health` | No | Liveness probe |
@@ -444,16 +468,86 @@ that cannot opt out with `auth=None`.
 | `POST /api/auth/otp/start` | No | Send or resend a sign-in code |
 | `POST /api/auth/otp/verify` | No | Exchange a code for a session |
 | `POST /api/auth/logout` | No | End the session |
-| `GET /api/auth/me` | Yes | The signed-in member |
+| `GET /api/auth/me` | Yes | The signed-in account |
 | `POST /api/auth/passkeys/options` | Yes | Options for enrolling a passkey |
 | `POST /api/auth/passkeys` | Yes | Store a verified new passkey |
-| `GET /api/auth/passkeys` | Yes | List the member's passkeys |
+| `GET /api/auth/passkeys` | Yes | List the account's passkeys |
 | `DELETE /api/auth/passkeys/{id}` | Yes | Revoke one |
-| `GET /api/documents/current` | No | Every club document at the revision in force, or 503 |
-| `GET /api/payments/checkout/{token}` | No | The signed Payfast field set for a subscription awaiting payment |
-| `POST /api/payments/payfast/notify` | No | Payfast's server-to-server notification. The only thing that activates a membership |
+
+*Joining — `club/membership` and `core/accounts`*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `POST /api/members/register` | No | Club sign-up. Writes the `User`, the `ClubMembership` at Pending payment and one consent per club document, or nothing |
+| `POST /api/members/nickname/availability` | No | Whether a nickname is free, asked while the form is still open |
+| `POST /api/customers/register` | No | Produce-store sign-up. Writes a `User` and nothing else — no membership, no appointment, no permission |
+
+*The account's own record — `core/accounts`*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `GET /api/accounts/me/profile` | Yes | Name, nickname, mobile, avatar |
+| `PUT /api/accounts/me/profile` | Yes | Correct them |
+| `POST /api/accounts/me/avatar` | Yes | Upload a cropped avatar |
+| `DELETE /api/accounts/me/avatar` | Yes | Remove it |
+| `GET /api/accounts/me/avatar` | Yes | Serve it |
+
+*Club documents — `core/documents`*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `GET /api/documents/published` | No | Every published document for a storefront, for a legal index |
+| `GET /api/documents/current` | No | Every document at the revision in force, or 503 |
 | `GET /api/documents/outstanding` | Yes | Revisions this member has yet to agree to |
 | `POST /api/documents/accept` | Yes | Record agreement to the revisions the member was shown |
+
+*Payment — `core/payments`*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `GET /api/payments/checkout/{token}` | No | The signed Payfast field set for a subscription awaiting payment |
+| `GET /api/payments/me/checkout` | Yes | The same field set for the signed-in member |
+| `POST /api/payments/payfast/notify` | No | Payfast's server-to-server notification. The only thing that activates a membership |
+
+*The member register — `club/membership.administration_api`. Every route, read and write alike,
+holds out for `platform.disable_user` — there is no `manage_members` codename, and the module
+docstring says why a read is gated on the same one as a write*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `GET /api/members` | Yes | The register, filterable |
+| `GET /api/members/{id}` | Yes | One member, with their standing and disclosure history |
+| `PUT /api/members/{id}` | Yes | Correct a member's details |
+| `POST /api/members/{id}/suspend` | Yes | Block an account from signing in, reversibly |
+| `POST /api/members/{id}/reinstate` | Yes | Lift a suspension |
+| `POST /api/members/{id}/identity-number` | Yes | Read one in full, writing an `IdentityNumberDisclosure` row before decrypting |
+
+*The strain catalogue — `club/strains`, every route behind `platform.manage_strain_catalogue`*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `GET /api/catalogue/strains` | Yes | The catalogue |
+| `POST /api/catalogue/strains` | Yes | Add one |
+| `GET /api/catalogue/strains/{id}` | Yes | One strain |
+| `PUT /api/catalogue/strains/{id}` | Yes | Correct it |
+| `POST /api/catalogue/strains/{id}/retire` | Yes | Retire it |
+| `GET /api/catalogue/terms` | Yes | The aroma and effect vocabularies |
+| `POST /api/catalogue/terms/{kind}` | Yes | Add a term |
+| `PUT /api/catalogue/terms/{kind}/{id}` | Yes | Correct one |
+| `GET /api/catalogue/cultivators` | Yes | The producers a listing can be written against |
+
+*Stock capture — `club/plant`. Every route asks `platform.manage_plant_stock` **and** whether the
+caller is appointed to the producer named in the request*
+
+| Endpoint | Session | Purpose |
+| --- | --- | --- |
+| `POST /api/stock/plants` | Yes | Capture one plant |
+| `POST /api/stock/uploads` | Yes | A workbook of them, with a `dry_run` that validates and writes nothing |
+| `GET /api/stock/template` | Yes | The per-cultivator Excel template |
+
+**There is no member-facing read of the last three groups, and that is deliberate.** The catalogue
+and the stock a member would browse are the same rows read for a different audience, so Block 5
+writes a second router rather than relaxing these.
 
 `/api/documents/current` is unauthenticated because sign-up reads it before an account exists. It
 answers 503 rather than a short list when a required document has no published revision: a caller
@@ -465,9 +559,13 @@ Each feature declares its own schemas — `accounts.schemas`, `authn.schemas`, `
 written explicitly rather than generated from models, so a model change cannot silently alter the
 payload the frontend depends on. `accounts.schemas.UserOut` omits `id_number` entirely: it is
 encrypted at rest and has no business crossing the wire to a browser. It carries `role` and the
-`permissions` the role holds, sent together so the frontend never maps one to the other — a second
-copy of the catalogue in a browser bundle would drift from the one the API enforces. Both are for
-rendering navigation; every endpoint checks the permission itself. `common.schemas` holds only
+`permissions` the account's three relationships grant, sent together so the frontend never maps one
+to the other — a second copy of the catalogue in a browser bundle would drift from the one the API
+enforces. **`role` is a routing hint derived by precedence, not the source of the list beside it** —
+section 4.5. It also carries `status` and `membership_status`, which answer different questions:
+whether this identity may sign in, and where their club membership stands, the second being null for
+a produce-store customer. Both `role` and `permissions` are for rendering navigation; every endpoint
+checks the permission itself. `common.schemas` holds only
 the acknowledgement envelope every feature returns.
 
 WebAuthn options and credentials cross as opaque dicts. They are defined by a W3C serialisation that
@@ -566,7 +664,7 @@ It is not a version to wait out: MySQL has no filtered-index feature and no plan
 8.2 was written about and section 8.3 is written around.
 
 The floor is 8.0.16 rather than 8.4 — that is where `CHECK` starts being enforced, and below it every
-check constraint here is decoration, including the two that section 3.1 calls the backstop for writes
+check constraint here is decoration, including the two that section 4.1 calls the backstop for writes
 that bypass the model. MariaDB is not a substitute at any version, because of the expression-index
 row. **Both of those are now asserted at `migrate` rather than trusted** — see 8.5.
 
@@ -581,7 +679,7 @@ enforcing a rule stated nowhere else:
 | `user_mobile_unique` | Two accounts could hold one mobile number | `user_mobile_key_unique` over `User.mobile_key` |
 | `one_live_subscription_per_member` | A member could hold two live subscriptions, and Payfast would bill both | Same name, over `Subscription.live_for_user` |
 
-The nickname was the worst of the three, and section 3.6 says why without knowing it: a nickname is
+The nickname was the worst of the three, and section 4.6 says why without knowing it: a nickname is
 the *only* identifier the API exposes for another member, so two accounts sharing one is
 impersonation rather than a collision. The catalogue depends on that guarantee too — a cultivator's
 public name is their nickname, and a fulfilment document carries nothing else.
@@ -597,7 +695,7 @@ before the pattern is used a fourth time:
 **A derived column can go stale, and a stale uniqueness key is worse than an absent one** — a member
 renamed by hand still occupies their old name and can be handed somebody else's, and every read goes
 through the key, so nothing would show it. So each key is tied to its source by a **check
-constraint**, exactly as `is_active` is tied to `status` in section 3.1. `save()` keeps them true;
+constraint**, exactly as `is_active` is tied to `status` in section 4.1. `save()` keeps them true;
 the constraint catches the write that went around `save()`.
 
 **`save()` now trims the nickname.** That is not tidying: it makes `nickname_key` exactly
@@ -656,7 +754,7 @@ it. The cost is real and is accepted on tables holding hundreds of rows.
 ### 8.5 The guards, because none of this can be trusted to a convention
 
 The database version is a **correctness dependency of this codebase**, not an operational detail, and
-an undeclared dependency is one that is eventually not met. `common/checks.py` declares it. Both
+an undeclared dependency is one that is eventually not met. `core/common/checks.py` declares it. Both
 guards are `Tags.database` checks, which Django runs when they are asked for — which `migrate` does,
 and which is exactly the moment a constraint would be silently skipped. `manage.py check --database
 default` runs them on demand.
@@ -752,14 +850,19 @@ The user model is editable with four restrictions:
 **`is_active` is not a form field.** It is derived from `status`, and a form field would let it
 drift.
 
-**Group membership is not a form field either.** It mirrors `role`, so the same argument applies —
-and there is a mechanical reason too: the admin's `save_m2m()` runs after the model save, so an
-editable groups widget would overwrite the mirror with whatever was rendered before the role
-changed. `role` itself *is* editable, and the admin is the only place a cultivator or an
-administrator is appointed. What the chosen role permits is displayed beside it, read from
-`accounts/roles.py` so the admin cannot describe authority the application does not grant. There are
-deliberately no bulk role actions: activate, suspend and erase are batch operations, and handing out
-authority over other members' records is not.
+**There is no role field, because there is no role column — C28.** Nor is there a role filter.
+Authority is granted by writing one of the three relationships: `ClubMembership` has an admin of its
+own, so does `StorefrontStaff`, and `ProducerMembership` is an inline on `Producer`. That is where a
+cultivator or an administrator is appointed, and it is why one person can now be all three.
+
+**Group membership is a form field again.** It was read-only for as long as `save()` mirrored the
+role column into it — a picker whose value the admin's `save_m2m()` would overwrite after the model
+save. With no column to mirror there is no mirror, and `groups` is an ordinary editable field.
+
+What an account may do is displayed **read-only**, resolved through `accounts.roles` rather than
+restated, so the admin cannot describe authority the application does not grant. There are
+deliberately no bulk authority actions: activate, suspend and erase are batch operations, and
+handing out authority over other members' records is not.
 
 **The Sharing member panel is editable, and points at the service.** It holds `registered_by` and
 the attestation columns. Until there is an endpoint the admin is the only interface staff have, so a
@@ -828,10 +931,18 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `common/tests/test_validators.py` | Check digit, embedded date, length |
 | `accounts/tests/test_models.py` | Status/`is_active` coupling, the encrypted ID number, erasure, display names |
 | `accounts/tests/test_admin_forms.py` | Setting, replacing and clearing an encrypted field staff cannot read |
-| `accounts/tests/test_roles.py` | The catalogue's own shape, the check constraint, `has_perm` through both backends, the group mirror |
+| `accounts/tests/test_customer_registration.py` | The store's sign-up: the byte-identical answer for a new address and a duplicate, the handset match that is sent nothing, the 503 that keeps the account when mail fails, and that every refusal code is one the store renders |
+| `accounts/tests/test_profile.py` | That an account with no relationship at all — a store customer — reads and edits its own record, which is what retiring `manage_own_profile` was for |
+| `accounts/tests/test_avatars.py` | Upload, crop, replace and delete, and what is refused |
+| `accounts/tests/test_notifications.py` | The suspension email, per storefront, on commit, with a send failure logged rather than raised |
+| `accounts/tests/test_uniqueness_keys.py` | The blind index and the normalised mobile key, against raw updates |
+| `accounts/tests/test_roles.py` | The catalogue's own shape and namespacing, that the granting sets do not overlap, the UC-tier actions kept out of it, and `has_perm` through both backends |
 | `accounts/tests/test_sharing_members.py` | Registering one, the attestation without which nothing is written, the constraints that stop them signing in, the vague refusal, erasure. Currently asserts the *absence* of all of that, per the superseded reading of C6 |
-| `membership/tests/test_services.py` | The registration write: duplicates, the age rule, the role and status it lands on |
+| `membership/tests/test_services.py` | The registration write: duplicates, the age rule, and the membership status it lands on |
 | `membership/tests/test_api.py` | The endpoints sign-up posts to, and what they refuse |
+| `membership/tests/test_administration.py` | The register's reads and writes, and the disclosure row written before an identity number is decrypted |
+| `membership/tests/test_administration_api.py` | Every route behind `platform.disable_user`, and the 403 for an account without it |
+| `membership/tests/test_nickname_availability.py` | Taken, reserved and malformed, and that the three are not distinguishable to a caller |
 | `payments/tests/test_gateway.py` | The Payfast protocol: the signature, its two orderings, the PHP-compatible encoding, every configuration refusal |
 | `payments/tests/test_services.py` | What a payment does to a membership: activation, idempotency, renewals, cancellation, lapsing |
 | `payments/tests/test_api.py` | The two endpoints, and the status codes Payfast decides redelivery from |
@@ -852,13 +963,19 @@ impossible while the immutability guard holds, which is exactly why it is surfac
 | `finished_product/tests/test_models.py` | The zero-cost default, `requires_payment` tracking the price, the non-negative constraint against a raw update, retirement without deletion |
 | `strains/tests/test_models.py` | The derived slug as the portable uniqueness key, exclusivity and the fact that nothing in SQL enforces it, the listing constraints against raw updates, C18 through both routes that check it |
 | `strains/tests/test_admin.py` | The listing form, which is the only thing enforcing C18 on the save that creates a listing; and that the cultivator pickers exclude members, administrators and erased growers |
-| `cultivators/tests/test_models.py` | That the pseudonym is the account's own display name and not a second namespace; publication defaults |
+| `producers/tests/test_models.py` | That the pseudonym is the account's own display name and not a second namespace; publication defaults; the appointment rights and the primary that only one person holds |
 | `plant/tests/test_leaf_rating.py` | The brief's five worked examples, the undocumented midpoint, and that the result is always a step of 0.5 |
 | `plant/tests/test_models.py` | Serial allocation and the refusal to restart a sequence; the constraints against raw updates; the ownership history and the one gap in it; the four-plant count and its boundary — a harvested plant and a processed one count, a shipped one does not (C16) — and the refusal built on it: a fifth plant, a harvested fifth plant, the remedy named in the message, the message saying a harvest frees no place, the ledger left untouched, the allowance that never reads negative, and the member with four harvested plants who has nothing swappable |
 | `plant/tests/test_spreadsheet.py` | The template round-tripping through its own reader; the ambiguous date that is refused rather than guessed; the price refused rather than rounded; duplicates inside one file; that there is no cultivator column and none for anything the platform generates |
 | `plant/tests/test_upload.py` | That one bad row stops the file and consumes no serial; that another cultivator's listing is invisible; the C18 column confirming and never overriding; batches shared across two uploads; every refusal the commands make |
 | `plant/tests/test_capture.py` | That a single capture is refused by the same rules as a workbook row and shares its serial counter and plant-ID namespace; that errors arrive keyed by field; and that the admin allocates a serial on add |
 | `plant/tests/test_export.py` | That stock on hand means unsold; that a withdrawn plant is in no scope and another cultivator's stock in none of them; the overdue flag; that every row shares one "today"; and that the owner column is a nickname, absent when nothing is owned |
+| `plant/tests/test_api.py` | The three capture routes: the four outcomes and their four status codes, the dry run that writes nothing, and the object-level refusal when a caller is appointed to a different farm |
+| `strains/tests/test_api.py` | The catalogue routes and the permission each holds out for |
+| `strains/tests/test_services.py` | What the router does not decide: the authorisation, retirement without deletion, and C18 on a listing |
+| `storefronts/tests/test_mail.py` | That each storefront sends as itself, and the configuration refusals that stop a deploy naming no host or no sender |
+| `storefronts/tests/test_checks.py` | The host map, and what an unmapped host falls back to |
+| `common/tests/test_checks.py` | The MySQL version floor, the MariaDB refusal, and the report of any constraint the backend will silently omit |
 
 The suite is written around a specific idea: **test what is invisible when it breaks.** An encrypted
 column that stops round-tripping loses data with no error. A denormalised `is_active` that drifts
@@ -889,16 +1006,21 @@ guards it.
 
 ## 12. What is not built
 
-There is no distribution record. The API is authentication, the club documents, registration,
-payments and a health check. `accounts.User` is the substantive model, alongside the three tables in
-`authn` supporting authentication, the three in `documents`, and the two in `payments`.
+There is no distribution record. The API is authentication, the club documents, both registrations,
+the account's own profile, the membership payment, the member register, the strain catalogue and
+stock capture. `accounts.User` is still the substantive model, alongside the three relationship
+tables that carry standing, the three in `authn` supporting authentication, the three in
+`documents`, and the two in `payments`.
 
-**The catalogue and the plant now exist as data**, which this section used to list as absent, and the
-distinction matters: `strains`, `finished_product`, `cultivators` and `plant` have models,
-constraints, migrations, a full admin and tests — and **no endpoint of any kind.** An administrator
-can curate strains and product types, staff can write a cultivator's listing, and a plant can be
-entered and transferred, all through `/admin/` or a shell. No member can see any of it, because
-nothing serves it. That is Block 9 in `todo.md`.
+**The catalogue and the plant now have endpoints**, which this section used to list as absent twice
+over — first as models, then as models with no route. `strains`, `finished_product`, `producers` and
+`plant` have models, constraints, migrations, a full admin and tests; two of the four now have a
+router as well. What survives of the original point is narrower and still true: **every one of those
+routes is written for staff or for a cultivator, and none of them for a member.** A member can see
+nothing of the catalogue or the stock, because the browse that would serve it is Block 5's and does
+not exist. `finished_product` and `producers` are still reached through `/admin/` or a shell alone —
+so a primary cultivator cannot appoint anybody except through the Django admin, which is Block 2's
+remaining route.
 
 C18 is decided, and it has four levels rather than three. Three of them narrow and are built: the
 platform defines the finished product type catalogue, a listing selects a subset, and
@@ -998,42 +1120,54 @@ at all: Payfast does not pay out, and neither candidate gateway is being conside
 realistic first release is a **payment run** — a payable list per cultivator per period over released
 orders, against the encrypted bank details already on `Producer` — rather than a payout API.
 
-Roles are the newest instance of the same gap, and the sharpest. The three roles, the action
-catalogue and the enforcement path are built and tested; almost nothing they govern exists. No
-endpoint checks a `platform.*` permission, because no endpoint performs an action the catalogue
-names. There is no cultivator organisation, so a primary cultivator cannot appoint anybody. A
-sharing member can be registered and holds no plants — the plant model now exists, so
+Roles are the newest instance of the same gap, though it has narrowed. The three relationships, the
+action catalogue and the enforcement path are built and tested; most of what they govern still does
+not exist. **Four services now check a `platform.*` permission** — `membership.administration` for
+`disable_user`, `plant.stock` for `manage_plant_stock`, `strains.services` for
+`manage_strain_catalogue` and `accounts.services` for `register_sharing_member` — where this section
+used to say none did, and `plant.stock` is the only one that also asks an object-level question. The
+other twenty-odd codenames still name actions with nothing to perform them against. The cultivator
+organisation exists as a record but has no endpoint, so a primary cultivator appoints staff in the
+Django admin rather than on a screen. A sharing member can be registered and holds no plants — the
+plant model now exists, so
 `platform.allocate_sharing_member_stock` is finally *expressible*, but there is no swap zone for them
 to seed. **Block 10 is no longer gated on a legal opinion** — C7 is decided as residual risk — so the
 purpose of the role is now reachable rather than blocked. See
 `design/features/roles-and-permissions.md` section 13, which lists this properly.
 
-Production deployment is deliberately out of scope. When a target is chosen it needs:
+**Production deployment is no longer out of scope, and the target is decided — C31.** Azure in West
+Europe: three Container Apps (the API and both storefronts), an Azure Database for MySQL Flexible
+Server 8.4, an Azure Managed Redis, a Container Registry, a storage account for media and a Log
+Analytics workspace. The API image is written — `Dockerfile` builds `mysqlclient` in a build stage
+and ships `libmariadb3` and the CA roots in the runtime stage, non-root — and `deploy/entrypoint.sh`
+waits for the database, gates on `check --deploy --fail-level WARNING`, migrates and then serves
+under Uvicorn. Both Next.js images are written too. What is left is provisioning rather than code:
 
-| Requirement | Note |
+| Requirement | Position |
 | --- | --- |
-| Process manager fronting Uvicorn | Gunicorn with `UvicornWorker` on Linux |
-| **MySQL 8.4** | SQLite today. 8.0.16 is the hard floor and MariaDB is refused at any version; `common/checks.py` asserts both at `migrate`, and section 8.1 has the reasons |
-| Application settings for the database | `DJANGO_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD`. Plus the MySQL client headers on the host, since `mysqlclient` has no Linux wheel. Section 8.0 |
-| Static file handling | `STATIC_ROOT` plus WhiteNoise or a CDN |
-| A real email provider | `MAILERS` uses the console backend; sign-in codes and the payment link are printed to the terminal and reach nobody |
+| Process manager fronting Uvicorn | **Settled by the container.** `deploy/entrypoint.sh` runs Uvicorn directly and Container Apps supplies the supervision; no Gunicorn layer |
+| **MySQL 8.4** | **Built.** SQLite survives only as the local default. 8.0.16 is the hard floor and MariaDB is refused at any version; `core/common/checks.py` asserts both at `migrate`, and section 8.1 has the reasons |
+| Application settings for the database | `DJANGO_DB_HOST`, `_NAME`, `_USER`, `_PASSWORD`, plus `DJANGO_DB_SSL_CA` — the connection is `VERIFY_IDENTITY` or it is refused. Section 8.0 |
+| Static file handling | `STATIC_ROOT` plus WhiteNoise or a CDN. Still open |
+| A real email provider | **Mostly done, and this row used to be wrong.** The console backend survives only under `DEBUG`, and `_mailer` refuses a deployed environment naming no host, so nothing could ever have shipped silently printing to a terminal. A cPanel provider is configured for both storefronts on 587 with STARTTLS and the club mailbox authenticates. Left: the market mailbox does not, and neither QA nor production carries the values. P1 |
+| `DJANGO_BEHIND_PROXY=true` on the API container | **The single highest-consequence variable.** Container Apps ingress is a reverse proxy, so without it `verify_notification` sees Envoy's address and rejects every Payfast notification. `payments.W001` fires on `check --deploy` and the entrypoint gates on it, so a revision missing it never starts |
 | A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet. **This is F2C's merchant account**, which is correct for the membership fee and wrong for everything else — C10 |
 | A second gateway, and a second merchant account | Member purchases collect into the **Cultivators Collective's** account through PayGate or Stitch. Neither is chosen and nothing is built, so no plant order can be paid for at all — C10.1 |
-| Something that runs `manage.py lapse_memberships` | A daily cron or an App Service WebJob. Until it exists, an unpaid membership keeps its access indefinitely |
-| A shared cache backend | Without it the rate limits are per worker, not per deployment |
-| `manage.py check --deploy` | The Django deployment checklist |
+| Something that runs `manage.py lapse_memberships` | **A timer-triggered Function App — C31**, not the cron or WebJob the command's own docstring still names. It needs a protected endpoint on the API for the Function to call. Until it exists, an unpaid membership keeps its access indefinitely |
+| A shared cache backend | **Built.** Azure Managed Redis deployed, `redis:7-alpine` locally; `f2c/cache.py` refuses a deployed environment naming none, and refuses `redis://` where the access key would travel in clear |
+| `manage.py check --deploy` | **Enforced rather than remembered.** The entrypoint runs it at `--fail-level WARNING` before Uvicorn starts, so a warning is a failed revision and the previous one keeps serving |
 
 ## 13. Risks
 
 | # | Risk | Status                                                                                       |
 | --- | --- |----------------------------------------------------------------------------------------------|
 | 1 | Losing `DJANGO_FIELD_ENCRYPTION_KEY` destroys every stored identity number with no recovery path. | Open — needs a documented backup and rotation procedure                                      |
-| 2 | The default `LocMemCache` makes rate limits per worker. A multi-worker deployment silently multiplies every limit. | Open — blocks production                                                                     |
+| 2 | The default `LocMemCache` makes rate limits per worker. A multi-worker deployment silently multiplies every limit. | **Closed — C31.** Azure Managed Redis in QA and production, `redis:7-alpine` locally. `f2c/cache.py` refuses a deployed environment that names no `DJANGO_REDIS_URL`; `LocMemCache` survives only as the no-configuration fallback that keeps the suite runnable |
 | 3 | Codes are printed to the console. No email provider is configured, so no member can sign in on a deployed environment. | Partly closed, and stated wrongly — the console backend survives only under `DEBUG` and `_mailer` refuses a deployed environment naming no host. A provider is configured for both storefronts and the club mailbox authenticates; the market mailbox does not, and QA and production carry none of the values. P1 |
 | 4 | `flush_sessions()` decodes every live session to find one member's. Linear in session count. | Accepted at current scale                                                                    |
 | 5 | `login/start` reveals which addresses have a passkey, because credential IDs must reach the browser for the authenticator to match against. Inherent to identifier-first passkey flows; closing it means moving to a usernameless flow over discoverable credentials. | Accepted                                                                                     |
-| 6 | `role` and `is_staff` are independent, so privilege is granted in two places and they can disagree. Accepted by decision; the admin says so rather than hiding it. | Accepted                                                                                     |
-| 7 | The role-to-group mirror is best-effort. Harmless while no platform action comes from a group, which is today. It stops being harmless the day model permissions hang off a role group. | Open — see `features/roles-and-permissions.md` risk 3                                        |
+| 6 | ~~`role` and `is_staff` are independent, so privilege is granted in two places and they can disagree.~~ | **Closed by C28 and C29.** There is no role column. `is_staff` and a `StorefrontStaff` row remain two grants made in the same admin, which is intended — `features/roles-and-permissions.md` section 9 |
+| 7 | ~~The role-to-group mirror is best-effort and drifts.~~ | **Closed.** The groups went with the column — section 4.5, and `migrations.md` §3.3. `groups` is an ordinary editable admin field again |
 | 8 | The action catalogue names actions against models that do not exist, so a codename may not survive contact with the real thing — and a renamed codename is a silent loss of authority, not an error. | Accepted at this stage                                                                       |
 | 9 | A refused sharing-member registration tells the cultivator that the identity number is known to the club. Unavoidable while one account per identity document is enforced and the cultivator has to be told the registration failed. | Accepted — the refusal names no record, role or other cultivator. C34 is the case that makes it sting: a sharing member trying to join the club properly |
 | 10 | The sharing-member consent attestation is a cultivator's word rather than the person's own act, and nothing re-attests when the wording is revised. Under C33 it now evidences the mandate to offer that person's plants as well as the POPIA basis. | Open — wants legal review of the wording. The deferred read-only login is what closes it: a person who signs in can consent for themselves |
@@ -1041,7 +1175,7 @@ Production deployment is deliberately out of scope. When a target is chosen it n
 | 12 | The root `.gitignore` is a copy of the Next.js frontend template. It covers no Python artefact at all — not `.venv/`, `__pycache__/`, `*.pyc`, `.idea/`, nor `db.sqlite3` and its `.pre-customuser.bak` copy. The project is not yet under version control, so the first `git add` would commit a virtual environment and two databases. | Closed                                                 |
 | 13 | Three constraints silently disappeared on MySQL, because it builds no partial index and Django omits what the backend will not build. Nickname uniqueness, mobile uniqueness and one-live-subscription-per-member were absent from any deployed schema while the models, the migrations and the suite all still described them. Section 8.2. | **Closed** — `accounts/0007` and `payments/0002` moved all three onto derived columns with unconditional unique indexes, each tied to its source by a check constraint |
 | 14 | The suite runs on SQLite locally, so a constraint assertion passes there whether or not the deployed database enforces the rule. The one class of invisible failure the suite cannot catch by itself. Section 8.6. | **Closed** — `.github/workflows/ci.yml` runs the whole suite against MySQL 8.4, asserts the vendor before it does, and migrates an empty database so the hand-written backfills run |
-| 15 | MySQL below 8.0.16 parses `CHECK` and discards it, which would silently unenforce every check constraint in the project — including the `is_active`/`status` backstop in section 3.1, and MariaDB would drop expression indexes the same way. | **Closed** — `common/checks.py` refuses both at `migrate`, and a second guard reports any constraint the backend will omit rather than build. Section 8.5 |
+| 15 | MySQL below 8.0.16 parses `CHECK` and discards it, which would silently unenforce every check constraint in the project — including the `is_active`/`status` backstop in section 4.1, and MariaDB would drop expression indexes the same way. | **Closed** — `core/common/checks.py` refuses both at `migrate`, and a second guard reports any constraint the backend will omit rather than build. Section 8.5 |
 | 16 | Strain exclusivity spans two tables, so no constraint can express it. `CultivatorStrainListing.clean` is the only thing enforcing it, and a queryset `.create()` walks past it. | Open — closes when Block 2 puts a service in front of the write, as `accounts.services` does for sharing members |
 | 17 | The C18 subset rule is enforced in a model and in an admin form, because a many-to-many is invisible to `Model.clean` until the row exists. `ManyToManyField.set` from a shell bypasses both. | Accepted — one shared `check_offered_types` means the rule exists once, and both callers are tested |
 | 18 | Listing and profile images write to the default storage, which is local disk. `documents` is CDN-fronted but reserved for published club documents, and `accounts` is deliberately private, so public catalogue imagery has nowhere correct to go. | Open — a third, public container. Block 1 leftover |

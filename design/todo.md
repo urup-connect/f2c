@@ -132,7 +132,7 @@ in on a deployed environment today.**
       who can administer it. This was Block 2's *promote the existing administrator accounts*; C29
       turned it from a role change into a deployment step
 - [x] Choose a hosting target and provision the database. **Decided, and not as written**: the
-      database is MySQL 8.4 and was already built that way — `f2c/database.py`, `app/common/checks.py`
+      database is MySQL 8.4 and was already built that way — `f2c/database.py`, `app/core/common/checks.py`
       and the CI job — while this line still said PostgreSQL. `uuid7` needed neither. The target is
       Azure in West Europe: three Container Apps, a managed MySQL, a Function App for the timer —
       **C31**
@@ -838,6 +838,11 @@ Test collection went from **323 to 1148** as the import failures cleared. **1085
 suite runs 1932 tests in 103 files and all pass (1928 before). Nothing on the test side of this block
 is outstanding.**
 
+**Re-verified 1 September 2026, against the work landed since**: `manage.py test` runs **1666 tests**
+and all pass; the club frontend runs **1974 tests in 107 files** and the store **353 in 23**, all
+passing. The counts here and in `design/frontend.md` are the 1 September figures; the 28 August ones
+above are kept because they are what closed the block.
+
 ---
 
 ## Block B — Market vertical
@@ -857,7 +862,8 @@ is not read as an unfinished step. `frontend/market` **now exists** and fills th
 - [x] **Create `frontend/market`** as the second Next.js application, filling the workspace slot that
       `frontend/package.json` already declares. Built: the front door, the legal index, sign-in
       (passkey and emailed code), sign-up, and the signed-in account area — home, details, security —
-      with 338 colocated tests. Runs on port 3001. `design/frontend.md` section 11 is the design
+      with 353 colocated tests in 23 files. Runs on port 3001. `design/frontend.md` section 11 is
+      the design
 - [x] **A customer registration endpoint — done.** `POST /api/customers/register`, unauthenticated,
       over `app/core/accounts/registration.py` and `registration_api.py`, mounted at `/customers`.
       **The store now takes accounts**: sign-up, then a sign-in code, then the account area, working
@@ -1482,7 +1488,7 @@ Block 6 depends on this: a harvest notification is the only thing that tells a m
 
 ## Block 9 — Administration API and portal
 
-**C5.** The brief heads its administrator section "Admin (NextJs)". **Three of the twenty-nine
+**C5.** The brief heads its administrator section "Admin (NextJs)". **Three of the thirty
 destinations are live** — the membership register, the strain catalogue and the member's own profile
 — and twenty-six still render as *Not built yet* with no endpoint behind them, so most
 administration still happens by hand in the Django admin. `club-navigation.ts` is the count:

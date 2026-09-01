@@ -350,11 +350,15 @@ engine only by asking for it.
 ## 9. What is not built
 
 - **Nothing schedules `lapse_memberships`.** Until something does, an unpaid membership keeps its
-  access indefinitely. A daily cron or an App Service WebJob is the intended home. Risk 2.
+  access indefinitely. **The intended home is a timer-triggered Function App — C31**, not the daily
+  cron or App Service WebJob the command's own docstring still names; that needs a protected endpoint
+  on the API for the Function to call, because packaging Django into the Function App would mean a
+  second deployment artefact on a preview Python runtime. Risk 2.
 - **No member-facing subscription screen.** A member cannot see what they pay, when it renews, or
   what they have paid, and cannot cancel from this application — cancellation is done in Payfast or
-  by asking the club. The authenticated frontend is written but not routed
-  (`frontend.md` §9), so there is nowhere to put it yet.
+  by asking the club. **The place to put it now exists** — `/member` and `/profile` are routed and
+  guarded — so this is a screen and an endpoint to write rather than a structural gap. The
+  destination is already in `club-navigation.ts`, marked `planned`.
 - **No email when a membership is activated, lapses, or fails to renew.** The copy on `/signup/paid`
   promises one, and nothing sends it. **The mail plumbing is no longer the obstacle** — a provider is
   configured for both storefronts and the club mailbox authenticates (P1) — so what is missing here
@@ -377,7 +381,7 @@ engine only by asking for it.
 | --- | --- | --- | --- |
 | 1 | A duplicate registration reaches a different screen from a new one | Somebody submitting another person's address learns it may already be on file — a partial reversal of the non-disclosure rule in `sign-up.md` | Accepted, and bounded: one field differs, nothing is confirmed, and the three duplicate keys still answer identically to each other. The alternative — emailing every member their link — was weighed and declined for conversion. Revisit if the club treats membership as more sensitive than the conversion is worth |
 | 2 | Nothing runs `lapse_memberships` | An unpaid or cancelled membership keeps its access indefinitely | Open. The command and its tests exist; the schedule does not. This is the largest functional gap in the feature |
-| 3 | No real email provider | The emailed payment link — the entire duplicate-registration fallback — is printed to a console and reaches nobody | Open, and shared with sign-in codes. Until `MAILERS` is real, a duplicate registration has no route to payment at all |
+| 3 | No email provider on the deployed environments | The emailed payment link — the entire duplicate-registration fallback — reaches nobody there | **Partly closed, and this row used to be stated wrongly.** The console backend survives only under `DEBUG` and `_mailer` refuses a deployed environment naming no host, so nothing was ever silently printing to a terminal in QA. A cPanel provider is configured for both storefronts on 587 with STARTTLS and the club mailbox authenticates; the market mailbox does not, and neither QA nor production carries the values. Shared with sign-in codes — P1 |
 | 4 | `X-Forwarded-For` is read when `DJANGO_PAYFAST_BEHIND_PROXY` is set | If the edge appends to that header rather than overwriting it, a caller can prepend a Payfast address and defeat the source check | Mitigated by making it opt-in per deployment and documenting the requirement. The signature and the Payfast callback still stand behind it, so defeating one check is not sufficient |
 | 5 | MD5 signatures | The digest is weak | Not ours to choose: it is what Payfast computes, so it is what verifies. The integrity of the exchange rests on the passphrase and on the callback in section 3.2, not on the digest |
 | 6 | The notification endpoint is unthrottled | A burst of requests reaches the verification logic | Deliberate. It already refuses every caller that is not one of Payfast's notification hosts, which is tighter than any rate. A limit there would drop *real* notifications on the first of the month, when every monthly subscription renews at once — and a dropped notification is a member who paid and cannot sign in |

@@ -222,9 +222,10 @@ class Subscription(models.Model):
             #
             # So the derived column is tied to the two columns it is derived
             # from, in SQL. `accounts.User`'s `is_active` constraint is the same
-            # pattern for the same reason, and section 3.1 makes the general
-            # argument: `save` keeps a denormalised column true, and a check
-            # constraint is what catches the write that went around `save`.
+            # pattern for the same reason, and `design/backend.md` section 4.1
+            # makes the general argument: `save` keeps a denormalised column
+            # true, and a check constraint is what catches the write that went
+            # around `save`.
             # `live_for_user__isnull=False` is not redundant beside the equality,
             # and leaving it out made this constraint silently useless. A `CHECK`
             # fails only when its condition is *false*; SQL comparisons against

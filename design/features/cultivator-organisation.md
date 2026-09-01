@@ -44,7 +44,7 @@ the commerce side rather than in the club vertical.
 
 **There is no pseudonym column.** `Producer.pseudonym` returns the trading name. A second namespace
 for public names, free to hold a value identical to a member's nickname and impossible to constrain
-across two tables, is the thing `backend.md` section 3.6 refused for sharing members and it is
+across two tables, is the thing `backend.md` section 4.6 refused for sharing members and it is
 refused here for the same reason.
 
 **What settlement actually needs is still open — C10.** The fields above are the ones the drawio

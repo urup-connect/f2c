@@ -74,7 +74,11 @@ Everything in the built list is in the repository with tests. Nothing in the not
 - Three role home pages rendering a destination catalogue from `permissions`, never from a role.
 - Administrator screens: the membership register at `/admin/members` — read, edit, suspend and
   reinstate, with a recorded disclosure of an identity number read in full — and the strain
-  catalogue at `/admin/strains`, over `app/club/strains/api.py`.
+  catalogue at `/admin/strains`, with its `new`, `[id]` and `terms` screens, over
+  `app/club/strains/api.py`.
+- **Stock capture over HTTP** — `app/club/plant/api.py` at `/api/stock`: one plant, a workbook with a
+  dry run, and the per-cultivator template. The first module to ask an object-level permission
+  question, and **no screen calls it yet** — a cultivator's own pages are all still `planned`.
 
 *The market storefront — `frontend/market`, `f2c.co.za`*
 
@@ -110,14 +114,16 @@ No delivery address. No harvest. No fulfilment. No swap. No review. No notificat
 ticket. No settlement. No produce vertical — `app/market` is an empty package, and
 `frontend/README.md` records why the emptiness is not an unfinished step.
 
-**The models landed ahead of the endpoints, and that is the shape of the gap.** There is no `api.py`
-in `app/club/plant` at all: the plant, its serials, its batches and its ownership ledger are built
-and tested, and the only ways to reach any of them are the Django admin and three management
-commands. Block 2's producer models sit the same way — `ProducerRole` carries full and limited
-rights and the only way to appoint anybody is the admin. `roles-and-permissions.md` section 13 still
-puts it most sharply: the catalogue and the enforcement path are built and tested, and most of what
-they govern has no surface. Twenty-six of the twenty-nine destinations on the club home pages still
-carry no `href`, honestly.
+**The models landed ahead of the endpoints, and that is still the shape of the gap — though the
+plant has closed half of it.** `app/club/plant/api.py` now exists, mounted at `/api/stock`: a
+cultivator captures one plant, uploads a workbook with a dry run, and fetches their own template.
+What has no route is the read back — the stock-on-hand screen, the withdrawal, and the member-facing
+browse that is Block 5's. Block 2's producer models sit as they did — `ProducerRole` carries full
+and limited rights and the only way to appoint anybody is the Django admin.
+`roles-and-permissions.md` section 13 puts the general case most sharply: the catalogue and the
+enforcement path are built and tested, four services now check a codename, and most of what the
+catalogue governs still has no surface. **Twenty-seven of the thirty destinations on the club home
+pages carry no `href`**, honestly. `club-navigation.ts` is the count.
 
 **The critical path is not a feature.** No member can sign in on a *deployed* environment, because
 QA and production have no mail configuration — not because none exists. P1 said sign-in codes print
@@ -418,10 +424,13 @@ The leaf rating is computed here even though nothing shows it until Block 10 —
 the plant's grow price, and **C4** separates it from star ratings for good. Its rounding tie-break
 was undefined in the brief and **is now chosen: round half up**, in `Decimal` throughout.
 
-Left: there is no `api.py` in `app/club/plant` at all, so all three routes are staff-side and a
-cultivator does nothing themselves until Block 9. `platform.disable_plant` and
-`platform.disable_batch` are in the catalogue and **nothing calls `has_perm` on either** — the admin
-authorises on `is_staff` like every other Django admin page.
+**Capture is now served over HTTP** — `app/club/plant/api.py` at `/api/stock`, three routes: one
+plant, a workbook with a dry run, and the per-cultivator template. It is the first module in the
+project to ask an object-level question, `platform.manage_plant_stock` and then whether the caller is
+appointed to *that* producer. Left: no screen calls any of it, so a cultivator still needs staff to
+run the commands; and there is no read back — stock on hand is `manage.py export_stock` and an admin
+action. `platform.disable_plant` and `platform.disable_batch` are in the catalogue and **nothing calls
+`has_perm` on either** — the admin authorises on `is_staff` like every other Django admin page.
 
 The leaf-rating floor **is now decided**: a rating floors at 0.1 rather than rounding to 0.0, and a
 plant under one whole step of 0.5 cannot enter the swap zone — `Plant.assert_swappable` refuses it
@@ -539,10 +548,11 @@ finalise — so the two are built adjacent deliberately.
 
 ### Block 9 — Administration API and portal · 4 weeks
 
-**Status: three of the twenty-nine destinations are live** — the membership register, the strain
-catalogue and the member's own profile. Twenty-six still render as *Not built yet* with no endpoint
-behind them, so most administration still happens by hand in the Django admin.
-`club-navigation.ts` is the count.
+**Status: three of the thirty destinations are live** — the membership register, the strain
+catalogue and the member's own profile. Twenty-seven still render as *Not built yet*, so most
+administration still happens by hand in the Django admin. Two of those twenty-seven now have an
+endpoint waiting behind them — the three stock-capture routes at `/api/stock` — and no page that
+calls it. `club-navigation.ts` is the count.
 
 Built: view, edit, suspend and reinstate a member, with recent sign-ups as a filter on the same
 register rather than a screen of its own, and **reading an identity number in full, recorded** —
@@ -725,7 +735,7 @@ against**:
 | **R2** | Block A | Anything can be listed, found, bought, paid for, settled and reviewed | Not started. The catalogue half of it is built — Block 1 |
 | **R3** | Block B | **The market trades. First order revenue, no legal opinion required** | Storefront and accounts built; the produce vertical is not |
 | **R4** | Block C | A member buys a plant and receives product. The club's loop closes | Not started. The plant itself is built — Block 3 |
-| **R5** | Block D | Each storefront is run from its own administration area. The UC tier stays in the Django admin — C29 | Three of twenty-nine destinations live |
+| **R5** | Block D | Each storefront is run from its own administration area. The UC tier stays in the Django admin — C29 | Three of thirty destinations live |
 | **R6** | Block E | Swap zone. Plant subscriptions and reporting | Not started. **Ungated** — C7 decided as residual risk |
 
 **R1 is complete and R0 is not, and that is deliberate rather than a slip.** What is left of R0 is

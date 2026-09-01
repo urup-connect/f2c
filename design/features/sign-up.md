@@ -346,8 +346,14 @@ bundle.
 
 ### The record
 
-One `User` row at **Pending payment**, and one `DocumentConsent` per club document, written together
-or not at all.
+One `User` row, one `ClubMembership` at **Pending payment**, and one `DocumentConsent` per club
+document, written together or not at all.
+
+**The standing moved off the `User` in Block 0.5 — C27, C28.** It used to be a `status` column on the
+identity, which is why an unpaid registrant could not sign in at all: `is_active` is derived from
+`status` under a check constraint, and `PENDING_PAYMENT` is not `ACTIVE`. The identity now carries
+only whether this person may sign in; where their club membership stands is `ClubMembership.status`,
+and it is null for somebody who holds no membership — a produce-store customer.
 
 | Value | Stored as |
 | --- | --- |

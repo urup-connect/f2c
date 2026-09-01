@@ -433,11 +433,12 @@ class User(AbstractBaseUser, PermissionsMixin):
                     'Another account already holds that mobile number.'
                 ),
             ),
-            # `mobile_key` is a denormalised column, and section 3.1's argument
-            # about `is_active` applies to it word for word: a column derived by
-            # `save` is a column a queryset `.update()`, a data migration or raw
-            # SQL can leave behind. So it is tied to its source in SQL, and this
-            # is the backstop rather than the rule.
+            # `mobile_key` is a denormalised column, and the argument in
+            # `design/backend.md` section 4.1 about `is_active` applies to it
+            # word for word: a column derived by `save` is a column a queryset
+            # `.update()`, a data migration or raw SQL can leave behind. So it
+            # is tied to its source in SQL, and this is the backstop rather
+            # than the rule.
             #
             # The explicit null test beside the equality is load-bearing, not
             # belt and braces. A `CHECK` fails only when its condition is

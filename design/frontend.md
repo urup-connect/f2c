@@ -84,9 +84,21 @@ colocated as `<Name>.test.tsx`. `components/README.md` records the rule.
 | `/age-check` | Server | The eighteen-year gate in front of joining. |
 | `/signup` | Server | The details a joining member gives. Age-gated. |
 | `/login` | Server | Sign-in. Renders `Auth/SignInForm`. Sends an already-signed-in visitor to their own area. |
+| `/signup/paid` | Server | The confirmation a paid registration lands on. |
+| `/signup/cancelled` | Server | The confirmation an abandoned checkout lands on. |
+| `/pay` | Server | The outstanding-payment screen for a member the session already identifies. |
+| `/pay/[token]` | Server | The same screen reached from the emailed link, for a member with no session. |
+| `/blocked` | Server | What a suspended or revoked account is shown. Names their standing, and deliberately not the club's reasons — C32. |
 | `/member` | Server | A member's home. Guarded. |
 | `/cultivator` | Server | A cultivator's home. Guarded. |
 | `/admin` | Server | An administrator's home. Guarded. |
+| `/profile` | Server | The account's own record: name, nickname, mobile, and the avatar with its cropper. Guarded. |
+| `/admin/members` | Server | The membership register. Behind `platform.disable_user`. |
+| `/admin/members/[id]` | Server | One member: read, edit, suspend, reinstate, and the recorded disclosure of an identity number read in full. |
+| `/admin/strains` | Server | The strain catalogue. Behind `platform.manage_strain_catalogue`. |
+| `/admin/strains/new` | Server | Add a strain. |
+| `/admin/strains/[id]` | Server | Edit or retire one. |
+| `/admin/strains/terms` | Server | The aroma and effect vocabularies. |
 | `/api/nickname/availability` | Route Handler | The sign-up form's nickname check, proxied to Django. See `sign-up.md` section 7. |
 | `/robots.txt` | Dynamic | Read at request time, not build time. |
 | `/sitemap.xml` | Dynamic | Read at request time, not build time. |
@@ -151,9 +163,10 @@ holds the catalogue of destinations, each keyed to a `platform.*` codename, and 
 `app/core/accounts/roles.py` as text and refuses a codename Django does not grant — so a renamed action
 cannot quietly empty a menu.
 
-Almost every destination is marked `planned` and renders as inert text with a "Not built yet" badge,
-because the models they act on do not exist. A planned tile is never a link and never a disabled
-button: a control that looks operable and does nothing costs a member a click and a screen-reader
+**Twenty-seven of the thirty destinations are marked `planned`** and render as inert text with a
+"Not built yet" badge, because the screens they name do not exist. The three that are `ready` — the
+strain catalogue, the member register and the account's own profile — carry an `href` and render as
+links. A planned tile is never a link and never a disabled button: a control that looks operable and does nothing costs a member a click and a screen-reader
 user considerably more, and an anchor to a route that answers 404 is worse than both.
 
 ### Server actions, not client state
@@ -286,17 +299,25 @@ catalogue of what it intends to offer, almost all of it marked *Not built yet*. 
 state: `roles-and-permissions.md` section 13 lists the models that do not exist, and the tiles name
 the screens that will sit on top of them.
 
-Two specific gaps behind the gate:
+Three specific gaps behind the gate:
 
-- **No administration screens.** The administrator's home is self-contained — it does not link to
-  the Django admin, because that opens on `is_staff` and the two facts are independent, so such a
-  link would work for some administrators and refuse others. The cost is that the nine
-  administrative destinations have no API endpoint behind any of them, and records are still managed
-  by hand in the Django admin by somebody holding `is_staff`.
+- **Two administration screens exist; the other seven do not.** The membership register at
+  `/admin/members` and the strain catalogue at `/admin/strains` are built over
+  `administration_api.py` and `strains/api.py`. The rest of the administrative catalogue — product
+  types, club rules, cultivator management, the member holdings view (C14), reporting — has no
+  endpoint behind it and is still done by hand in the Django admin by somebody holding `is_staff`.
+  The administrator's home does not link to the Django admin, because that opens on `is_staff` and
+  the two facts are independent, so such a link would work for some administrators and refuse others.
+- **Nothing a cultivator does is on a screen.** `POST /api/stock/plants`, `/uploads` and
+  `GET /template` are built and no page calls them, so stock is still loaded with
+  `manage.py upload_plants`. The cultivator's home is entirely `planned` tiles.
 - **Outstanding club documents are not surfaced.** `GET /api/documents/outstanding` exists and
   nothing calls it, so a member owing a re-acceptance is not asked for one.
 
-**Nothing entered at sign-up is stored.** See `features/sign-up.md` section 6.
+**What is entered at sign-up is stored** — this section used to say it was not, and that has been
+wrong since `club/membership` landed. `signup/actions.ts` posts to `POST /api/members/register`,
+which writes the `User`, the `ClubMembership` at Pending payment and one `DocumentConsent` per club
+document, together or not at all. See `features/sign-up.md` section 6 for the record it writes.
 
 ## 10. Risks
 
@@ -306,7 +327,7 @@ Two specific gaps behind the gate:
 | 2 | `NEXT_PUBLIC_DJANGO_API_URL` was baked into the client bundle at build time, so one artefact could not serve two environments. | **Closed** — replaced by `DJANGO_API_PUBLIC_URL`, read per request and rendered into the document. Verified: one build served under two addresses without a rebuild. |
 | 3 | The age pass is unsigned. Accepted, because the rule is re-applied on read and there is nothing to protect. Signing arrives free if an `AUTH_SECRET` is ever introduced. | Accepted |
 | 4 | `.next/types/validator.ts` is generated build output that `tsconfig.json` includes. A stale copy referencing deleted routes breaks `npm run typecheck` with errors that point at no real source file. Cleared once; will recur after routes are renamed. | Open |
-| 5 | 1,305 tests take about sixty seconds, most of it jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
+| 5 | The club suite is **1,974 tests in 107 files** and the store's is 353 in 23. Most of the runtime is jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
 | 6 | `app/api/nickname/availability/route.test.ts` asserts an eight-character random hex reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex, so the test fails on roughly one run in thirty. Predates this work. | Open — a one-line fix, not yet taken |
 | 7 | `CDN_BASE_URL` is read while `/` is prerendered, so the club film's address is fixed at build time — as `SITE_URL` already is, through the root layout's `metadataBase`. A promoted artefact serves the film from the wrong host. Same class as risk 2. Making the one indexable page dynamic would cost more than it saves; the remedy is a build per environment. | Open |
 
@@ -316,7 +337,7 @@ Two specific gaps behind the gate:
 
 `frontend/market`, the produce market storefront, filling the npm workspace slot
 `frontend/package.json` has declared since Block 0.5. Same stack, same three layers, same testing
-approach; 338 unit tests. It runs on port 3001 so both applications can run at once.
+approach; **353 unit tests in 23 files**. It runs on port 3001 so both applications can run at once.
 
 What follows is only what differs from sections 1 to 10. Everything not mentioned is the same.
 
