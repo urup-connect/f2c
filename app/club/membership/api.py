@@ -23,6 +23,14 @@ only field that can be checked ahead of the submission without the form becoming
 a way to ask whether a named person is a member here. It is a courtesy and not a
 gate -- ``/register`` asks again inside the transaction that writes.
 
+The one thing ``/register`` takes that sign-up does not ask for is
+``campaign``: the ``utm_*`` parameters, ad click id and referring site the
+frontend read off the URL when the visitor first arrived, carried in a cookie
+until there was a record to attach them to. It is optional, it changes no
+outcome, and it cannot produce a refusal -- ``app.core.attribution`` cleans or
+drops every value rather than validating it. A caller that omits it registers a
+member with no campaign, which is what most members have.
+
 Nothing here decides anything. Every rule is in ``services`` and
 ``common.validators``, so each endpoint is a translation of exceptions into
 status codes and nothing more.
@@ -93,6 +101,12 @@ def register(request, payload: RegisterIn):
             mobile=payload.mobile,
             id_number=payload.id_number,
             consents=submitted,
+            # `.dict()` rather than the schema object: the service takes plain
+            # mappings so that a caller which is not this endpoint -- a
+            # management command backfilling, the market's own registration when
+            # it arrives -- does not have to build a ninja schema to record a
+            # campaign. `None` stays `None`, which is an untagged visitor.
+            campaign=payload.campaign.dict() if payload.campaign else None,
         )
     except services.NicknameTaken as refusal:
         return 409, {'detail': str(refusal), 'nickname_unavailable': True}

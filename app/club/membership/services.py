@@ -16,7 +16,7 @@ in the same transaction as the member and then knows nothing more about it --
 which is why the only payment concept in this module is a checkout token being
 handed back to the caller.
 
-Four rules run through it.
+Five rules run through it.
 
 **Every field is validated again here.** ``POST /api/members/register`` is
 unauthenticated and reachable without going through the frontend at all, so a
@@ -44,6 +44,13 @@ other members and the member has to choose another one.
 agreements go in together or not at all, so there is no such thing as a member
 whose agreements were lost, or an agreement against a member who was not
 created.
+
+**Attribution is recorded and cannot refuse.** Where the submission carries the
+campaign the frontend's cookie held, the touches are written in the same
+transaction and pointed at from the membership -- see ``app.core.attribution``.
+It is the one input to this function that is not validated: every value in it is
+a label read off a URL, and a registration that failed because a ``utm_content``
+was too long would be marketing breaking membership.
 """
 from dataclasses import dataclass
 
@@ -51,6 +58,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from app.core.accounts.models import User
+from app.core.attribution import services as attribution_services
 from app.club.membership.models import ClubMembership, MembershipStatus
 from app.core.storefronts.models import Storefront
 from app.core.common.validators import (
@@ -231,6 +239,7 @@ def register_member(
     mobile,
     id_number,
     consents,
+    campaign=None,
     today=None,
 ):
     """Create a member at ``PENDING_PAYMENT``, in the Member role, with their
@@ -238,6 +247,13 @@ def register_member(
 
     ``consents`` is a list of ``{'document': slug, 'version': label}``, one per
     document required at sign-up.
+
+    ``campaign`` is ``{'first': {...}, 'last': {...}}`` as the frontend read it
+    out of its campaign cookie, or ``None``. It is the one argument here that
+    cannot cause a refusal: ``attribution.services`` cleans or drops every value
+    rather than validating it, so a malformed campaign costs a report a row and
+    costs the member nothing. Nothing is written for a duplicate submission,
+    which writes nothing at all.
 
     :raises ValidationError: a field is not acceptable, or the identity
         document says the applicant is under age.
@@ -349,10 +365,28 @@ def register_member(
     # The nickname lands here, which is also where its uniqueness index lives,
     # so the check a few lines above and the constraint that backs it are over
     # the same column.
+    # What brought them here, written in the same transaction and pointed at
+    # from the membership. `record_touches` answers `(None, None)` for a visitor
+    # who arrived untagged, which is most of them, and that is what a membership
+    # with no campaign carries. It cannot raise: see its module docstring on why
+    # attribution never refuses a registration.
+    #
+    # The club's storefront, named rather than resolved from the request, for the
+    # same reason `_resolve_consents` names it: joining the club is club-scoped by
+    # definition, and reading it off the host would let a market campaign be
+    # recorded as a club one.
+    first_touch, last_touch = attribution_services.record_touches(
+        storefront=Storefront.CLUB,
+        first=(campaign or {}).get('first'),
+        last=(campaign or {}).get('last'),
+    )
+
     ClubMembership.objects.create(
         user=user,
         nickname=nickname,
         status=REGISTERED_MEMBERSHIP_STATUS,
+        first_touch=first_touch,
+        last_touch=last_touch,
     )
 
     document_services.record_consents(

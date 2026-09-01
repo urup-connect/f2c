@@ -74,13 +74,25 @@ class ClubMembershipAdmin(admin.ModelAdmin):
     form = ClubMembershipAdminForm
 
     list_display = (
-        'nickname_or_account', 'account_email', 'status', 'registered_by',
-        'joined_at', 'activated_at',
+        'nickname_or_account', 'account_email', 'status', 'came_from',
+        'registered_by', 'joined_at', 'activated_at',
     )
     # `status` first: "who has not paid" is what this list is opened for.
     # `registered_by` is limited to the producers that actually hold
     # placeholders rather than listing every farm on the platform.
-    list_filter = ('status', ('registered_by', admin.RelatedOnlyFieldListFilter))
+    #
+    # The two campaign filters are the reporting question -- "how many members
+    # did Instagram bring us this quarter" -- answered by combining them with
+    # `date_hierarchy` below. They filter on the **first** touch, which is the
+    # campaign that found the member; the last touch is on the detail page,
+    # because "which advert closed it" is a question about one member at a time.
+    # Both fold to lower case on the way in, so each channel appears once.
+    list_filter = (
+        'status',
+        ('registered_by', admin.RelatedOnlyFieldListFilter),
+        'first_touch__source',
+        'first_touch__medium',
+    )
     search_fields = (
         'nickname', 'user__email', 'user__first_name', 'user__last_name',
     )
@@ -88,9 +100,14 @@ class ClubMembershipAdmin(admin.ModelAdmin):
     date_hierarchy = 'joined_at'
     autocomplete_fields = ('user', 'registered_by')
 
+    # `first_touch` and `last_touch` are read-only here rather than absent. A
+    # campaign is a record of what a link said when somebody followed it, and
+    # reassigning one by hand would be rewriting a report -- but staff answering
+    # "where did this member come from?" need to see it, and the detail page is
+    # where they ask.
     readonly_fields = (
         'id', 'nickname_key', 'account_link', 'joined_at', 'activated_at',
-        'created_at', 'updated_at',
+        'created_at', 'updated_at', 'first_touch', 'last_touch',
     )
 
     fieldsets = (
@@ -119,6 +136,17 @@ class ClubMembershipAdmin(admin.ModelAdmin):
                 'accounts.services.register_sharing_member.'
             ),
         }),
+        ('How they found us', {
+            'fields': ('first_touch', 'last_touch'),
+            'description': (
+                'The campaign that first brought this visitor and the one they '
+                'were on when they joined — read from the utm_ parameters on '
+                'the link they followed. Both are empty for a member who typed '
+                'the address or followed a bookmark, which is not a gap to '
+                'fill: it means no campaign was measured. The same row twice '
+                'means they arrived and joined in one visit.'
+            ),
+        }),
         ('Record', {
             'classes': ('collapse',),
             'fields': ('joined_at', 'created_at', 'updated_at'),
@@ -130,9 +158,12 @@ class ClubMembershipAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         # Every row renders the account's email address and the producer's
         # trading name, so both are joined rather than fetched per row.
+        # `first_touch` joins because `came_from` renders it on every row.
+        # `last_touch` does not: it is on the detail page only, where one extra
+        # query is one query.
         return (
             super().get_queryset(request)
-            .select_related('user', 'registered_by')
+            .select_related('user', 'registered_by', 'first_touch')
         )
 
     @admin.display(description='Nickname', ordering='nickname')
@@ -145,6 +176,16 @@ class ClubMembershipAdmin(admin.ModelAdmin):
         rendering an empty cell.
         """
         return str(obj)
+
+    @admin.display(description='Came from', ordering='first_touch__source')
+    def came_from(self, obj):
+        """The campaign that found this member, or a dash.
+
+        The dash is the honest answer rather than a missing value: a member who
+        typed the address has no campaign, and `attribution` stores that as an
+        absence instead of as a row saying "direct". See that app's models.
+        """
+        return obj.first_touch.label if obj.first_touch_id else '—'
 
     @admin.display(description='Account', ordering='user__email')
     def account_email(self, obj):

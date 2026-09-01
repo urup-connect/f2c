@@ -64,9 +64,10 @@ app/market/     the produce market. No apps yet
 | `core/authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
 | `core/storefronts` | The two storefronts, who administers one, which storefront a request is for, and the record of every email sent | `accounts` |
 | `core/documents` | Documents, revisions, and the agreements given — per storefront | `accounts`, `storefronts` |
+| `core/attribution` | Which campaign brought somebody. Two touches per conversion, and the mixin any record inherits to point at them | `storefronts` |
 | `core/payments` | The membership subscription, the Payfast integration, and what a payment does to a membership. **One gateway, billing one thing** — member purchases settle elsewhere, into another entity's account, through a gateway that does not exist yet: C10, C10.1 | `accounts`, `membership` |
 | `commerce/producers` | The producer organisation, its appointed people, and which storefronts it sells into | `accounts`, `storefronts` |
-| `club/membership` | Club membership, its nickname, and turning a sign-up submission into a member | `accounts`, `documents`, `payments` |
+| `club/membership` | Club membership, its nickname, and turning a sign-up submission into a member | `accounts`, `attribution`, `documents`, `payments` |
 | `club/finished_product` | The catalogue of forms a harvest can take. No endpoints | — |
 | `club/strains` | The strain catalogue, the aroma and effect vocabularies, and each producer's listing against a strain. Nine administrator endpoints at `/api/catalogue` | `producers`, `finished_product` |
 | `club/plant` | The plant, its batch, its serial counter, the ownership history, and the stock-upload template and reader. Three capture endpoints at `/api/stock` | `producers`, `strains`, `finished_product` |
@@ -208,6 +209,48 @@ layout does not bend.
 
 The apps that *do* belong in that space are later blocks with models of their own and a one-way
 dependency on `plant`: orders and cart in Block 5, fulfilment in Block 6, the swap zone in Block 10.
+
+### `core/attribution`: which campaign brought them
+
+The commercial question is "which channel brings us members", and the answer has to survive the trip
+from a link somebody clicked to a record that did not exist yet. `core/attribution` is one table and
+one abstract mixin, and five decisions make it that small.
+
+**Two touches per conversion, not a journey.** `CampaignTouch` is one campaign-bearing arrival — the
+five `utm_*` parameters, the ad-network click id, the referring site, the landing path, and when it
+happened. A conversion points at two of them: the campaign that found somebody and the one they
+converted on. That pair answers what to spend on and what closed it. A row per visit was considered
+and not taken — it grows without bound, it describes a person's browsing in detail, and it answers a
+question nobody has asked; if it is ever wanted it is a second table pointing at this one.
+
+**The pointers are on the converting record, not the touch.** `Attributed` is an abstract model
+providing `first_touch` and `last_touch`, and `ClubMembership` inherits it. The alternative shapes are
+both worse: ten campaign columns twice over on every model that cares is twenty columns per table and
+a migration per table when a parameter is added, and a generic foreign key from the touch to "some
+row in some table" costs a `django_contenttypes` join on every read, cannot be constrained by the
+database, and would let a touch point at a row that has been deleted. Two real foreign keys per
+record is the whole cost, and every campaign question is asked of one table. A market customer or an
+order gains attribution by inheriting the mixin and changing nothing else.
+
+**`first` and `last` are the same row where somebody arrived and joined in one visit**, which is most
+conversions. That makes the saving worth having, and it makes "how many joined on the campaign that
+found them" `first_touch_id=F('last_touch_id')` rather than a comparison of ten columns.
+
+**Nothing is stored for a visitor who does not convert, and "direct" is not a value.** The touch
+lives in a first-party cookie until a registration succeeds — see features/frontend section 6 — so
+somebody who only looked leaves nothing in the database. And an arrival with no parameters, no click
+and no external referrer produces no touch at all: attribution absent is `first_touch__isnull=True`,
+because absence is the honest answer and a stored "direct" invites somebody to add it up as though it
+were a channel that had been measured.
+
+**Attribution never refuses a registration.** Every value in it is a label read off a URL, not a
+field a member typed and can correct, so `attribution.services` cleans, caps or drops each one and
+raises nothing. The five parameters are folded to lower case, because `Instagram` and `instagram` are
+one advert and a report that shows them as two is a report nobody trusts twice. Query strings are
+stripped from the referrer and the landing path. The one timestamp that comes from the client —
+a first touch happened before there was any record to stamp — is dropped rather than believed when it
+is malformed, naive, in the future, or older than a browser could credibly hold. A `utm_content` 400
+characters long costs a report one odd row; refusing it would cost somebody their membership.
 
 ## 4. The member record
 
@@ -445,6 +488,16 @@ staff can read. What is left after an erasure is which kinds of letter an anonym
 and when, which is the collective's own operating record. Age-based retention is separate and is a
 schedule: `EMAIL_DISPATCH_RETENTION_DAYS`, enforced by `manage.py purge_email_dispatches` on a
 timer.
+
+**A campaign identifies nobody, so erasure has nothing to do to it.** `attribution.CampaignTouch`
+holds the `utm_*` labels the club wrote into its own links, the ad-network click id, the referring
+site, the landing path and a timestamp — and no visitor id, no device fingerprint, no IP address and
+no third-party cookie. What makes the pair personal information is the record pointing at it, and
+that pointer is on `ClubMembership`, so an erased member's campaign is reachable only through a row
+whose personal data is already gone. Nothing is stored at all for a visitor who never registers: the
+touch lives in a first-party cookie until there is a record to attach it to. Age-based retention is
+the separate half and is again a schedule — `CAMPAIGN_TOUCH_RETENTION_DAYS`, enforced by `manage.py
+purge_campaign_touches`, which deletes the label through `SET_NULL` and keeps the member.
 
 An erased account cannot be reactivated. `activate()` raises rather than resurrecting a record whose
 personal data is gone.

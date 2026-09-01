@@ -1,10 +1,43 @@
 import 'server-only'
 
 import { apiBaseUrl } from './api'
+import type { Campaign } from './campaign-cookie'
 import type { MemberDetails } from './member-details'
 import { readCheckoutToken } from './checkout'
 import { PENDING_PAYMENT, readRegistrationRefusals } from './registration'
 import type { RegistrationOutcome } from './registration'
+
+/**
+ * The campaign, in the shape Django's `CampaignIn` names.
+ *
+ * Written out here rather than sent as the camel-cased object the cookie holds, for the reason
+ * every other field in this call is written out: the request body is a contract, and generating it
+ * from whatever shape the frontend happens to use is how a rename on this side silently stops
+ * recording campaigns on the other.
+ *
+ * `null` for a visitor with no campaign, which is most of them. Django's field is optional and a
+ * null is the same to it as an absent key.
+ */
+const campaignBody = (campaign: Campaign | null) =>
+  campaign === null
+    ? null
+    : {
+        first: touchBody(campaign.first),
+        last: touchBody(campaign.last),
+      }
+
+const touchBody = (touch: Campaign['first']) => ({
+  source: touch.source,
+  medium: touch.medium,
+  campaign: touch.campaign,
+  term: touch.term,
+  content: touch.content,
+  click_network: touch.clickNetwork,
+  click_id: touch.clickId,
+  referrer: touch.referrer,
+  landing_path: touch.landingPath,
+  seen_at: touch.seenAt,
+})
 
 /**
  * Registers a member with Django, and never throws.
@@ -12,7 +45,9 @@ import type { RegistrationOutcome } from './registration'
  * Server-side only, and deliberately so. This is the one call in the product that carries an
  * identity number, and it must not be reachable from a browser bundle: the number travels from the
  * form to a server action to Django and stops there. No cookies are forwarded — there is no session
- * yet, which is the whole reason the endpoint is unauthenticated.
+ * yet, which is the whole reason the endpoint is unauthenticated. The campaign is read out of a
+ * cookie by the caller and passed in as a value for the same reason: this function forwards nothing
+ * it was not handed.
  *
  * **Fails closed, and says which kind of failure it is.** A refusal the member can act on comes
  * back as `refused` with field-level reasons. Anything else — the API unreachable, a club document
@@ -27,7 +62,10 @@ import type { RegistrationOutcome } from './registration'
  *
  * See design/features/sign-up.md section 6.
  */
-export const registerMember = async (details: MemberDetails): Promise<RegistrationOutcome> => {
+export const registerMember = async (
+  details: MemberDetails,
+  campaign: Campaign | null = null,
+): Promise<RegistrationOutcome> => {
   let response: Response
 
   try {
@@ -47,6 +85,12 @@ export const registerMember = async (details: MemberDetails): Promise<Registrati
         mobile: details.mobile,
         id_number: details.idNumber,
         consents: details.consents.map(({ document, version }) => ({ document, version })),
+        /*
+         * The one value in this body that nobody typed. It cannot change the outcome and it cannot
+         * produce a refusal — Django cleans or drops every field in it rather than validating one —
+         * so it is sent last and never checked for.
+         */
+        campaign: campaignBody(campaign),
       }),
     })
   } catch {

@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { AGE_PASS_COOKIE, readAgePass } from '@/lib/age-gate-cookie'
+import { CAMPAIGN_COOKIE, readCampaign } from '@/lib/campaign-cookie'
 import { CHECKOUT_COOKIE, checkoutCookieOptions } from '@/lib/checkout-cookie'
 import { fetchClubDocumentRevisions } from '@/lib/club-documents-api'
 import { newErrorReference } from '@/lib/error-reference'
@@ -63,6 +64,11 @@ import { SITE_CONFIG } from '@/lib/site'
  * while which fault it was stays in a log line they cannot read and nobody has to describe
  * themselves to report it. See design/features/sign-up.md section 7.
  *
+ * **The campaign comes from a cookie, not the form.** No screen asks a member how they found the
+ * club, and none should: the answer is already in the URL they arrived on, and asking would collect
+ * an opinion where a fact was available. It travels with the registration and can change nothing
+ * about the outcome — see `lib/campaign-cookie.ts` and `app/core/attribution`.
+ *
  * The revisions in force are re-read here rather than trusted from the form. A document can be
  * published between the page rendering and the member submitting, and a tick beside the old wording
  * is not an agreement to the new text. `validateMemberDetails` compares the version the form
@@ -93,7 +99,20 @@ export const submitMemberDetails = async (formData: FormData) => {
     redirect(refusedUrl(serialiseMemberDetailsRefusals(outcome.refusals)))
   }
 
-  const registration = await registerMember(outcome.details)
+  /*
+   * The campaign, read here and sent with the registration. This is the only moment it can be
+   * recorded: there is finally a record to attach it to, and the cookie that has been carrying it
+   * since the visitor arrived is about to stop being the only copy.
+   *
+   * `null` for the visitor who typed the address, followed a bookmark, or arrived before this
+   * existed, and that is stored as an absence rather than as a campaign called "direct" — see
+   * `lib/campaign-cookie.ts`. The cookie is deliberately **not** cleared afterwards: it outlives
+   * this submission on purpose, so that a duplicate or a refusal does not silently lose the
+   * campaign before the member gets their details right.
+   */
+  const campaign = readCampaign(store.get(CAMPAIGN_COOKIE)?.value)
+
+  const registration = await registerMember(outcome.details, campaign)
 
   /*
    * `registration` is the only thing that crosses back out of Django, and it carries nothing the

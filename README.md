@@ -76,6 +76,7 @@ there.
 | Passkey ceremonies | `authn/webauthn.py` |
 | Emailed sign-in codes | `authn/otp.py` |
 | Which server an email leaves by, and the record that it did | `storefronts/mail.py`, `storefronts/models.py` |
+| Which campaign brought a member | `attribution/services.py`, `frontend/club/lib/campaign-cookie.ts` |
 | Rate limits | `authn/throttles.py` |
 | Field encryption and blind indexes | `common/crypto.py` |
 | RSA ID number checks | `common/validators.py` |
@@ -476,6 +477,40 @@ by `manage.py purge_email_dispatches` on a timer. `--dry-run` reports without
 deleting; `0` keeps everything. The log is read at
 **Storefronts → Emails sent** in the Django admin, read-only throughout.
 
+### Where a member came from
+
+Standard URL campaign tracking, end to end. A member who arrives on
+`club.example.co.za/?utm_source=instagram&utm_medium=social&utm_campaign=spring-open-day`
+and joins two weeks later carries that campaign on their membership.
+
+The five standard parameters are read -- `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_term`, `utm_content` -- along with the ad-network click id
+(`gclid`, `fbclid`, `msclkid`, `ttclid`), the referring site and the landing
+path. Nothing is asked on any form: the answer is already in the URL, and asking
+would collect an opinion where a fact was available.
+
+**How it travels.** `frontend/club/proxy.ts` writes it into one `httpOnly`
+first-party cookie on the way in, because the three redirects between the
+landing page and the sign-up form carry no query string. The sign-up server
+action reads it back and sends it with `POST /api/members/register`.
+`app/core/attribution` stores two rows -- the campaign that *found* them and the
+one they *converted on* -- and `ClubMembership` points at both. They are the
+same row where somebody arrived and joined in one visit, which is most people.
+
+**What it does not do.** It refuses nothing: every value is a label read off a
+URL, so it is cleaned, capped or dropped, and a 400-character `utm_content`
+costs a report one odd row rather than costing somebody their membership. It
+stores nothing for a visitor who never registers. And it does not invent a
+channel called "direct" -- somebody who typed the address has no campaign, and
+that is stored as an absence.
+
+Read it at **Club memberships** in the Django admin: a *Came from* column, and
+filters on campaign source and medium. **Campaign tracking → Campaign touches**
+holds the rows themselves, read-only, with no member on them.
+
+Retention is `CAMPAIGN_TOUCH_RETENTION_DAYS`, two years by default, enforced by
+`manage.py purge_campaign_touches`. It deletes the campaign and keeps the member.
+
 ### Rate limits
 
 Set in `NINJA_DEFAULT_THROTTLE_RATES` and enforced through the cache. **In
@@ -604,6 +639,7 @@ documents every variable.
 | `EMAIL_CC_FROM` | When `DEBUG=False` | The address club mail is sent as. Normally must be one the provider is authorised to send for. |
 | `EMAIL_F2C_*` | Same as above | The store's server and sender. Same five variables, same rules. |
 | `EMAIL_DISPATCH_RETENTION_DAYS` | No | Days of send history to keep. 365 by default; `0` keeps everything. Enforced by `manage.py purge_email_dispatches`. |
+| `CAMPAIGN_TOUCH_RETENTION_DAYS` | No | Days of campaign tracking to keep. 730 by default; `0` keeps everything. Enforced by `manage.py purge_campaign_touches`. |
 | `DJANGO_CDN_BASE_URL` | With a container | Public prefix the documents are served from. Https outside local development, and its path must match the container. |
 | `DJANGO_DOCUMENT_STORAGE_CONTAINER` | No | The blob container the CDN fronts. Blank means uploads go to `MEDIA_ROOT` and are served by runserver. |
 | `DJANGO_DOCUMENT_STORAGE_ACCOUNT` | With a container | Storage account name. Not needed if a connection string is set. |
@@ -828,6 +864,13 @@ purge_email_dispatches`, nightly, which is what turns `EMAIL_DISPATCH_RETENTION_
 from a number into a retention policy. Nothing breaks without it; the table
 simply grows and keeps personal information past the window the deployment says
 it keeps it for.
+
+Campaign tracking adds a second job in the same slot, for the same reason:
+`manage.py purge_campaign_touches` is what turns
+`CAMPAIGN_TOUCH_RETENTION_DAYS` into a policy. It also adds a line to the
+privacy notice -- one first-party cookie, campaign labels and a referring site,
+no visitor identifier and no third-party pixel -- which is what keeps it on
+legitimate interest rather than behind a consent banner.
 
 The club documents add one: an Azure Blob Storage container behind the CDN, and
 the `DJANGO_DOCUMENT_STORAGE_*` variables above. Without it the PDFs are written

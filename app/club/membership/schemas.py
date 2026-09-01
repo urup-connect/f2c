@@ -23,6 +23,7 @@ from uuid import UUID
 
 from ninja import Schema
 
+from app.core.attribution.schemas import CampaignIn
 from app.core.common import crypto
 
 
@@ -39,11 +40,14 @@ class ConsentIn(Schema):
 
 
 class RegisterIn(Schema):
-    """Exactly what sign-up collects.
+    """Exactly what sign-up collects, and what the visit carried with it.
 
     Every value arrives as typed and is normalised server-side; nothing here
     assumes the caller has done it. ``id_number`` is the only field that is
     never echoed back, logged, or put in a response of any kind.
+
+    ``campaign`` is the one field no screen asks about: it is read out of a cookie
+    the frontend wrote when the visitor arrived, not out of the form.
     """
 
     first_name: str
@@ -53,6 +57,18 @@ class RegisterIn(Schema):
     mobile: str
     id_number: str
     consents: list[ConsentIn]
+
+    #: Which campaign brought this member, where the frontend's campaign cookie
+    #: held one. Optional, and absent far more often than not: a visitor who
+    #: typed the address or followed a bookmark has no campaign to send, and a
+    #: caller that does not know about this field at all still registers members.
+    #:
+    #: **Nothing in here can refuse a registration.** Every value is a label read
+    #: off a URL, so `attribution.services` cleans, caps or drops each one rather
+    #: than validating it -- see that module's opening rule. It is named here so
+    #: that the one endpoint sign-up writes through carries it; it is not part of
+    #: what sign-up *collects*, and no screen asks about it.
+    campaign: CampaignIn | None = None
 
 
 class RegistrationOut(Schema):

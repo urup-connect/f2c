@@ -238,6 +238,7 @@ INSTALLED_APPS = [
     'app.core.storefronts',
     'app.core.documents',
     'app.core.payments',
+    'app.core.attribution',
 
     'app.commerce.producers',
 
@@ -590,6 +591,28 @@ STOREFRONT_FROM_EMAIL = {
 #: and say so.
 EMAIL_DISPATCH_RETENTION_DAYS = int(
     (os.environ.get('EMAIL_DISPATCH_RETENTION_DAYS') or '365').strip() or 365
+)
+
+#: How long a campaign touch is kept in `attribution.CampaignTouch`, in days.
+#:
+#: The table answers "which campaign brought this member?", and unlike a send
+#: record that question is asked year on year -- this spring's open day against
+#: last spring's. Two years is the default because it is the shortest window that
+#: allows the comparison, and because past it a member is still described by an
+#: advert nobody remembers buying.
+#:
+#: A touch carries campaign labels, a referring site and a landing path, and no
+#: identifier of its own. What makes the pair personal information is the record
+#: pointing at it, which is why the purge deletes the label and keeps the member:
+#: `Attributed` points here with SET_NULL, so an expired attribution becomes "not
+#: known" rather than taking a membership with it.
+#:
+#: Nothing enforces this on its own -- POPIA's retention principle is a schedule,
+#: and the schedule is `manage.py purge_campaign_touches` on the same nightly
+#: timer as the send-record purge. Zero disables it, for a deployment that would
+#: rather keep everything and say so.
+CAMPAIGN_TOUCH_RETENTION_DAYS = int(
+    (os.environ.get('CAMPAIGN_TOUCH_RETENTION_DAYS') or '730').strip() or 730
 )
 
 

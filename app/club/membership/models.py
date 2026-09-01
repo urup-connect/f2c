@@ -30,6 +30,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower
 
+from app.core.attribution.models import Attributed
 from app.core.common.validators import nickname_key
 
 __all__ = ['ClubMembership', 'MembershipStatus']
@@ -88,8 +89,21 @@ class ClubMembershipQuerySet(models.QuerySet):
         return candidates.exists()
 
 
-class ClubMembership(models.Model):
-    """One person's membership of the club."""
+class ClubMembership(Attributed):
+    """One person's membership of the club.
+
+    Inherits ``Attributed``, which is two nullable pointers into
+    ``attribution.CampaignTouch`` and nothing else -- the campaign that first
+    brought this person to the club, and the one they were on when they joined.
+    Both are null for a member who arrived untagged, which is not a gap to be
+    filled: see that app on why "we do not know" is stored as an absence.
+
+    Attribution sits on the **membership**, not on the account, and the split is
+    the same one C27 made everywhere else. What a campaign acquired is a member
+    of this club; the same person buying carrots on the produce market was
+    acquired by whatever the market was running, and that will be a second set of
+    pointers on whatever record the market keeps.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
 

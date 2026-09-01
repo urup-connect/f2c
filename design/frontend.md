@@ -217,7 +217,17 @@ Every reader is a pure function taking an environment record, so the tests never
 variable and says where to set it, because these failures happen in deployment rather than on a
 developer's machine.
 
-## 6. The one piece of client-visible state
+## 6. Client-visible state
+
+There is no session and no database until a member registers, so the three facts that have to cross
+that gap travel in cookies. All three are `httpOnly`, all three are `SameSite=Lax`, all three are
+unsigned, and all three are re-validated on every read rather than trusted.
+
+| Cookie | Carries | Life |
+| --- | --- | --- |
+| `cc_age_pass` | The date of birth asserted at the age gate | 30 minutes |
+| `cc_checkout` | The checkout token, from the registration action to the payment screen | 30 minutes — see features/payments.md |
+| `cc_campaign` | The campaign the visitor arrived on, first touch and last | 90 days |
 
 There is no session and no database at sign-up time, so the age gate's result travels to the sign-up
 screen in a cookie: `cc_age_pass`, `httpOnly`, `SameSite=Lax`, thirty minutes.
@@ -230,7 +240,44 @@ visitor back to the gate.
 
 `secure` follows the scheme the site is actually served on rather than the environment name. Marking
 a cookie `Secure` on a plain-http local server means the browser never sends it back, which
-presents as a broken gate and takes an afternoon to diagnose.
+presents as a broken gate and takes an afternoon to diagnose. All three cookies read it the same way.
+
+### The campaign cookie
+
+A visitor arriving on `?utm_source=instagram&utm_campaign=spring-open-day` is three redirects away
+from the form that registers them, and none of those redirects can carry a query string — `/join`
+throws the age pass away and sends them to `/age-check` on purpose. So the campaign is captured on
+the way in, by `proxy`, and read back out by the sign-up action, which sends it to Django as part of
+the registration. `lib/campaign-cookie.ts` is the whole of the logic and is pure; `proxy.ts` holds
+twelve lines of wiring.
+
+Four decisions in it are worth stating.
+
+**Two touches, first and last.** The campaign that found somebody and the one they converted on,
+which between them answer "what should we spend on" and "what closed it". A full click history was
+considered and not kept — it grows per visit and describes a person's browsing in detail. See
+`app/core/attribution/models.py`.
+
+**Nothing is written for an untagged visit.** No parameters, no ad click and no external referrer
+means no `Set-Cookie` at all — so an ordinary page view is unchanged and stays as cacheable as it
+was, and a visitor who typed the address is stored as an absence rather than as a channel called
+"direct". Only `GET` requests are captured: a server action posts back to the URL the form was
+rendered on, and recording that would invent a second arrival differing only in its timestamp.
+
+**A referring site with no parameters counts.** It is the largest untagged slice of real traffic — an
+article, a WhatsApp forward, another site's links page — and the query string is stripped off it,
+because a referring URL's query can carry anything the referring site put there.
+
+**Ninety days, not refreshed.** The standard paid-click window, and long enough for somebody who
+reads a post and comes back three weeks later. The cookie's life runs from the last campaign arrival
+rather than rolling forward on every page view: a rolling window would let one bookmarked tab carry a
+campaign for ever, and a `Set-Cookie` on every response makes every page uncacheable.
+
+**POPIA.** One first-party cookie holding campaign labels the club wrote into its own links, a
+referring site, a path on this site and a timestamp. No visitor id, no device fingerprint, no
+third-party pixel, and nothing stored server-side until somebody registers. That is what makes it a
+legitimate-interest cookie described in the privacy notice rather than one behind a consent banner —
+and adding a visitor identifier or a network's own pixel would change that answer.
 
 ## 7. Search engine indexing
 

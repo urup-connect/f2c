@@ -1,4 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import {
+  CAMPAIGN_COOKIE,
+  campaignCookieOptions,
+  mergeCampaign,
+  readCampaign,
+  readTouch,
+  serialiseCampaign,
+} from '@/lib/campaign-cookie'
 import { indexingHeaders } from '@/lib/seo'
 import { SITE_CONFIG } from '@/lib/site'
 
@@ -26,6 +34,12 @@ export const PATHNAME_HEADER = 'x-pathname'
  * Nothing trusts this header's value. It arrives from the client on every request and could say
  * anything; the club layout runs it through the same safety check the sign-in form applies to a
  * `?next=` before putting it in a URL. See `lib/sign-in.ts`.
+ *
+ * The campaign cookie is written here for the same reason the pathname header is: this is the only
+ * place that sees every arrival. A visitor following `?utm_source=instagram` to the landing page is
+ * three redirects away from the form that registers them — `/join` deliberately discards the age
+ * pass and sends them to `/age-check`, and a redirect carries no query string — so a campaign not
+ * captured on the way in is a campaign already lost. See `lib/campaign-cookie.ts`.
  */
 export function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers)
@@ -37,7 +51,40 @@ export function proxy(request: NextRequest) {
     response.headers.set(header, value)
   }
 
+  recordCampaign(request, response)
+
   return response
+}
+
+/**
+ * Writes the campaign cookie where this request is a tagged arrival, and touches nothing otherwise.
+ *
+ * **Only on a `GET`.** A server action posts back to the URL the form was rendered on, so a
+ * submission from `/signup?utm_source=instagram` carries the same parameters as the visit that
+ * produced it — and recording it would invent a second arrival minutes after the first, differing
+ * only in its timestamp. Django would faithfully store two touches for one visit.
+ *
+ * **Nothing is written for an untagged visit**, which is what keeps this off the hot path: no
+ * campaign parameters, no ad click and no external referrer means no `Set-Cookie` header at all, so
+ * an ordinary page view is unchanged and stays as cacheable as it was.
+ *
+ * The existing cookie is read to keep the first touch it already holds. The visitor arriving now is
+ * always the last touch; they are the first only if there was nothing before them.
+ */
+function recordCampaign(request: NextRequest, response: NextResponse) {
+  if (request.method !== 'GET') return
+
+  const touch = readTouch(request.nextUrl, request.headers.get('referer'), new Date())
+  if (!touch) return
+
+  const existing = readCampaign(request.cookies.get(CAMPAIGN_COOKIE)?.value)
+  const value = serialiseCampaign(mergeCampaign(existing, touch))
+
+  // `null` means even the campaign itself would not fit in a cookie the browser will keep. Leaving
+  // whatever is already there beats replacing it with a value that gets dropped.
+  if (!value) return
+
+  response.cookies.set(CAMPAIGN_COOKIE, value, campaignCookieOptions(SITE_CONFIG))
 }
 
 export const config = {
