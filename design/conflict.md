@@ -148,6 +148,12 @@ undefined. A grow price of R1,250 gives 1.25, equidistant between 1.0 and 1.5. T
 worked examples all avoid the midpoint. Round half up is the conventional choice and favours the
 member offering the plant.
 
+**C17 tested the formula and left it alone.** Maturity is not in the leaf rating and is not going in:
+a rating that moved as a plant aged would stop being reproducible from a disclosed price, which is
+what R-C7.3 rests on, and would stop being answerable in a query, which is what the 0.1 floor and the
+0.5 swap minimum rest on. What C17 does instead is put a confirmation in front of a mature plant. So
+this definition — grow price, one number, stored — is the whole of it.
+
 ### C5 — The administrative portal: Next.js or Django admin
 
 **Status: Decided — Next.js, with the Django admin retained as the operator's tool.**
@@ -331,7 +337,7 @@ settled in. **No money moves in the swap zone.**
 
 | | Risk | Position |
 | --- | --- | --- |
-| **R-C7.1** | The proxy leg: a sharing member's plants are offered by the cultivator, who paid for them, to members who pay for them — the sharing member never transacts | The named grey area. Held as C33, with the role designed to be droppable |
+| **R-C7.1** | The proxy leg: a sharing member's plants are offered by the cultivator, who paid for them, to members who pay for them — the sharing member never transacts | The named grey area. Held as C33, with the role designed to be droppable. **Widened by C17**: the cultivator now confirms swaps as well as making the offer, so the proxy carries a discretion over whose request succeeds. Held by two limits stated there — the confirmation is a yes or no on a swap the member proposed, and a decline is recorded |
 | **R-C7.2** | The plants are on the cultivator's premises, and the owner is not the cultivator | Accepted. Argued on private cultivation plus ownership attaching at flowering. Worth an opinion; does not gate the build |
 | **R-C7.3** | Leaf ratings obscure a Rand price the platform itself set | Mitigated by construction — the rating is a rounding of a disclosed price, and the swap zone moves no money |
 | **R-C7.4** | The attestation is a cultivator's word, not the sharing member's own act | Reopened by C6, having been closed on the placeholder reading. Risk 5 in `roles-and-permissions.md` returns, and the login is what eventually closes it: a person who signs in can consent for themselves |
@@ -410,6 +416,13 @@ is consistent with what is written here rather than in tension with it: the rule
 which is why `harvest.md` says there is no swapping after harvest *for paying members*. For
 sharing-member stock the swap comes first and the confirmation follows it — the member who swaps in
 locks in, becomes the owner, and confirms product type and address as any other owner does.
+
+**C17 has since put a second confirmation in front of that swap, and it belongs to the other side.**
+The lock described here is the *new* owner confirming product type and address after the swap. C17
+requires the *current* holder — the cultivator, as proxy — to confirm the swap itself before it
+happens, because a harvested sharing-member plant is the most mature thing in the zone and the leaf
+rating prices it the same as a seedling. The two confirmations are different acts by different
+parties at different moments, and the naming is what keeps them apart.
 
 **C16 has since answered the question this left it.** A member can come to hold a harvested plant by
 swapping for one, and that plant counts against their four until it ships — so the swap `harvest.md`
@@ -1564,15 +1577,19 @@ a counted plant. It is a rule about the order of two writes inside one service, 
 
 ### C17 — Swapping for equal value defeats the reason to swap
 
-**Status: Open. Worth resolving before the swap rules are written.**
+**Status: Decided. Maturity stays out of the leaf rating, and a swap for mature stock waits on a
+confirmation instead of completing instantly. The confirmation is the cultivator's, not the sharing
+member's — C33. The formula in `swap-zone.md` is untouched, and no code changes: the swap transaction
+is Block 10 and unbuilt, so this is a rule the block is written against rather than a check that has
+to be rewritten.**
 
 `swap-zone.md` requires the offer and the request to have **equivalent leaf value**, with the option
 for the member to accept a lower-valued request and forfeit the difference.
 
 `member-roles.md` and `stock-holding-limit.md` describe the intended use: a member over the flowering
 limit swaps a flowering plant for a pre-flowering one. And the reason a member enters the swap zone
-at all, per C6's placeholder rationale, is to get product sooner — swapping a seedling for something
-closer to harvest.
+at all, per `member-roles.md`, is to get product sooner — swapping a seedling for something closer to
+harvest.
 
 Leaf rating derives from grow price alone. **Maturity is not in it.** So a plant three weeks from
 harvest and a seedling of the same strain and grow price carry the same leaf rating, and the swap
@@ -1586,12 +1603,104 @@ and the rules as written cannot arbitrate.
   (regular members' plants)" — extending confirmation to mature sharing-member stock is a small
   change to a rule that already exists.
 
-**Recommendation.** The third. It uses a distinction the brief already draws.
+#### The ruling
 
-**The window now has an end.** C8 locks a plant to its owner at the harvest confirmation, so the
-most mature thing in the zone is one that has not yet been harvested. That caps the maturity
-spread the leaf rating fails to price. It does not remove it — a plant a week from harvest and
-a seedling of the same grow price still carry the same rating.
+**The third, as recommended.** Mature stock is swapped for by request and confirmation; the leaf
+rating stays exactly what `swap-zone.md` says it is. The distinction the member story already draws
+between an instant swap and a confirmed one is the mechanism, and this widens what falls on the
+confirmed side of it.
+
+#### Why not the multiplier, stated properly because it was the plausible option
+
+| The argument for it | Why it loses |
+| --- | --- |
+| Maturity is real value and the rating should carry it | The rating is not a valuation. It is a rounding of a **disclosed grow price**, and that is the whole of R-C7.3's mitigation: leaf ratings are defensible because a member can reproduce one from a number the platform published. A multiplier severs the rating from the disclosed price and the mitigation goes with it |
+| It arbitrates without a new screen | It does not arbitrate at all. It reprices the mature plant; it does not decide which of the four members who want it gets it. Option 1's problem survives the multiplier intact, now with a higher entry price |
+| It is one formula change | It is not a constant — it moves every day the plant is alive. `leaf_rating` is a stored, indexed and constraint-checked column, and `PlantQuerySet.swappable` filters on it in SQL. Anything read off days-to-harvest has to be recomputed nightly across every live plant or computed at read time, and the 0.5 swap minimum and the 0.1 floor stop being answerable in a query. That column already carries two migrations |
+| Equivalent value would be more honest | Less auditable. Equivalence between two ratings that both moved yesterday is a claim about a moment nobody recorded, and the forfeit-the-difference acknowledgement `swap-zone.md` requires becomes unevidenced at exactly the point a member disputes it |
+
+The first row is the one that decides it. C4 and R-C7.3 both rest on the leaf rating being a
+recomputable rounding of a price the platform disclosed, and the multiplier is the one option that
+takes that away.
+
+#### Who confirms, and why it is not the owner
+
+**The registering cultivator confirms.** A sharing member does not transact — C33 rules cultivator
+proxy, owner views only, and says in terms that the read-only login carries no swap action, no
+withdrawal action and no approval queue. The cultivator allocated the stock, is holding it
+physically, and attested on the person's behalf at registration; adding a confirmation to that list
+adds no new party.
+
+**This does not reopen C33.** C33 rejected the reading in which *the owner* approves each swap, on
+the ground that it makes the zone wait for someone who does not transact. The confirmer here is the
+proxy, and the sharing member's eventual login gains nothing it was refused.
+
+**It does widen R-C7.1, and that is the cost.** The proxy leg was a cultivator *offering* plants
+somebody else owns. It is now a cultivator offering them and choosing who gets them. That is a
+discretion, and a discretion exercised over another person's property is more than an administrative
+act. Two things hold it: a confirmation is a yes or no on a swap the member proposed, never a price
+or a counterparty the cultivator sets, and a declined request is recorded. R-C7.1 was already the
+item the legal opinion is worth having on — C7 narrows the brief to it — and this entry adds a
+sentence to that brief rather than a new risk.
+
+#### The trigger is maturity, not owner type — and that is the half worth keeping
+
+The member story draws the instant/confirmed line on **owner type**: sharing member instant, regular
+member confirmed. C33 makes owner-type branching a build liability in this exact module — the zone
+must match on plants and their owners, never on kind of owner, because retiring the sharing-member
+role must not mean deleting a branch in the matcher.
+
+So the rule is stated on the plant. **Confirmation is required when the plant is mature, whoever owns
+it. Instant completion is what is left over.** That is the same shape as the holding count, which
+C15 and C16 put per member and never per kind of member, and it satisfies C33's constraint instead of
+straining it: drop the sharing-member role and this rule needs no edit.
+
+**What it costs is most of the instant path, and the number in C17.1 is what decides how much.** A
+sharing member holds four *flowering* plants — that is the point of the allocation — and `harvest.md`
+lets a harvested one stay in the zone. If "mature" means flowering, every sharing-member plant is
+confirmed, instant swapping disappears, and the liquidity C33 protected goes with it. Maturity is
+therefore **proximity to harvest, not the fact of flowering**: a plant ten weeks out has only just
+begun to bloom and is not what a member is competing for.
+
+#### The correction this entry owes its own closing note
+
+The previous version of this entry said C8's ownership lock means the most mature thing in the zone
+has not yet been harvested. **That is true of member-owned plants only**, and C8 says so itself: the
+lock is triggered by the owner's harvest confirmation, sharing-member stock has no such event, and
+`harvest.md` deliberately lets that item sit in the zone and be swapped for after it harvests.
+
+So the widest maturity spread in the zone is a **harvested sharing-member plant against a seedling of
+the same grow price** — the precise case this ruling now governs, and the one C8's cap does not reach.
+The cap is real on the side of the zone that members stock, and absent on the side that seeds it.
+
+#### C17.1 — where "mature" starts, and how long a request may sit
+
+**Open, small, and Block 10's to settle rather than a question for the business.** Three numbers and
+no principle:
+
+- **The threshold.** Recommendation: harvested stock always, and otherwise a plant within **21 days
+  of its estimated harvest date**, read off `Plant.days_to_harvest`. Twenty-one days is this entry's
+  own example of the trade it could not arbitrate, `estimated_harvest_date` is already captured, and
+  nothing new is collected. It belongs in the club rules rather than in a constant if it is going to
+  be argued about.
+- **Expiry.** A request must not hold the offered plant indefinitely — that is C8's "member who never
+  confirms" problem in miniature, on a shorter clock. Recommendation: a fixed window, automatic
+  lapse, the offer returned to the zone, and the offered plant held rather than transferred while the
+  request stands so it cannot be offered twice.
+- **Whether a decline needs a reason.** Recommendation: no, and it is recorded anyway. A cultivator
+  declining materially is the R-C7.1 discretion becoming visible, which is the point of recording it.
+
+#### What this does not decide
+
+- **Ordering.** Confirmation arbitrates; it does not queue. Two members requesting the same mature
+  plant is now first-*answered* rather than first-asked, which moves the arbitrary element from the
+  clock to the cultivator rather than removing it. That is the residue of option 1, and it is
+  accepted rather than solved.
+- **The equivalence rule and the forfeit acknowledgement** in `swap-zone.md` are untouched, and so
+  are `leaf_rating_for`, the 0.1 floor and the 0.5 swap minimum. C4 stands as it is.
+- **Nothing about member-to-member swaps changes.** They already required confirmation, and this
+  ruling reaches them only in that the trigger is now the plant rather than who owns it — a mature
+  member-owned plant and a mature sharing-member one are treated the same way.
 
 ### C18 — Where the finished product types live
 
@@ -2190,6 +2299,14 @@ Two facts, one record, and the attestation version is what tells them apart when
 **Revisit when the login is built.** A person who can sign in can withdraw a plant from the zone for
 themselves, which converts this decision into the second reading at very little cost and removes most
 of R-C7.1. That is the natural moment, and it is not brought forward.
+
+**C17 is the first test of both constraints, and it passed by being rewritten.** C17 requires a
+confirmation before a mature plant is swapped for. The confirmer is the cultivator, so "views only"
+holds and the read-only login still gains no approval queue — but the cultivator now chooses whose
+request succeeds, which is a widening of R-C7.1 recorded there. The droppability constraint did more
+work: the member story states the instant/confirmed distinction on **owner type**, which is exactly
+the branch this entry forbids, so C17 states it on the plant's maturity instead. The rule the member
+story wanted comes out as a consequence, and retiring the sharing-member role deletes nothing.
 
 ### C34 — A sharing member who wants to be a member
 

@@ -1588,8 +1588,10 @@ offer, because a member's four have all been harvested and a harvested plant can
 - [ ] The cultivator offers and swaps a sharing member's plants; the sharing member does neither —
       **C33**. When the read-only login lands, revisit: a person who signs in can withdraw their own
       plant, which is most of R-C7.1 gone
-- [ ] Instant swaps against sharing-member plants
-- [ ] Confirmed swaps against member plants — the member story draws this distinction already
+- [ ] Confirmed swaps for mature plants, instant swaps for everything else — **C17**. The member story
+      draws the instant/confirmed distinction already, and this moves it off owner type and onto the
+      plant. The cultivator confirms on a sharing member's behalf (**C33**); a member confirms their
+      own. Detail in the C17 items at the end of this block
 - [ ] Members offer their own plants, and withdraw them again —
       `platform.offer_inventory_for_swap`
 - [ ] Equivalent leaf-value matching
@@ -1649,9 +1651,34 @@ offer, because a member's four have all been harvested and a harvested plant can
       member's grow cycle no longer overlaps their delivery window, and a member holding four
       harvested plants has no swap available and waits. `shipped` stands in for the delivery-confirmed
       event **C9.1** has yet to choose
-- [!] Equal-value matching versus maturity. Leaf rating derives from grow price alone, so a plant
+- [x] Equal-value matching versus maturity. Leaf rating derives from grow price alone, so a plant
       three weeks from harvest and a seedling of the same price trade at par, and everyone wants the
-      mature side. Recommendation: require confirmation for mature stock — **C17**
+      mature side. **Decided — C17. Maturity stays out of the leaf rating** and a mature plant is
+      swapped for by request and confirmation. The formula in `swap-zone` is untouched, because the
+      rating being a rounding of a disclosed price is the whole of R-C7.3's mitigation and a
+      multiplier would have taken it away — while still not deciding which of four members gets the
+      plant. Nothing was built, so nothing is rebuilt: this is a rule this block is written against
+- [ ] **Confirmation reads the plant, not its owner — C17.** Harvested stock, or a plant close to its
+      estimated harvest date, is confirmed; everything else is instant. The member story drew that
+      line on owner type — instant for sharing members' plants, confirmed for members' — and C33
+      forbids owner-type branching here so the role stays droppable. Same shape as the holding count:
+      per plant and per member, never per kind of member
+- [ ] **The cultivator confirms, not the sharing member — C33.** The read-only login gains no swap
+      action, no withdrawal and no approval queue; the confirmer is the cultivator who allocated the
+      stock, holds it and attested at registration. This widens **R-C7.1**: the proxy now chooses the
+      counterparty as well as making the offer. Held by two things — a confirmation is a yes or no on
+      a swap the member proposed, never a price or a counterparty the cultivator sets, and a decline
+      is recorded
+- [ ] **A swap request holds the offered plant rather than transferring it**, so the same plant cannot
+      sit in two live requests. Release-then-acquire on confirmation, per C16 above
+- [ ] **An unanswered request lapses** and the offer returns to the zone. C8's unanswered harvest
+      notification is the same failure on a longer clock, and it is open there too
+- [ ] **C17.1 — where "mature" starts, and how long a request may sit.** This block's own number to
+      set, not a question for the business. Recommendation: harvested always, otherwise within 21 days
+      of the estimated harvest date off `Plant.days_to_harvest`; a club rule rather than a constant if
+      it will be argued about. **It is the dial between an instant path that exists and one that does
+      not** — a sharing member's four plants are *flowering* plants, so a threshold set at "in bloom"
+      confirms every swap in the zone and costs the liquidity C33 protected
 - [x] Household and dried-weight limits are not modelled. **Decided and built — C15.** Four
       flowering plants per member are enforced on the write; the household limit and the dried-weight
       limit are accepted risks (R-C15.1, R-C15.2) with a third named beside them (R-C15.3: the four

@@ -574,7 +574,8 @@ therefore open to a member with a place free and refused to one at the ceiling, 
 rule working rather than the two briefs colliding.
 
 Leaf-rating display with no Rand values anywhere in the zone. Sharing-member stock seeding the zone.
-Instant swaps against sharing-member plants, confirmed swaps against member plants. Equivalent-value
+**Confirmed swaps for mature plants and instant swaps for everything else — C17**, which restates the
+member story's instant/confirmed line on the plant instead of on the kind of owner. Equivalent-value
 matching with an explicit forfeit-the-difference acknowledgement. No swapping after harvest for
 paying members, with the sharing-member exception in `harvest.md`. What is left of the holding rule
 is the **prompt** — `stock-holding-limit.md` asks that a member at the ceiling be offered a trade
@@ -587,8 +588,26 @@ and the member waits for a delivery. A swap sequenced as release-then-acquire, b
 ceiling is refused if the incoming leg of a swap runs first. And an allowance read on every screen
 that offers a plant, so the refusal is never the first a member hears of it.
 
-**C17** decides how equal-value matching survives the fact that maturity is not in the leaf rating,
-and is the only open item left in front of this block.
+**C17 is decided, and the block starts with nothing open in front of it.** Maturity stays out of the
+leaf rating — the formula in `swap-zone.md` is a rounding of a disclosed price and R-C7.3 depends on
+it staying one — and a swap for a mature plant is a request the **cultivator confirms**, on behalf of
+a sharing member who does not transact (C33). Four things land here rather than in the entry:
+
+- The confirmation trigger reads the **plant**, not its owner: harvested stock, or a plant close to
+  its estimated harvest date. Owner-type branching is what C33 forbids in this module, and this is
+  the rule that would otherwise have introduced it.
+- A request **holds** the offered plant instead of transferring it, so the same plant cannot be
+  offered into two live requests. Sequenced release-then-acquire on confirmation, per C16 above.
+- A request that nobody answers **lapses** and returns the offer to the zone. C8's unanswered
+  harvest notification is the same failure on a longer clock, and it is not solved there either.
+- A decline is available and is **recorded**, because a cultivator declining materially is R-C7.1's
+  proxy discretion becoming visible.
+
+**C17.1 is what is left, and it is this block's own.** Where "mature" starts — the recommendation is
+harvested always, otherwise 21 days off `Plant.days_to_harvest` — and how long a request may sit. It
+is a number, not a decision for the business, and it is the dial between an instant path that still
+exists and one that does not: a sharing member's four plants are *flowering* plants, so a threshold
+set at "in bloom" would confirm every swap in the zone and cost the liquidity C33 protected.
 
 ### Block 11 — Support · 1.5 weeks
 
@@ -750,7 +769,7 @@ it.
 | C10 | How are cultivators settled — **and how farmers are paid** | Block A, pulled forward from Block 12. **Substantially answered**: the club collects member purchases and owes F2C 15%; F2C collects the membership fee and owes the club 60%; a cultivator earns at delivery (C9). What is left is the commission base against the courier leg, whether the commission shows on a statement, **how a cultivator is actually paid** — no gateway disburses, so a payment run — and the market's leg, which is unstated and trades first |
 | C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. **No longer gates C11** — a refund only ever touches unreleased funds in the club's own account, so an EFT out of it works where a gateway reversal does not |
 | C11.1 | **How long the money stays in the club's account after delivery** | Block A's settlement, and it is the residue of C11. Release is now the moment a member's refund right ends, so an instant release on the courier scan leaves the ordinary "arrived dead" complaint with no refund at all. Recommendation: a short hold — 72 hours is the shape of it — with a dispute able to suspend it. Cannot be separated from C9.1 |
-| C17 | Equal-value swaps versus maturity | Block 10 → Block E |
+| C17.1 | **Where "mature" starts, and how long a swap request may sit** | Nothing — Block 10 → Block E settles it as it builds. The residue of C17, and a number rather than a question for the business: harvested always, otherwise the recommendation is 21 days off `Plant.days_to_harvest`. Worth watching because it is the dial between an instant swap path that exists and one that does not — a sharing member's four plants are flowering plants, so a threshold set at "in bloom" confirms every swap in the zone |
 | C18 | Where finished product types are selected | Block 1 → Block A. **The recommendation is already built** — the plant inherits from its listing — so ratifying costs nothing and reversing is a model change |
 | C19 | What a cultivator sees of a member on a packing label | Block 6 → Block C. POPIA-relevant. The stock export already implements the recommendation — nickname only |
 | C20 | Membership fee on a copy-compliance-governed page | Block 0 or Block 1. The one item still blocked on the landing page |
@@ -784,6 +803,15 @@ engineered around: a member's grow cycle no longer overlaps their delivery windo
 holding four harvested plants has no swap available and waits. Both are in the club rules, redrafted
 in the C16 entry.
 
+**C17 has come off this list and Block 10 has nothing left in front of it.** Maturity is not in the
+leaf rating and is not going into it: the rating is a rounding of a price the platform disclosed, and
+that is the whole of R-C7.3's mitigation. A mature plant is swapped for by request and confirmation
+instead, given by the cultivator holding it — the proxy, not the sharing member, so C33 is undisturbed.
+The trigger is the **plant's maturity rather than its owner's type**, which is the half of the ruling
+worth keeping: the member story drew that line on owner type, and C33 forbids owner-type branching in
+this module precisely so the role can be retired without editing the matcher. **C17.1** is what
+remains — where "mature" starts and how long a request may sit — and it is a number the block sets.
+
 **C10 is narrowed and has shed a build item.** The money map is settled for the club: F2C collects the
 membership fee through Payfast and keeps 40%, the Cultivators Collective collects everything else and
 pays F2C 15%, and the split ratios themselves are out of scope for the application. What that exposes
@@ -805,7 +833,8 @@ it sits in Block A ahead of both checkouts.
 | C14 | **An administrator reads sharing members and their holdings, and writes none of them.** The three sharing-member actions stay with the primary cultivator; the read is granted as `platform.view_member_inventory`, over any holder rather than one kind of holder, showing nicknames and plants and no identity | Adds one screen to Block D's administration and takes one away: "sharing member CRUD" is off the cultivator-administration list for good. Closes the C5 pressure without conceding the writes — the read leaves the Django admin and becomes an endpoint, the writes stay the operator's under C29. Depends on C13's capture-time tenure for the trail half, and is constrained by C33: the query must not ask what kind of member the holder is |
 | C15 | **Four plants per member, enforced on the write.** The household limit and the dried-weight limit are accepted risks stated in the club rules, because the platform cannot observe what a member holds off-platform and a check it cannot run would only produce a record that it did | Discharges Block 10 → Block E's first prerequisite before the block starts. One constant for every kind of member — `SHARING_MEMBER_PLANT_ALLOCATION` now imports it — and no branch on owner type, per C33. Adds an item to Block 5 → Block A: a member at the ceiling must be told on the browse and swap screens, not refused at the payment page. Gives Block 11's rules page drafted copy, and puts three accepted risks into `backend.md`. **What it counts is C16's and was reversed** |
 | C16 | **A harvested plant counts** toward a member's four, and keeps its place until it goes out for delivery | Reverses the reading C15 shipped, and the check was changed with the ruling rather than left to Block 10. Frees Block 10 of the question and hands it three items: the trade-down prompt has to say that a harvested plant cannot be traded out, a swap has to release before it acquires, and the allowance read belongs on every screen that offers a plant. Gives **C9.1** a second consumer — one delivery-confirmed event releases a cultivator's money and frees a member's place. Rewrites two paragraphs of C15's club-rules copy |
-| C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note |
+| C17 | **Maturity stays out of the leaf rating; a swap for a mature plant is a request the cultivator confirms.** The formula in `swap-zone.md` is untouched | Ungates Block 10 → Block E, which now starts with nothing open in front of it. Restates the member story's instant/confirmed line on the **plant** rather than the kind of owner, which is what keeps C33's droppability constraint intact instead of straining it. Adds a held-offer state, a lapse and a recorded decline to the block. Widens R-C7.1 — the cultivator now chooses the counterparty as well as making the offer — and adds a sentence to C7's legal brief rather than a new risk. Leaves **C17.1** open |
+| C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note. **C17 is the first test of it**, and the constraint changed the rule: the confirmation trigger reads the plant's maturity, never its owner's type |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |
 | C28 | Retiring the single role column | Block 0.5, and every permission test |
