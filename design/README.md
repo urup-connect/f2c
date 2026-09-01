@@ -19,7 +19,7 @@ is deliberately unbuilt, it is recorded as unbuilt rather than omitted.
 | [features/brand.md](features/brand.md) | Colour, typography, logo artwork, photography and the design tokens behind them |
 | [migrations.md](migrations.md) | How a migration is written here, and what the cleared set encoded that the models do not |
 
-Four further documents describe what is *planned* rather than what exists, and are the exception to
+Five further documents describe what is *planned* rather than what exists, and are the exception to
 the rule above:
 
 | Document | Covers |
@@ -28,6 +28,7 @@ the rule above:
 | [plan.md](plan.md) | The roadmap: what the platform is, where the work stands, and the order the remaining blocks can be built in |
 | [todo.md](todo.md) | Every outstanding item from the brief and the design set, in build order, each marked built, partial, not built, or blocked |
 | [conflict.md](conflict.md) | Where the brief in `twp-tasks/` disagrees with what is built, with itself, or with the older plan — and what should be done about each |
+| [deploy.md](deploy.md) | Standing QA up on Azure: the resources, every configuration entry and where it is stored, and what has to change first |
 
 The brief itself is in [twp-tasks/](twp-tasks/): a set of short subject documents and six drawio
 story diagrams. It is the statement of intent. Where it and the built system disagree, `conflict.md`
