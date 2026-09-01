@@ -16,8 +16,8 @@ from django.test import RequestFactory, TestCase
 
 from app.core.accounts.models import User
 from app.core.accounts.roles import ADMINISTRATOR_ACTIONS
-from app.core.storefronts.admin import StorefrontStaffAdmin
-from app.core.storefronts.models import Storefront, StorefrontStaff
+from app.core.storefronts.admin import EmailDispatchAdmin, StorefrontStaffAdmin
+from app.core.storefronts.models import EmailDispatch, Storefront, StorefrontStaff
 from f2c.testing import make_account, make_administrator, make_member
 
 
@@ -172,3 +172,91 @@ class ListTests(TestCase):
         with self.assertNumQueries(0):
             names = [self.admin.person(row) for row in rows]
         self.assertEqual(sorted(names), ['Admin0', 'Admin1', 'Admin2'])
+
+
+class EmailDispatchAdminTests(TestCase):
+    """The send log page. Read-only, and the reasons are not the same.
+
+    Nothing on this page may be typed into, but the three prohibitions answer
+    three different questions and are worth asserting separately: a row exists
+    because a message was sent (no adding), a record of what happened is not a
+    record if it can be edited (no changing), and a deletion is the one action
+    here that can make the log lie (superusers only).
+    """
+
+    def setUp(self):
+        self.admin = EmailDispatchAdmin(EmailDispatch, AdminSite())
+        self.member = make_member('member@example.com', 'Thabo')
+        self.operator = make_account('operator@example.com')
+        self.requests = RequestFactory()
+
+    def request_from(self, user):
+        request = self.requests.get('/admin/')
+        request.user = user
+        return request
+
+    def make(self, **overrides):
+        options = {
+            'kind': EmailDispatch.Kind.LOGIN_CODE,
+            'storefront': Storefront.CLUB,
+            'recipient': self.member,
+            'subject': 'Your sign-in code',
+            'trigger': EmailDispatch.Trigger.MEMBER,
+        }
+        options.update(overrides)
+        return EmailDispatch.objects.create(**options)
+
+    def test_nothing_can_be_added_by_hand(self):
+        self.assertFalse(
+            self.admin.has_add_permission(self.request_from(self.operator))
+        )
+
+    def test_nothing_can_be_edited(self):
+        self.assertFalse(
+            self.admin.has_change_permission(self.request_from(self.operator))
+        )
+
+    def test_every_field_is_read_only(self):
+        """Asserted over ``_meta`` rather than against a list, so a column added
+        later is read-only without anybody having to remember."""
+        readonly = set(self.admin.get_readonly_fields(
+            self.request_from(self.operator)
+        ))
+
+        self.assertEqual(
+            {field.name for field in EmailDispatch._meta.fields}, readonly
+        )
+
+    def test_deleting_is_for_superusers_alone(self):
+        staff = make_account('staff@example.com', is_staff=True)
+        boss = make_account('boss@example.com', is_staff=True, is_superuser=True)
+
+        self.assertFalse(
+            self.admin.has_delete_permission(self.request_from(staff))
+        )
+        self.assertTrue(
+            self.admin.has_delete_permission(self.request_from(boss))
+        )
+
+    def test_the_recipient_column_shows_the_nickname_the_club_knows(self):
+        """``display_name``, as the appointment page does, and for the same
+        reason: an address is not what the club calls somebody."""
+        self.assertEqual('Thabo', self.admin.person(self.make()))
+
+    def test_an_operators_send_is_attributed_to_the_operator(self):
+        dispatch = self.make(
+            trigger=EmailDispatch.Trigger.OPERATOR,
+            triggered_by=self.operator,
+        )
+
+        self.assertEqual(
+            self.operator.display_name, self.admin.caused_by(dispatch)
+        )
+
+    def test_a_send_with_nobody_to_name_shows_what_caused_it_instead(self):
+        """The blank is not a gap. A sign-in code is asked for by somebody who is
+        not signed in, and the column says so rather than showing nothing."""
+        self.assertEqual(
+            EmailDispatch.Trigger.MEMBER.label,
+            self.admin.caused_by(self.make()),
+        )

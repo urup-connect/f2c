@@ -7,7 +7,14 @@ honest: it is hashed at rest, it dies after ``OTP_TTL_SECONDS``, and it is
 burned after ``OTP_MAX_ATTEMPTS`` wrong guesses.
 
 Django 6.1 has no async email API and password hashing is deliberately slow, so
-both run in a worker thread rather than blocking the event loop.
+neither runs on the event loop. Hashing goes to a worker thread from here; the
+mail hand-over goes to one inside ``storefronts.mail``, which keeps the dispatch
+row it writes on this connection rather than the thread's -- see ``_send``.
+
+Every code sent is recorded, in ``storefronts.EmailDispatch``. A code that
+cannot be delivered is the one authentication failure a member cannot diagnose
+and cannot work around, so "was it sent, and did the server take it?" has to be
+answerable without a mail provider's console.
 """
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -15,7 +22,11 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-from app.core.storefronts.mail import brand_for, send_storefront_email
+from app.core.storefronts.mail import (
+    EmailDispatch,
+    asend_storefront_email,
+    brand_for,
+)
 
 from .models import EmailOtp
 
@@ -23,14 +34,30 @@ _hash = sync_to_async(make_password, thread_sensitive=False)
 _check = sync_to_async(check_password, thread_sensitive=False)
 
 
-def _send_code(email, name, code, storefront):
-    """Blocking send. Called through a thread by :func:`issue`.
+async def _send(user, name, code, storefront):
+    """Render the code and send it. Awaited by :func:`issue`.
 
     The storefront decides the server, the sender and the name on the message --
     all three together, in ``storefronts.mail``. A code that arrives from the
     store's provider signed with the club's name is indistinguishable from a
     phishing attempt, which is the one thing a member must be able to tell about
     a one-time code.
+
+    **Async rather than a ``sync_to_async`` of the whole send**, which is what
+    this was. The send now writes a dispatch row, and a send wrapped whole runs
+    that write on whichever thread the wrapper picked -- either one with a
+    database connection of its own that cannot see the caller's transaction, or
+    the shared executor thread that a hanging mail server would then stall.
+    ``asend_storefront_email`` splits it instead: the SMTP hand-over on a worker
+    thread, the database on this one. Rendering stays here because a cached
+    template is a string interpolation, not I/O.
+
+    ``trigger`` is ``MEMBER`` with nobody named, and both halves of that are the
+    truth rather than a shortcut. Somebody asked for this code -- it is not a
+    send the platform decided on -- and whoever asked was by definition not
+    signed in, so the platform has the address they typed and no proof of who
+    typed it. Naming the recipient as the trigger would record a claim the
+    endpoint deliberately never verifies.
     """
     brand = brand_for(storefront)
     body = render_to_string(
@@ -42,15 +69,14 @@ def _send_code(email, name, code, storefront):
             'minutes': max(1, settings.OTP_TTL_SECONDS // 60),
         },
     )
-    send_storefront_email(
+    await asend_storefront_email(
         storefront=storefront,
+        kind=EmailDispatch.Kind.LOGIN_CODE,
+        recipient=user,
         subject=f'Your {brand} sign-in code',
         body=body,
-        to=[email],
+        trigger=EmailDispatch.Trigger.MEMBER,
     )
-
-
-_send = sync_to_async(_send_code, thread_sensitive=False)
 
 
 async def issue(user, purpose=EmailOtp.Purpose.LOGIN, *, storefront=None):
@@ -80,7 +106,7 @@ async def issue(user, purpose=EmailOtp.Purpose.LOGIN, *, storefront=None):
     )
 
     name = user.get_short_name() or user.get_username()
-    await _send(user.email, name, code, storefront)
+    await _send(user, name, code, storefront)
 
 
 async def verify(user, code, purpose=EmailOtp.Purpose.LOGIN):

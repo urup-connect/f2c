@@ -62,7 +62,7 @@ app/market/     the produce market. No apps yet
 | `core/common` | Field encryption, RSA ID checks. No models, no endpoints | — |
 | `core/accounts` | The identity, the permission catalogue over it, and the admin | `common` — and, in `services` only, `producers`, `club/membership` and `club/plant`. See below |
 | `core/authn` | Passkeys, emailed codes, sessions, rate limits | `accounts`, `common` |
-| `core/storefronts` | The two storefronts, who administers one, and which storefront a request is for | `accounts` |
+| `core/storefronts` | The two storefronts, who administers one, which storefront a request is for, and the record of every email sent | `accounts` |
 | `core/documents` | Documents, revisions, and the agreements given — per storefront | `accounts`, `storefronts` |
 | `core/payments` | The membership subscription, the Payfast integration, and what a payment does to a membership. **One gateway, billing one thing** — member purchases settle elsewhere, into another entity's account, through a gateway that does not exist yet: C10, C10.1 | `accounts`, `membership` |
 | `commerce/producers` | The producer organisation, its appointed people, and which storefronts it sells into | `accounts`, `storefronts` |
@@ -433,6 +433,18 @@ answers `User.objects.has_been_seen(address)` without the erased record keeping 
 The collective needs to recognise a returning member; POPIA's minimality principle prefers a digest
 to an address. The digest is not unique, so an erased member is free to register again as a new
 account.
+
+**The send log de-identifies itself, and there is no scrub step to remember.**
+`storefronts.EmailDispatch` records every email the platform sends — which member, which message,
+when, and whether the mail server took it — and it stores **no email address at all**. Every email
+this platform sends goes to a member record, so the log holds a foreign key and reads the address off
+the account at the moment of sending. Erasure clearing `User.email` therefore removes the address
+from the send history too, in one write, with nothing here to keep in step. It stores no message body
+either: a sign-in code and a payment token both live in the body, and neither belongs in a table
+staff can read. What is left after an erasure is which kinds of letter an anonymous account was sent
+and when, which is the collective's own operating record. Age-based retention is separate and is a
+schedule: `EMAIL_DISPATCH_RETENTION_DAYS`, enforced by `manage.py purge_email_dispatches` on a
+timer.
 
 An erased account cannot be reactivated. `activate()` raises rather than resurrecting a record whose
 personal data is gone.
@@ -1005,6 +1017,23 @@ Both are fixed — stored and compared as text — and `test_the_challenge_is_st
 guards it.
 
 ## 12. What is not built
+
+**Email delivery and read tracking are not built, and cannot be from here.** `EmailDispatch`
+records three stages — sent, delivered, read — and this deployment can fill in exactly one of them.
+Mail leaves through plain SMTP, and a relay accepting a message is not the message arriving: nothing
+downstream reports back, so `delivery_status` stays at *not reported* on every row. Closing that gap
+means a provider that emits delivery events — Postmark, Mailgun, SES, any of them — which is a
+provider account, DKIM/SPF/DMARC on both storefront domains, and one signed webhook route.
+`EmailDispatch.apply_provider_event` is the whole of the handler behind that route and is written and
+tested already, so the remaining work is configuration and a signature check rather than a migration.
+
+Reading is a separate decision rather than the same gap. An open is only knowable through an
+invisible image in the message body, and the answer it gives is poor — Apple Mail's privacy proxy
+prefetches images, so it reports opens nobody made, and clients that block images report none where
+there were some. **Put on a one-time sign-in code it is also surveillance of a security event**, so
+it is deliberately absent: `read_status` says *not tracked*, which is a different statement from *not
+read*, and the distinction is the reason the value exists. `record_read` is where a reversal would
+land if the club ever wants opens on the payment-link email alone.
 
 There is no distribution record. The API is authentication, the club documents, both registrations,
 the account's own profile, the membership payment, the member register, the strain catalogue and

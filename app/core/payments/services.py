@@ -39,7 +39,11 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 from app.core.accounts.models import User
-from app.core.storefronts.mail import brand_for, send_storefront_email
+from app.core.storefronts.mail import (
+    EmailDispatch,
+    brand_for,
+    send_storefront_email,
+)
 from app.core.storefronts.models import Storefront
 from app.club.membership.models import MembershipStatus
 
@@ -501,13 +505,17 @@ def lapse_overdue(*, today=None):
     return lapsed
 
 
-def _send_checkout_link(email, name, url, amount):
+def _send_checkout_link(user, name, url, amount):
     """Blocking send. Called through a thread by :func:`email_outstanding_checkout`.
 
     Always the club's server, named outright rather than resolved from a request.
     The membership subscription is the club's alone -- the produce market has no
     membership to bill -- so the host this happens to have been triggered from
     says nothing about which storefront the money is for.
+
+    Recorded as the member's own trigger with nobody named, for
+    ``otp._send_code``'s reason: a registration form is somebody asking, and the
+    form is submitted by a visitor with no session.
     """
     brand = brand_for(Storefront.CLUB)
     body = render_to_string(
@@ -516,9 +524,11 @@ def _send_checkout_link(email, name, url, amount):
     )
     send_storefront_email(
         storefront=Storefront.CLUB,
+        kind=EmailDispatch.Kind.PAYMENT_LINK,
+        recipient=user,
         subject=f'Complete your {brand} membership payment',
         body=body,
-        to=[email],
+        trigger=EmailDispatch.Trigger.MEMBER,
     )
 
 
@@ -550,7 +560,6 @@ def email_outstanding_checkout(user, *, now=None):
     subscription.extend_checkout(plan.checkout_ttl_seconds, now)
     subscription.save(update_fields=['checkout_expires_at', 'updated_at'])
 
-    email = user.email
     name = user.get_short_name() or 'there'
     url = f'{plan.checkout_url}/{subscription.checkout_token}'
     amount = subscription.amount
@@ -560,7 +569,7 @@ def email_outstanding_checkout(user, *, now=None):
     # a link that does not work -- worse than no email, because the member has
     # been told to use it.
     transaction.on_commit(
-        lambda: _send_checkout_link(email, name, url, amount)
+        lambda: _send_checkout_link(user, name, url, amount)
     )
     return True
 

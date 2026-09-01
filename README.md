@@ -75,6 +75,7 @@ there.
 | Sign-in endpoints | `authn/api.py` |
 | Passkey ceremonies | `authn/webauthn.py` |
 | Emailed sign-in codes | `authn/otp.py` |
+| Which server an email leaves by, and the record that it did | `storefronts/mail.py`, `storefronts/models.py` |
 | Rate limits | `authn/throttles.py` |
 | Field encryption and blind indexes | `common/crypto.py` |
 | RSA ID number checks | `common/validators.py` |
@@ -428,8 +429,52 @@ Leave both `EMAIL_*_HOST` blank and every storefront falls back to the console
 backend, so codes are printed to the terminal running Uvicorn rather than sent.
 Look for the message body in that output.
 
-Django 6.1 has no async email API, so sending -- and password hashing, which is
-deliberately slow -- runs in a worker thread rather than on the event loop.
+Django 6.1 has no async email API, so the mail hand-over -- and password
+hashing, which is deliberately slow -- runs in a worker thread rather than on the
+event loop. The hand-over alone: `storefronts/mail.py` keeps the database writes
+on the caller's connection, because a worker thread holds one of its own and it
+cannot see the transaction the request is running in.
+
+### Every email sent is recorded
+
+`storefronts.EmailDispatch` is one row per message: which member, which of the
+platform's four emails it was, which storefront's letterhead it carried, when it
+was queued, whether the mail server took it and when, and what it said if it
+refused. Also **what caused it** -- the platform itself, the recipient, or a
+named operator -- which is how a suspension notice is traced back to the person
+who suspended the member.
+
+Nothing can send without being recorded, because `send_storefront_email` is the
+only thing in the project that builds an `EmailMessage`. The row is written
+*before* the hand-over, so a process that dies mid-send leaves a row saying
+`queued` rather than no trace of a message that may well have gone out.
+
+**Two of the three stages sit empty, and that is honest rather than unfinished.**
+
+| Stage | What this deployment knows |
+| --- | --- |
+| Sent | Whether the mail server accepted it, and when. Genuinely known. |
+| Delivered | Nothing. SMTP does not report delivery; a relay accepting a message is not the message arriving. Needs a provider that emits events. |
+| Read | Nothing, deliberately. An open is only knowable through an invisible image in the body, which is not something to put in a one-time code. |
+
+So `delivery_status` reads *not reported* and `read_status` reads *not tracked* --
+neither of which is the same statement as "no". Closing the delivery half is a
+provider with webhooks, DKIM/SPF/DMARC per storefront domain, and one signed
+route; `EmailDispatch.apply_provider_event` is the handler behind it and is
+already written and tested. `storefronts/mail.py` already reads a provider
+message id off the sent message where the backend supplies one, so the join a
+webhook needs is in place.
+
+The log holds **no email address and no message body**. Every email the platform
+sends goes to a member record, so the row points at the account and the address is
+read off it at send time -- which means POPIA erasure de-identifies the send
+history in the same write, with no scrub step to remember. The body is excluded
+because a sign-in code and a payment link both live in it.
+
+Retention is `EMAIL_DISPATCH_RETENTION_DAYS`, twelve months by default, enforced
+by `manage.py purge_email_dispatches` on a timer. `--dry-run` reports without
+deleting; `0` keeps everything. The log is read at
+**Storefronts → Emails sent** in the Django admin, read-only throughout.
 
 ### Rate limits
 
@@ -558,6 +603,7 @@ documents every variable.
 | `EMAIL_CC_USE_TLS` / `EMAIL_CC_USE_SSL` | No | STARTTLS on 587, or implicit TLS on 465. Mutually exclusive; TLS defaults on. |
 | `EMAIL_CC_FROM` | When `DEBUG=False` | The address club mail is sent as. Normally must be one the provider is authorised to send for. |
 | `EMAIL_F2C_*` | Same as above | The store's server and sender. Same five variables, same rules. |
+| `EMAIL_DISPATCH_RETENTION_DAYS` | No | Days of send history to keep. 365 by default; `0` keeps everything. Enforced by `manage.py purge_email_dispatches`. |
 | `DJANGO_CDN_BASE_URL` | With a container | Public prefix the documents are served from. Https outside local development, and its path must match the container. |
 | `DJANGO_DOCUMENT_STORAGE_CONTAINER` | No | The blob container the CDN fronts. Blank means uploads go to `MEDIA_ROOT` and are served by runserver. |
 | `DJANGO_DOCUMENT_STORAGE_ACCOUNT` | With a container | Storage account name. Not needed if a connection string is set. |
@@ -776,6 +822,12 @@ or a CDN), a real database, and the Django deployment checklist
 Authentication adds two more: a real email provider in `MAILERS` (codes are
 printed to the console today) and a shared cache backend, without which the
 auth rate limits are per worker rather than per deployment.
+
+The send log adds a scheduled job rather than a service: `manage.py
+purge_email_dispatches`, nightly, which is what turns `EMAIL_DISPATCH_RETENTION_DAYS`
+from a number into a retention policy. Nothing breaks without it; the table
+simply grows and keeps personal information past the window the deployment says
+it keeps it for.
 
 The club documents add one: an Azure Blob Storage container behind the CDN, and
 the `DJANGO_DOCUMENT_STORAGE_*` variables above. Without it the PDFs are written

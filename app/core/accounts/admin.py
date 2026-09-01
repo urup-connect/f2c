@@ -367,7 +367,7 @@ class UserAdmin(BaseUserAdmin):
         for user in queryset:
             user.deactivate(UserStatus.SUSPENDED)
             count += 1
-            if notifications.email_access_revoked(user):
+            if notifications.email_access_revoked(user, by=request.user):
                 told += 1
 
         untold = count - told

@@ -557,7 +557,7 @@ def suspend_member(user, member):
     # the invitation to challenge it go to the mailbox, which is the private
     # channel. Sent on commit, so a rolled-back suspension emails nobody. See
     # `accounts.notifications`.
-    notifications.email_membership_suspended(member)
+    notifications.email_membership_suspended(member, by=user)
     return member
 
 

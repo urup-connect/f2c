@@ -32,13 +32,17 @@ import logging
 from django.db import transaction
 from django.template.loader import render_to_string
 
-from app.core.storefronts.mail import brand_for, send_storefront_email
+from app.core.storefronts.mail import (
+    EmailDispatch,
+    brand_for,
+    send_storefront_email,
+)
 from app.core.storefronts.models import Storefront
 
 logger = logging.getLogger(__name__)
 
 
-def _deliver(*, storefront, template, subject_template, email, name):
+def _deliver(*, storefront, kind, template, subject_template, user, name, by):
     """Render and send, blocking, swallowing a mail failure into the log.
 
     **The one place in this project that sends with the failure suppressed, and
@@ -60,15 +64,23 @@ def _deliver(*, storefront, template, subject_template, email, name):
     try:
         send_storefront_email(
             storefront=storefront,
+            kind=kind,
+            recipient=user,
             subject=subject_template.format(brand=brand),
             body=body,
-            to=[email],
+            # Both of these are an operator's doing, and `by` is which operator
+            # where the caller knows. It is provenance rather than authority --
+            # the block is already committed and nothing reads this to justify
+            # it -- so an unattributed send is recorded as an operator's without
+            # a name rather than mislabelled as the platform's own.
+            trigger=EmailDispatch.Trigger.OPERATOR,
+            triggered_by=by,
         )
     except Exception:
         logger.exception(
-            'accounts: could not email %s about their access; the change itself '
-            'stands. Somebody should tell them.',
-            email,
+            'accounts: could not email account %s about their access; the '
+            'change itself stands. Somebody should tell them.',
+            user.pk,
         )
 
 
@@ -87,8 +99,12 @@ def _addressee(user):
     return email, user.get_short_name() or 'there'
 
 
-def email_membership_suspended(user):
+def email_membership_suspended(user, *, by=None):
     """Tell ``user`` their club membership is on hold. Club-branded.
+
+    ``by`` is the operator who suspended them, recorded on the send. Optional
+    because the record is provenance and an unattributed send is better than no
+    send -- see ``_deliver``.
 
     :returns: ``True`` when a message was queued for after the commit.
     """
@@ -101,7 +117,7 @@ def email_membership_suspended(user):
         )
         return False
 
-    email, name = addressee
+    _, name = addressee
     # On commit, for the reason `email_outstanding_checkout` gives: the
     # suspension is written inside a transaction, and telling somebody they are
     # suspended before the write that suspends them can still roll back is
@@ -109,21 +125,25 @@ def email_membership_suspended(user):
     transaction.on_commit(
         lambda: _deliver(
             storefront=Storefront.CLUB,
+            kind=EmailDispatch.Kind.MEMBERSHIP_SUSPENDED,
             template='emails/membership_suspended.txt',
             subject_template='Your {brand} membership is on hold',
-            email=email,
+            user=user,
             name=name,
+            by=by,
         )
     )
     return True
 
 
-def email_access_revoked(user, *, storefront=None):
+def email_access_revoked(user, *, storefront=None, by=None):
     """Tell ``user`` their account can no longer sign in anywhere.
 
     ``storefront`` names the letterhead. Left to the default it is resolved by
     ``brand_for``, which is the right answer for the Django admin: the operator
     barring an account is not acting for one storefront.
+
+    ``by`` is that operator, recorded on the send.
 
     :returns: ``True`` when a message was queued for after the commit.
     """
@@ -136,14 +156,16 @@ def email_access_revoked(user, *, storefront=None):
         )
         return False
 
-    email, name = addressee
+    _, name = addressee
     transaction.on_commit(
         lambda: _deliver(
             storefront=storefront,
+            kind=EmailDispatch.Kind.ACCESS_REVOKED,
             template='emails/account_access_revoked.txt',
             subject_template='Your {brand} access has been withdrawn',
-            email=email,
+            user=user,
             name=name,
+            by=by,
         )
     )
     return True

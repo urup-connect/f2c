@@ -13,7 +13,7 @@ the test runner substitutes for every configured alias. It is the only way to
 see, after the fact, which mailer a message actually went through.
 """
 from django.core import mail
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from app.core.storefronts.mail import (
     brand_for,
@@ -21,7 +21,8 @@ from app.core.storefronts.mail import (
     mailer_for,
     send_storefront_email,
 )
-from app.core.storefronts.models import Storefront
+from app.core.storefronts.models import EmailDispatch, Storefront
+from f2c.testing import make_account
 
 SENDERS = {
     'club': 'no-reply@club.example.co.za',
@@ -91,17 +92,27 @@ class BrandTests(SimpleTestCase):
 
 
 @override_settings(STOREFRONT_FROM_EMAIL=SENDERS)
-class SendStorefrontEmailTests(SimpleTestCase):
+class SendStorefrontEmailTests(TestCase):
+    """``TestCase`` rather than ``SimpleTestCase``, and that is not incidental.
+
+    Sending now writes an ``EmailDispatch`` row, so there is no database-free
+    path through this function any more. That is the design -- the log is
+    complete because there is no way to send without writing to it -- and this
+    class needing a database is the first place it shows.
+    """
+
     def setUp(self):
         super().setUp()
+        self.member = make_account('someone@example.com')
         mail.outbox.clear()
 
     def send(self, storefront):
         send_storefront_email(
             storefront=storefront,
+            kind=EmailDispatch.Kind.LOGIN_CODE,
+            recipient=self.member,
             subject='Subject',
             body='Body',
-            to=['someone@example.com'],
         )
         return mail.outbox[-1]
 
@@ -124,3 +135,22 @@ class SendStorefrontEmailTests(SimpleTestCase):
 
         self.assertNotEqual(club.sent_using, market.sent_using)
         self.assertNotEqual(club.from_email, market.from_email)
+
+    def test_the_address_comes_off_the_account(self):
+        """Not from the caller, so a caller cannot log one member and write to
+        another. See ``send_storefront_email``."""
+        message = self.send(Storefront.CLUB)
+
+        self.assertEqual([self.member.email], message.to)
+
+    def test_an_account_with_no_address_is_refused_before_anything_is_sent(self):
+        """A programming error, not a runtime condition: the callers ask whether
+        there is anybody to write to before they get here."""
+        self.member.email = None
+        self.member.save(update_fields=['email'])
+
+        with self.assertRaises(ValueError):
+            self.send(Storefront.CLUB)
+
+        self.assertEqual(0, len(mail.outbox))
+        self.assertEqual(0, EmailDispatch.objects.count())

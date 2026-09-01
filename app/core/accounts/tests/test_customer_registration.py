@@ -582,16 +582,20 @@ class UndeliverableCodeTests(EndpointTestCase):
     def failing_mail(self):
         """A mail backend that will not send.
 
-        Patched at ``otp.send_storefront_email`` rather than at ``otp._send``
-        or ``otp._send_code``. ``_send`` is built by ``sync_to_async`` at import
-        time, so patching either of those two leaves the wrapper pointing at the
-        original and the test passes while sending perfectly well -- which is
-        what the first version of this did, and only two of these six noticed.
-        This name is resolved inside ``_send_code`` on every call, and it is
-        also the realistic seam: what fails in production is the backend.
+        Patched at the backend itself, which is where the fault actually is in
+        production: an unreachable SMTP host. It used to be patched a layer up,
+        inside ``otp``, because ``_send`` was a ``sync_to_async`` wrapper built
+        at import time and patching the function behind it left the wrapper
+        pointing at the original -- the test passed while sending perfectly well,
+        and only two of these six noticed. That hazard is gone: ``otp._send`` is
+        an ordinary coroutine now.
+
+        Patching here rather than in ``otp`` also keeps ``storefronts.mail`` in
+        the path, so the send is recorded as failed on the way through and this
+        exercises the whole of what a failed sign-in code does.
         """
         return mock.patch(
-            'app.core.authn.otp.send_storefront_email',
+            'django.core.mail.EmailMessage.send',
             side_effect=OSError('mail server is not answering'),
         )
 

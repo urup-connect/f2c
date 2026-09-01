@@ -577,6 +577,21 @@ STOREFRONT_FROM_EMAIL = {
     'market': _from_email('F2C', 'market'),
 }
 
+#: How long a send is kept in `storefronts.EmailDispatch`, in days.
+#:
+#: The log answers "was this member told?", and that question has a shelf life:
+#: a sign-in code nobody can remember requesting is a support call this week, not
+#: next year. Twelve months is the default because the longest-lived question is
+#: a membership dispute over a suspension notice, which is annual.
+#:
+#: Nothing enforces this on its own -- POPIA's retention principle is a
+#: schedule, and the schedule is `manage.py purge_email_dispatches` on a timer.
+#: Zero disables the purge, for a deployment that would rather keep everything
+#: and say so.
+EMAIL_DISPATCH_RETENTION_DAYS = int(
+    (os.environ.get('EMAIL_DISPATCH_RETENTION_DAYS') or '365').strip() or 365
+)
+
 
 # Cache
 # https://docs.djangoproject.com/en/6.1/topics/cache/

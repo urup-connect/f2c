@@ -13,7 +13,7 @@ from django.test import TestCase
 
 from app.core.accounts import notifications
 from app.core.accounts.models import UserStatus
-from app.core.storefronts.models import Storefront
+from app.core.storefronts.models import EmailDispatch, Storefront
 from f2c.testing import make_account, make_member, make_sharing_placeholder
 
 
@@ -142,3 +142,89 @@ class RevocationEmailTests(TestCase):
         self.assertIsNone(
             User.objects.active_by_email('customer@example.com').first()
         )
+
+
+class SendRecordTests(TestCase):
+    """The send log, from the caller's end rather than the mail layer's.
+
+    ``storefronts.tests.test_dispatch`` asserts that a send writes a truthful
+    row. What is asserted here is that these two callers hand it the right facts
+    -- which is where the wiring can silently be wrong: a suspension notice
+    recorded as the platform's own doing, or attributed to nobody, still sends
+    perfectly well and reads correctly in the member's mailbox.
+    """
+
+    def setUp(self):
+        self.member = make_member('member@example.com', 'Thabo')
+        self.operator = make_account('operator@example.com')
+        mail.outbox.clear()
+
+    def test_a_suspension_notice_is_recorded_against_the_member(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            notifications.email_membership_suspended(self.member, by=self.operator)
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(self.member, dispatch.recipient)
+        self.assertEqual(
+            EmailDispatch.Kind.MEMBERSHIP_SUSPENDED, dispatch.kind
+        )
+        self.assertEqual(Storefront.CLUB, dispatch.storefront)
+        self.assertEqual(EmailDispatch.SendStatus.SENT, dispatch.send_status)
+
+    def test_it_names_the_operator_who_caused_it(self):
+        """The question the log is here to answer about an administrator's
+        action: not only whether the member was told, but by whose doing."""
+        with self.captureOnCommitCallbacks(execute=True):
+            notifications.email_membership_suspended(self.member, by=self.operator)
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.Trigger.OPERATOR, dispatch.trigger)
+        self.assertEqual(self.operator, dispatch.triggered_by)
+
+    def test_an_unattributed_suspension_is_still_an_operators(self):
+        """``by`` is optional. An admin path that does not pass it records an
+        operator with no name -- not a send the platform decided on."""
+        with self.captureOnCommitCallbacks(execute=True):
+            notifications.email_membership_suspended(self.member)
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.Trigger.OPERATOR, dispatch.trigger)
+        self.assertIsNone(dispatch.triggered_by)
+
+    def test_a_revocation_is_recorded_as_its_own_kind(self):
+        """Two blocks, two kinds. Reporting on "who have we barred?" must not
+        have to read subject lines to tell them apart."""
+        account = make_account('customer@example.com')
+
+        with self.captureOnCommitCallbacks(execute=True):
+            notifications.email_access_revoked(account, by=self.operator)
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.Kind.ACCESS_REVOKED, dispatch.kind)
+        self.assertEqual(account, dispatch.recipient)
+
+    def test_a_member_with_no_address_leaves_no_row(self):
+        """The caller declines to send at all, so there is nothing to record.
+        A dispatch row for a message that was never attempted would be worse
+        than the silence -- see ``_addressee``."""
+        self.member.soft_delete()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            notifications.email_membership_suspended(self.member)
+
+        self.assertEqual(0, EmailDispatch.objects.count())
+
+    def test_a_mail_failure_is_still_recorded(self):
+        """The send is swallowed here -- see ``_deliver`` -- which is exactly why
+        the row matters: without it a suspension notice that never left is
+        invisible outside the application log."""
+        with patch(
+            'django.core.mail.EmailMessage.send', side_effect=OSError('unreachable')
+        ):
+            with self.assertLogs('app.core.accounts.notifications', level='ERROR'):
+                with self.captureOnCommitCallbacks(execute=True):
+                    notifications.email_membership_suspended(self.member)
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.SendStatus.FAILED, dispatch.send_status)
+        self.assertIn('unreachable', dispatch.send_error)
