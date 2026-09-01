@@ -29,12 +29,33 @@ class DocumentsTestCase(TestCase):
 
     STORAGES is pinned to the filesystem so the suite behaves the same whether
     or not the developer running it has Azure credentials in their .env.
+
+    **The override goes on unittest's class-cleanup stack, and that is not a
+    style choice.** It used to be enabled here and disabled in a matching
+    ``tearDownClass``, which looks correct and is not, because
+    ``@override_settings`` applied to a *subclass* -- ``PaymentsTestCase`` is the
+    one that exists -- is entered by Django through ``enterClassContext`` and so
+    is unwound after ``tearDownClass`` has already run. The two mechanisms then
+    disable out of order: this override went first while the subclass's was
+    still open, and when that one exited it restored the snapshot it had taken
+    *while this override was active*. The temporary MEDIA_ROOT and this STORAGES
+    dict came back from the dead and stayed for the rest of the process.
+
+    Nothing failed while both storages backends were the same object, which is
+    why it sat here unnoticed. It surfaced the day ``STORAGES['staticfiles']``
+    became WhiteNoise's manifest backend: whether an admin page rendered
+    depended on whether the documents tests had run yet. Registering here puts
+    both overrides on one stack, which unwinds last-in-first-out.
+    ``f2c.test_runner`` fails the run if anything leaks again.
     """
 
     @classmethod
     def setUpClass(cls):
         cls._media = tempfile.mkdtemp(prefix='cc-documents-tests-')
-        cls._overrides = override_settings(
+        # Registered before the override, so it is torn down after it: the
+        # settings are restored first and the directory removed second.
+        cls.addClassCleanup(shutil.rmtree, cls._media, ignore_errors=True)
+        cls.enterClassContext(override_settings(
             MEDIA_ROOT=cls._media,
             MEDIA_URL='media/',
             STORAGES={
@@ -46,15 +67,8 @@ class DocumentsTestCase(TestCase):
                     'BACKEND': 'django.core.files.storage.FileSystemStorage'
                 },
             },
-        )
-        cls._overrides.enable()
+        ))
         super().setUpClass()
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls._overrides.disable()
-        shutil.rmtree(cls._media, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Builders

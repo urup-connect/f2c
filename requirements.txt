@@ -50,3 +50,10 @@ redis>=5.2,<7.0
 # specifically; a CSV would have no dropdown of the cultivator's own strains,
 # which is the part that stops the most common upload mistake being made.
 openpyxl>=3.1,<4.0
+# Serving /static/ from the API container. `django.contrib.staticfiles` serves
+# nothing once DEBUG is off, so without this the Django admin -- which under C29
+# is the operator tier -- renders with no stylesheets at all. The [brotli] extra
+# is what lets the compressed storage backend in f2c/settings.py write .br files
+# at collectstatic time; without it the same backend still works and writes gzip
+# only. See design/deploy.md 5.1.
+whitenoise[brotli]>=6.8,<7.0

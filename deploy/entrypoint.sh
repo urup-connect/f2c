@@ -112,15 +112,25 @@ case "${1:-serve}" in
         # ships: the image's CMD is still `serve`, and only compose.yaml asks
         # for `dev`.
         #
-        # `runserver` rather than uvicorn, and that is not the usual local
-        # preference reversed for no reason. `django.contrib.staticfiles`
-        # serves /static/ under DEBUG by overriding the runserver command, not
-        # by adding a URL, so uvicorn renders the admin with no stylesheets at
-        # all. Media is a real urlpattern and would work either way. Anything
-        # touching async views, streaming or long-lived connections still needs
-        # uvicorn -- see README "Running" -- and is not what this container is
-        # for.
+        # `runserver` rather than uvicorn. This used to be forced:
+        # `django.contrib.staticfiles` serves /static/ under DEBUG by
+        # overriding the runserver command rather than by adding a URL, so
+        # uvicorn rendered the admin with no stylesheets at all. WhiteNoise now
+        # serves /static/ in every process, runserver included -- see
+        # MIDDLEWARE and `whitenoise.runserver_nostatic` in f2c/settings.py --
+        # so the choice is only the usual local one: autoreload. Media is a
+        # real urlpattern and works either way. Anything touching async views,
+        # streaming or long-lived connections still needs uvicorn -- see README
+        # "Running" -- and is not what this container is for.
         wait_for_database
+
+        # WhiteNoise needs STATIC_ROOT populated, and the image's own
+        # `collectstatic` does not reach here: compose.yaml mounts a named
+        # volume over /app/staticfiles, which keeps whatever the last run left
+        # there. Cheap, and it keeps the local admin styled after an edit to
+        # static/cc_admin/.
+        echo "entrypoint: collecting static files"
+        python manage.py collectstatic --noinput
 
         echo "entrypoint: applying migrations"
         python manage.py migrate --noinput

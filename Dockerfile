@@ -53,6 +53,22 @@ COPY --chown=f2c:f2c . .
 # makes every later hardening decision harder than it needs to be.
 USER f2c
 
+# The static tree, baked into the image rather than built at start-up. WhiteNoise
+# serves STATIC_ROOT and nothing writes to it otherwise, so without this line the
+# admin renders unstyled -- design/deploy.md 5.1.
+#
+# The two variables are throwaway and exist only so `f2c/settings.py` imports:
+# it refuses to load without DJANGO_SECRET_KEY, and with DEBUG off it also
+# requires every Payfast variable. Neither is read by `collectstatic`, neither
+# is baked into the image (a RUN-line variable does not persist), and the key
+# below is not the one the container runs with -- Container Apps supplies that.
+#
+# `--clear` because .dockerignore keeps staticfiles/ out of the build context
+# today; if that ever changes, a developer's stale hashed files must not ship.
+RUN DJANGO_DEBUG=1 \
+    DJANGO_SECRET_KEY=build-only-never-used-at-runtime \
+    python manage.py collectstatic --noinput --clear
+
 EXPOSE 8000
 
 ENTRYPOINT ["/app/deploy/entrypoint.sh"]

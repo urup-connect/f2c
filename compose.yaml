@@ -95,10 +95,13 @@ services:
       # shadow it. Uploads written by the container land in ./media as usual,
       # because no blob container is configured here.
       - .:/app
-      # Not the host's. `db.sqlite3` in the tree above is the SQLite fallback
-      # and is not what this stack uses; `staticfiles/` would be collectstatic
-      # output that DEBUG never reads. Keeping the container's own directory
-      # here stops either from confusing the other.
+      # Not the host's. `db.sqlite3` in the tree above is the SQLite fallback and
+      # is not what this stack uses; `staticfiles/` on a developer's disk is
+      # their own collectstatic output. Keeping the container's own directory
+      # here stops either from confusing the other -- and since WhiteNoise now
+      # serves STATIC_ROOT in every process, DEBUG included, this volume is read
+      # on every request for a stylesheet. The `dev` branch of the entrypoint
+      # collects into it at start-up, so it never holds an older build's files.
       - api-staticfiles:/app/staticfiles
     environment:
       # DEBUG is load-bearing here in more places than it looks. It selects the

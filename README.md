@@ -238,8 +238,9 @@ Three consequences worth knowing:
 - **Uvicorn is not what serves these requests.** Anything touching async views, async ORM access,
   streaming or long-lived connections has to be checked through `.
 unasgi.ps1`, not here.
-  `runserver` is used because `django.contrib.staticfiles` serves `/static/` by overriding that
-  command -- under Uvicorn the admin renders with no stylesheets at all.
+  `runserver` is used for its reloader. It used to be forced -- `django.contrib.staticfiles` serves
+  `/static/` by overriding that command, so under Uvicorn the admin rendered with no stylesheets at
+  all -- but WhiteNoise now serves `/static/` in every process, `runserver` included.
 - **The frontends run `next dev`, not the deployed images.** `frontend/club/Dockerfile` and
   `frontend/market/Dockerfile` build the standalone servers that Container Apps runs;
   `frontend/Dockerfile.dev` is what compose uses.
@@ -851,9 +852,13 @@ Erasure deletes the blob, not just the column. See `User.soft_delete`.
 
 Production deployment is deliberately out of scope for now. When a target is
 chosen, it needs: a process manager fronting Uvicorn (Gunicorn with
-`UvicornWorker` on Linux), static file handling (`STATIC_ROOT` plus WhiteNoise
-or a CDN), a real database, and the Django deployment checklist
+`UvicornWorker` on Linux), a real database, and the Django deployment checklist
 (`manage.py check --deploy`).
+
+Static files are handled: WhiteNoise sits below `SecurityMiddleware` and serves
+`STATIC_ROOT`, which the API image populates with `collectstatic` at build time.
+Assets are content-hashed and pre-compressed, so they are served immutable and
+nothing has to be invalidated when one changes.
 
 Authentication adds two more: a real email provider in `MAILERS` (codes are
 printed to the console today) and a shared cache backend, without which the

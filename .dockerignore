@@ -25,8 +25,11 @@ frontend/
 db.sqlite3
 *.sqlite3
 
-# Uploads and collectstatic output. Both are produced at runtime and belong to
-# the environment, not to the artefact.
+# Uploads, which are produced at runtime and belong to the environment rather
+# than to the artefact -- and a developer's collectstatic output, which must not
+# be confused with the image's own. The runtime stage runs `collectstatic` after
+# this context is copied, so staticfiles/ inside the image is always built from
+# the sources in this build and never carries a stale hashed file from a laptop.
 media/
 staticfiles/
 

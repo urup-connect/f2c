@@ -217,6 +217,11 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    # Above `staticfiles` on purpose: it turns off runserver's own static
+    # handler, so local development is served by the same WhiteNoise middleware
+    # that serves QA and production. Without it the two disagree, and the one
+    # that disagrees is the one nobody looks at until a deployment 404s.
+    'whitenoise.runserver_nostatic',
     'django.contrib.staticfiles',
 
     # Third party
@@ -250,6 +255,16 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Directly below SecurityMiddleware, which is where WhiteNoise has to sit:
+    # above it and a static response would skip the SSL redirect and the HSTS
+    # header; further down and every request for a stylesheet would run
+    # sessions, auth and CSRF to serve a file off disk.
+    #
+    # This is what serves /static/ in a deployment. `django.contrib.staticfiles`
+    # only does so under DEBUG, and only by overriding the runserver command --
+    # so under uvicorn with DEBUG off, without this line, the admin and the
+    # brand skin in static/cc_admin/ answer 404. See design/deploy.md 5.1.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     # Must sit above CommonMiddleware so preflight responses are not redirected.
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -390,9 +405,10 @@ STATIC_URL = 'static/'
 # can shadow an upstream admin asset.
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
-# Only used by collectstatic. Without it the admin's stylesheets and the brand skin
-# both 404 once DEBUG is off, because runserver's static handler is gone and nothing
-# has written the files anywhere a web server can find them.
+# Written by collectstatic and read by WhiteNoise on every request for a static
+# file -- see MIDDLEWARE above. Nothing else serves this: runserver's own handler
+# is gone once DEBUG is off, so a deployment whose image skipped collectstatic
+# renders the admin and the brand skin as 404s.
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
@@ -414,8 +430,19 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # 'staticfiles' are restated here rather than inherited.
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    # WhiteNoise's manifest backend: `collectstatic` writes every file under a
+    # name containing a hash of its contents, and WhiteNoise serves those with
+    # a one-year immutable cache header. A changed stylesheet changes its URL,
+    # so nothing has to be invalidated and nothing is ever served stale.
+    # `Compressed` also writes .br and .gz siblings at collect time, which is
+    # the only sensible place to do it -- once per build rather than once per
+    # request.
+    #
+    # It requires that `collectstatic` has run, and the Dockerfile's runtime
+    # stage does that. Under DEBUG Django hands back the unhashed name, so a
+    # developer who has never run `collectstatic` is unaffected.
     'staticfiles': {
-        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     },
     # Deliberately not 'default': whatever else this project ever stores must not
     # land in the container the CDN serves to the public. Azure Blob Storage when

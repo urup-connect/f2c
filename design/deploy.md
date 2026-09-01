@@ -216,7 +216,18 @@ DJANGO_BLIND_INDEX_PEPPER=
 ```
 
 **Generate fresh values for QA and never copy production's down.** The field key is the only thing
-between a QA database restore and every identity number the club holds. Generate each with:
+between a QA database restore and every identity number the club holds. Generate them with
+`design/tools/generate_keys.py`, which emits both plus `DJANGO_SECRET_KEY` in `.env` form and
+checks each against the rules `crypto._decode_key` enforces:
+
+```
+python design/tools/generate_keys.py              # all three, .env format
+python design/tools/generate_keys.py --field      # one value, bare, for piping
+python design/tools/generate_keys.py --self-test  # prove the generator, print no secret
+```
+
+The equivalent single value, if the script is not to hand — it is what the settings' own refusal
+message tells you to run:
 
 ```
 python -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
@@ -339,21 +350,60 @@ blocked-membership screen are both the club's.
 
 ## 5. What has to be built or changed first
 
-### 5.1 The Django admin has no static files — and this is not in `todo.md`
+### 5.1 The Django admin had no static files — done
 
-There is no WhiteNoise in `MIDDLEWARE` and no `collectstatic` in the API Dockerfile.
+There was no WhiteNoise in `MIDDLEWARE` and no `collectstatic` in the API Dockerfile.
 `django.contrib.staticfiles` serves `/static/` only under `DEBUG`, and it does so by overriding the
 `runserver` command rather than by adding a URL — so under uvicorn with `DEBUG=False`, every admin
-stylesheet and the whole brand skin in `static/cc_admin/` answers 404. `STATIC_ROOT`'s own comment
-says as much, and nothing writes to it.
+stylesheet and the whole brand skin in `static/cc_admin/` answered 404. `STATIC_ROOT`'s own comment
+said as much, and nothing wrote to it.
 
-**Under C29 the Django admin is the operator tier**, so this is not cosmetic: it is the surface the
+**Under C29 the Django admin is the operator tier**, so this was not cosmetic: it is the surface the
 UC administrators work on, and the fallback for everything the twenty-seven unbuilt destinations do
-not cover yet. Add WhiteNoise below `SecurityMiddleware` and a `collectstatic --noinput` to the
-runtime stage. Half an hour.
+not cover yet.
+
+What was done, four files:
+
+- `whitenoise[brotli]` in `pyproject.toml`, `requirements.txt` and `poetry.lock`. The extra is what
+  writes `.br` files at collect time; without it the same backend writes gzip only.
+- `whitenoise.middleware.WhiteNoiseMiddleware` directly below `SecurityMiddleware` in `MIDDLEWARE`,
+  which is the only correct position — above it a static response would skip the SSL redirect and
+  the HSTS header, further down every stylesheet request would run sessions, auth and CSRF.
+- `STORAGES['staticfiles']` is now `whitenoise.storage.CompressedManifestStaticFilesStorage`, so
+  each file is served under a content-hashed name with a one-year immutable cache header and a
+  changed asset changes its URL. Nothing has to be invalidated at the CDN, and nothing is served
+  stale. Under `DEBUG` Django hands back the unhashed name, so a developer who never runs
+  `collectstatic` is unaffected.
+- `collectstatic --noinput --clear` in the Dockerfile's runtime stage, after `USER f2c`, so the
+  tree is owned by the user that serves it and is baked into the image rather than rebuilt on every
+  container start. It runs with a throwaway `DJANGO_SECRET_KEY` and `DJANGO_DEBUG=1` — not because
+  `collectstatic` reads either, but because `f2c/settings.py` refuses to import without the key and,
+  with `DEBUG` off, without every Payfast variable as well. A `RUN`-line variable does not persist
+  into the image.
+
+`whitenoise.runserver_nostatic` is in `INSTALLED_APPS` above `django.contrib.staticfiles` so local
+development is served by the same middleware as QA, and `deploy/entrypoint.sh`'s `dev` branch now
+collects before it starts `runserver` — compose mounts a named volume over the image's
+`staticfiles/`, so without that the local admin would be the thing rendering unstyled.
+
+**It also turned up a fault in the suite, which is fixed.** Django's test runner turns `DEBUG` off,
+which makes the manifest backend strict, and no test run writes a manifest — so `f2c/test_runner.py`
+pins the plain backend for the duration. That alone left two tests failing and only in some orders,
+which is how the real problem showed itself: `DocumentsTestCase` enabled a `MEDIA_ROOT` /
+`MEDIA_URL` / `STORAGES` override in `setUpClass` and disabled it inside `tearDownClass`, while the
+`@override_settings(PAYFAST=…)` on `PaymentsTestCase` — a subclass of it — is entered by Django on
+unittest's class-cleanup stack and unwound *after* `tearDownClass`. Disabling out of order restored
+a snapshot taken while the documents override was live, so it came back and stayed: **every test
+that ran afterwards was reading a temporary `MEDIA_ROOT` and a storages dict nobody had asked
+for.** Invisible while both staticfiles backends were the same object, and a decision about what
+was being tested once they were not.
+
+The override now goes on the same stack via `cls.enterClassContext(...)`, and the runner fails the
+run if `settings._wrapped` is not the object it was before the tests. Verified by putting the old
+code back: the guard names `MEDIA_ROOT, MEDIA_URL, STORAGES` and exits non-zero.
 
 Recorded here rather than in `todo.md` because it was found while writing this document, and
-because it is a deployment fault rather than a product one: nothing about it is visible locally,
+because it is a deployment fault rather than a product one: nothing about it was visible locally,
 where `DEBUG` is on and the file is served.
 
 ### 5.2 The scheduler is a Container Apps Job, not a Function App
@@ -413,8 +463,8 @@ A QA environment standing up against a provider still being argued with will hit
    path and it is in somebody else's queue, so it starts first regardless of what else is ready.
 2. Provision the resource group, registry, MySQL, Managed Redis, storage account and Log Analytics.
    No containers yet.
-3. Fix the static files (5.1) and the flaky test (5.4). Both small, both wanted before the first
-   deploy rather than after it.
+3. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
+   (5.1) are done.
 4. Create the Key Vault, generate the QA encryption keys, load the secrets.
 5. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
    misconfiguration by name — that is what it is for, and it is cheaper to meet it with one
