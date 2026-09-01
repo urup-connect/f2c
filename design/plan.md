@@ -367,9 +367,13 @@ each price carrying an above / in line / below marker against comparable listing
 scoping is C13's object-level rule; the marker has to be an aggregate by construction, for the
 Competition Act reason recorded in C12.
 
-**C18** decides how the three levels of finished-product-type selection relate. **The
-recommendation is already built** — the plant inherits from its listing with no per-plant
-override — so ratifying it costs nothing and reversing it is a model change.
+**C18 is decided, and it turned out to be four levels rather than three.** The platform catalogues
+the types, a cultivator's listing selects a subset, the plant inherits that subset — and the **member
+chooses one of them** as the form the plant is delivered in, at harvest. The first three narrow; only
+the last selects, which is why they do not collide. **The build already matches**: the plant inherits
+from its listing and there is no per-plant override, and the override is now closed rather than
+deferred. What this block still owes is the administrator CRUD over the catalogue, which is the only
+screen allowed to invent a type.
 
 ### Block 2 — Cultivator organisation · 2 weeks
 
@@ -475,6 +479,13 @@ for delivery, so a member can be at the ceiling with nothing growing and no swap
 number on the screen is the only thing that explains it. The step has to show the allowance and say
 why it is what it is, not merely cap a quantity input.
 
+**C18 puts one more thing on the order: the finished product types, copied at purchase.** The plant
+reads its available types live off the cultivator's listing today, which means a cultivator editing
+that listing changes what a member who already bought may choose at harvest. C18 rules the set
+**snapshotted onto the order**, on the `payments.Subscription` precedent — what a member agreed to is
+copied onto the member's own row. It is small, it is the first thing the order carries beyond price,
+and it is the change that makes the docstring on `Plant.finished_product_types` correct.
+
 ### Block 6 — Ownership, harvest and fulfilment · 3 weeks
 
 **Status: not started — but the ownership ledger it is built on already exists.** `PlantOwnership`
@@ -489,7 +500,12 @@ and courier documents. Order tracking and order queries.
 **That confirmation is what makes ownership final**, and it closes the swap window on the plant —
 C8 again, and it is a constraint on Block 10 as much as on this block. Build the finalisation as a
 zero-total transaction rather than a two-field form: **C35** puts a real charge on this screen the
-moment a priced product type is listed. **C8 leaves one thing open** — what happens when the owner
+moment a priced product type is listed, and **C18** now puts the member's chosen product type on that
+record rather than in a column on the plant — a choice has a time, an actor and a status, and a column
+carries none of them. The list the member chooses from is the set snapshotted onto their order in
+Block 5, **intersected with the live catalogue**: a cultivator's later edit cannot reach a closed sale,
+but a type the platform has retired is gone for everyone. A member left with an empty intersection is
+the same unbuilt branch C35 owns. **C8 leaves one thing open** — what happens when the owner
 never answers the notification. Answer it before this block is specified.
 
 **Delivery is also what releases a cultivator's money** — C9 holds the member's payment from order
@@ -770,7 +786,6 @@ it.
 | C10.1 | **PayGate or Stitch**, and a second gateway into the club's account | Block A, and it is build work rather than a question about the brief. Only Payfast exists and it bills the membership fee alone. **No longer gates C11** — a refund only ever touches unreleased funds in the club's own account, so an EFT out of it works where a gateway reversal does not |
 | C11.1 | **How long the money stays in the club's account after delivery** | Block A's settlement, and it is the residue of C11. Release is now the moment a member's refund right ends, so an instant release on the courier scan leaves the ordinary "arrived dead" complaint with no refund at all. Recommendation: a short hold — 72 hours is the shape of it — with a dispute able to suspend it. Cannot be separated from C9.1 |
 | C17.1 | **Where "mature" starts, and how long a swap request may sit** | Nothing — Block 10 → Block E settles it as it builds. The residue of C17, and a number rather than a question for the business: harvested always, otherwise the recommendation is 21 days off `Plant.days_to_harvest`. Worth watching because it is the dial between an instant swap path that exists and one that does not — a sharing member's four plants are flowering plants, so a threshold set at "in bloom" confirms every swap in the zone |
-| C18 | Where finished product types are selected | Block 1 → Block A. **The recommendation is already built** — the plant inherits from its listing — so ratifying costs nothing and reversing is a model change |
 | C19 | What a cultivator sees of a member on a packing label | Block 6 → Block C. POPIA-relevant. The stock export already implements the recommendation — nickname only |
 | C20 | Membership fee on a copy-compliance-governed page | Block 0 or Block 1. The one item still blocked on the landing page |
 | C35 | How a priced finished product type is paid for at harvest | Nothing in the MVP. Blocks the second product release, and shapes Block 6 now — the finalisation has to be built so a charge can be added to it without reopening ownership finality |
@@ -812,6 +827,15 @@ worth keeping: the member story drew that line on owner type, and C33 forbids ow
 this module precisely so the role can be retired without editing the matcher. **C17.1** is what
 remains — where "mature" starts and how long a request may sit — and it is a number the block sets.
 
+**C18 has come off this list, and it gained a level on the way.** The platform catalogues the finished
+product types, a cultivator's listing selects a subset, the plant inherits it — and the member chooses
+one of those as the form the plant is delivered in. Three levels narrow, one selects, and the funnel
+exists to hand the member a short and correct list rather than to be a permission hierarchy. The build
+already matched the first three, so ratifying cost nothing; the per-plant override is now **closed**
+rather than deferred. The one question the entry had left is ruled with it: what a member may choose
+from is **snapshotted onto the order** rather than read live off the listing, which is a small Block 5
+item and the reason `Plant.finished_product_types` still carries a comment saying the question is open.
+
 **C10 is narrowed and has shed a build item.** The money map is settled for the club: F2C collects the
 membership fee through Payfast and keeps 40%, the Cultivators Collective collects everything else and
 pays F2C 15%, and the split ratios themselves are out of scope for the application. What that exposes
@@ -834,6 +858,7 @@ it sits in Block A ahead of both checkouts.
 | C15 | **Four plants per member, enforced on the write.** The household limit and the dried-weight limit are accepted risks stated in the club rules, because the platform cannot observe what a member holds off-platform and a check it cannot run would only produce a record that it did | Discharges Block 10 → Block E's first prerequisite before the block starts. One constant for every kind of member — `SHARING_MEMBER_PLANT_ALLOCATION` now imports it — and no branch on owner type, per C33. Adds an item to Block 5 → Block A: a member at the ceiling must be told on the browse and swap screens, not refused at the payment page. Gives Block 11's rules page drafted copy, and puts three accepted risks into `backend.md`. **What it counts is C16's and was reversed** |
 | C16 | **A harvested plant counts** toward a member's four, and keeps its place until it goes out for delivery | Reverses the reading C15 shipped, and the check was changed with the ruling rather than left to Block 10. Frees Block 10 of the question and hands it three items: the trade-down prompt has to say that a harvested plant cannot be traded out, a swap has to release before it acquires, and the allowance read belongs on every screen that offers a plant. Gives **C9.1** a second consumer — one delivery-confirmed event releases a cultivator's money and frees a member's place. Rewrites two paragraphs of C15's club-rules copy |
 | C17 | **Maturity stays out of the leaf rating; a swap for a mature plant is a request the cultivator confirms.** The formula in `swap-zone.md` is untouched | Ungates Block 10 → Block E, which now starts with nothing open in front of it. Restates the member story's instant/confirmed line on the **plant** rather than the kind of owner, which is what keeps C33's droppability constraint intact instead of straining it. Adds a held-offer state, a lapse and a recorded decline to the block. Widens R-C7.1 — the cultivator now chooses the counterparty as well as making the offer — and adds a sentence to C7's legal brief rather than a new risk. Leaves **C17.1** open |
+| C18 | **Four levels of finished product type, not three.** The platform catalogues, the listing selects a subset, the plant inherits it with **no override**, and the member chooses one as the delivery form at harvest. The available set is **snapshotted onto the order**, not read live | Ratifies what Block 1 and Block 3 already built and closes the per-plant override for good. Adds one field to Block 5's order — the snapshot — and moves the member's choice in Block 6 onto C35's finalisation record instead of a column on the plant. Answers half of C35: availability travels with the sale, the price still does not. Leaves the code comment on `Plant.finished_product_types` behind the register until Block 5 |
 | C33 | The **cultivator transacts as proxy**; the sharing member views only | The named grey area. Makes "the role must be droppable" a build constraint on the swap zone, not a note. **C17 is the first test of it**, and the constraint changed the rule: the confirmation trigger reads the plant's maturity, never its owner's type |
 | C26 | Two storefronts on one platform — see `verticals.md` | Restructures every block below Block 0 |
 | C27 | Splitting `User` into identity and membership | Block 0.5, and everything after it |

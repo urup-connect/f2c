@@ -1704,7 +1704,12 @@ no principle:
 
 ### C18 — Where the finished product types live
 
-**Status: Open. Small, but it decides a schema.**
+**Status: Decided. Four levels, not three. The platform catalogues the types, the cultivator's strain
+listing selects a subset, the plant inherits that subset with no override, and the member chooses one
+of them as the form the plant is delivered in. The recommendation is ratified as built. The one
+question it left behind is now ruled with it: the set a member may choose from is snapshotted at the
+order, not read live off the listing. No code changes in this pass — the snapshot is Block 5's and the
+member's choice is Block 6's.**
 
 Three documents put the list of available finished product types in three places:
 
@@ -1717,9 +1722,110 @@ All three can be true — the platform defines the universe, the listing narrows
 it again — but only if decided deliberately. Otherwise three screens edit the same list and the
 narrowest one silently wins.
 
-**Recommendation.** Platform defines the catalogue; the strain listing selects a subset; the plant
-inherits from its listing and may narrow further only if a real case needs it. Default to no
-per-plant override.
+#### The ruling, from the product owner
+
+> Platform defines the catalogue; the strain listing selects a subset; the plant inherits from its
+> listing. Default to no per-plant override. The platform catalogues available finished product
+> types. Cultivators can choose which types apply to the strains they offer. **Members choose which
+> type they want the plant delivered as.**
+
+The first two sentences ratify the recommendation. The third adds a level the entry did not have, and
+it is the level that explains why the other three do not collide: **three of them narrow, and only the
+fourth selects.** The catalogue, the listing and the plant answer *what may be offered*. The member
+answers *what is being made*, once, about one plant. The reason there is a funnel at all is to hand
+that member a short and correct list — it was never a permission hierarchy, and reading it as one is
+what put the same field on three screens.
+
+#### The level was already written down, in a document this entry did not cite
+
+`product-types.md` has it in full: "The finished product type must be chosen when the plant is
+harvested. At harvest the member must be notified to finalise the transaction by choosing type and
+delivery address." Two types to begin with, pre-rolls and loose cannabis, neither priced, so nothing
+is payable when the choice is made.
+
+So the fourth level costs nothing to accept and changes no schema. What it changes is the direction the
+whole entry is read in, and it makes two of the three sources retrospectively sensible:
+`cultivator-stock-upload.md` wanted the plant to carry types because the plant is what the member
+eventually chooses against, and the admin CRUD is platform-wide because a type is a thing the club
+manufactures, not a thing a farm invents.
+
+#### No per-plant override — closed, not deferred
+
+The recommendation said the plant "may narrow further only if a real case needs it". **That escape
+hatch is withdrawn.** A per-plant override is precisely the third screen this entry was written to
+prevent, and the fourth level makes it worse than untidy: narrowing per plant is the cultivator
+pre-empting the member's own choice on the specific plant the member owns.
+
+This costs nothing to hold and little to reverse. `Plant.finished_product_types` is a property over
+`self.listing.finished_product_types`, so "no override" is currently the *absence* of a field rather
+than a rule something could break. If a real case ever arrives it is a nullable relation and one
+migration — the same reversal cost the recommendation was built under, unchanged by closing it.
+
+#### The set is snapshotted at the order, not read live
+
+The build reads live, and the property's own docstring flagged it. Ruled: **what a member may choose
+from is fixed when they buy, copied onto the order.**
+
+| The argument for reading live | Why it loses |
+| --- | --- |
+| It is what is built, and it is free | It lets a cultivator narrow a bought member's options unilaterally, months after the money moved, with nothing recording that it happened — including narrowing to none at all |
+| A withdrawn type is withdrawn for a reason | True of a *platform* withdrawal, which still wins — below. A cultivator editing their own listing is a commercial choice, and it should not reach back into a sale that closed |
+| The listing is the single source of truth | The precedent in this codebase runs the other way. `payments.Subscription` copies what a member agreed to onto the member's own row, for this exact reason |
+| Nobody has complained | The available types are part of what was disclosed at purchase — the same class of fact as the disclosed grow price that C4 and R-C7.3 rest the leaf rating on. A price a member cannot reproduce and a list that moved under them fail in the same way |
+
+The last row is the one that decides it, and C11 is what makes getting it wrong expensive: a member who
+paid for something that was quietly narrowed afterwards is a member the club has to make whole, and
+"make whole" for a product form is harder than for a rand amount.
+
+**The platform's withdrawal still wins over the snapshot, and that is a different act.** A cultivator
+editing a listing is a commercial choice; the club retiring a type — `FinishedProductType.is_available`
+— may be a compliance or supply decision the club has to obey. So the snapshot is intersected with the
+live catalogue at finalisation. A member whose intersection comes back empty is not silently defaulted
+into something: that is the same "does not pay / cannot have" branch C35 has to build, and it has no
+path today.
+
+#### Where the member's choice is recorded
+
+**On the harvest finalisation record, not on the plant.** C35 already recommends modelling the
+finalisation as a transaction with a zero total and a status a later payment can attach to, rather than
+as a form that writes two fields — and a `chosen_finished_product_type` column on `Plant` is that form.
+Three things point the same way independently: `product-types.md` pairs the type with the delivery
+address in one act, so it is a transaction with two answers rather than one attribute; C19 makes the
+delivery address a thing the cultivator must never see, and a plant column is in the wrong app to hold
+it; and a choice has a time, an actor and a status, none of which a column carries.
+
+#### What this costs elsewhere, and it is accepted
+
+- **Block 5 gains the snapshot.** The order copies the listing's set at purchase. It is the first thing
+  the order has to carry beyond the price, and it is small.
+- **Block 6 gains a record rather than two fields**, which is C35's recommendation being paid for one
+  block early.
+- **C35 loses one of its six unknowns.** "A price per product type, and somewhere for it to live" is
+  now half answered: *availability* travels on the order. The price does not, and stays C35's.
+- **Nothing in Blocks 0 to 3 changes.** The many-to-many, the shared `check_offered_types` validator
+  and both of its callers stand exactly as built.
+
+#### The residual risks, carried by name
+
+- **`Plant.finished_product_types`' docstring now contradicts this entry.** It says the live read is
+  open and names Block 5 as where to settle it. This pass is documentation only, so the comment is
+  behind the register rather than wrong about the destination — first item in Block 5, recorded here so
+  it is not discovered.
+- **Nothing in SQL stops a `.set()` from a shell** putting an unavailable type on a listing —
+  `backend.md` risk 17, unchanged. The snapshot inherits it: an order copied from a bad listing carries
+  the bad type forward.
+- **The empty intersection at finalisation** — everything the member was promised has since been
+  retired by the platform — has no path until C35 builds one.
+
+#### What this does not decide
+
+- **Price.** Priced types are C35 in full, and nothing here brings them forward.
+- **Whether the member may change the choice** after finalising and before the plant is processed.
+  Block 6, and the reason the choice is a record with a status rather than a column.
+- **Notification.** `product-types.md` requires the member be told at harvest. C32 owns where a member
+  is told things; this entry adds one more thing to tell them and picks no channel.
+- **Whether a cultivator may drop a type from a live listing at all.** The snapshot makes it harmless
+  to plants already bought, and says nothing about plants still on sale under that listing.
 
 ### C19 — Pseudonymity versus delivery
 
@@ -2358,9 +2464,11 @@ What that needs, and none of it exists:
 - **A way to charge months after the first transaction.** The member paid at order; this charge lands
   at harvest, possibly a season later. That is a stored mandate or a fresh checkout, and the two have
   very different POPIA and gateway consequences.
-- **A price per product type, and somewhere for it to live.** C18 decides whether the catalogue, the
-  strain listing or the plant owns the list of available types; whichever wins also has to carry the
-  price and its history, because a plant bought under one price sheet may finalise under another.
+- **A price per product type, and somewhere for it to live.** C18 is now decided and answers half of
+  this: the catalogue owns the list, the listing selects from it, and *availability* is snapshotted
+  onto the order so a member chooses from what they were sold. The **price** is not snapshotted by
+  anything, and a plant bought under one price sheet may still finalise under another — so the price
+  and its history remain this entry's to place.
 - **A position when the member does not pay.** Hold the plant, downgrade it to a no-cost type, or
   cancel — three different products, and the plant is in physical storage while it is decided. This
   is the same silence C8 flagged for the member who never confirms, with money added to it.

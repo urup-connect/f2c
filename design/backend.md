@@ -132,8 +132,10 @@ product types, and its "trace serials and batches", actually live today.
 
 The dependency direction is the thing to check when reading them. `finished_product` knows nothing
 about strains, listings or plants — the platform defines the catalogue and does not care who narrows
-it — and `strains` reaches into it by string reference. That is C18's three levels expressed as an
-import direction: platform catalogue, then the cultivator's listing, then the plant.
+it — and `strains` reaches into it by string reference. That is C18's narrowing expressed as an import
+direction: platform catalogue, then the cultivator's listing, then the plant. C18's fourth level — the
+member choosing one of them as the delivery form — lands on the harvest finalisation in Block 6 and
+imports nothing here.
 
 The routers are mounted on one `NinjaAPI` instance in `f2c/api.py`. That module
 belongs to the project rather than to any app, because it is the only one that has to know about all
@@ -898,12 +900,20 @@ can curate strains and product types, staff can write a cultivator's listing, an
 entered and transferred, all through `/admin/` or a shell. No member can see any of it, because
 nothing serves it. That is Block 9 in `todo.md`.
 
-C18's three levels are now three: the platform defines the finished product type catalogue, a listing
-selects a subset, and `Plant.finished_product_types` inherits from its listing with no per-plant
-override. One question that falls out of it is open — the property reads *live*, so a cultivator
-removing a type from a listing changes what a member who already bought a plant may choose at
-harvest. The precedent for the answer is `payments.Subscription`, which copies what a member agreed
-to onto their own row; the natural place to take that snapshot is the order, in Block 5.
+C18 is decided, and it has four levels rather than three. Three of them narrow and are built: the
+platform defines the finished product type catalogue, a listing selects a subset, and
+`Plant.finished_product_types` inherits from its listing with **no per-plant override** — now closed
+rather than deferred. The fourth selects and is unbuilt: the member chooses one of the inherited types
+at harvest as the form the plant is delivered in, recorded on Block 6's finalisation record rather than
+as a column here.
+
+**The question that fell out of it is now ruled, and the code is behind the ruling.** The property
+reads *live*, so a cultivator removing a type from a listing changes what a member who already bought
+a plant may choose at harvest. C18 rules the set **snapshotted onto the order**, on the
+`payments.Subscription` precedent — what a member agreed to is copied onto their own row. The order is
+Block 5, so nothing changes here yet; the docstring on `Plant.finished_product_types` still describes
+the question as open, and correcting it is the first line of that work. A platform-level withdrawal
+still beats the snapshot: `FinishedProductType.is_available` is intersected with it at finalisation.
 
 **Stock capture is now served**, which this section used to list as absent. `plant.api`, mounted at
 `/api/stock`, captures one plant, takes an Excel workbook with a dry run, and generates the

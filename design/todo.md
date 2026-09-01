@@ -996,11 +996,13 @@ administrator screens.
 - [x] **Cultivator strain listing** — `CultivatorStrainListing`, carrying `image`, `description`,
       `short_description`, `finished_product_types`, `default_grow_price` and `minimum_yield_grams`:
       the brief's six fields exactly — `member-roles`, `member-plant-purchase`
-- [!] Decide how the three levels of finished-product-type selection relate — platform catalogue,
-      strain listing, individual plant. Three documents put the list in three places — **C18**.
-      **The recommendation is already built**: Block 3's plant inherits from its listing with no
-      per-plant override, so the schema assumes the answer while `conflict.md` still records the
-      question as open. Ratifying it costs nothing; reversing it is a model change
+- [x] **How the levels of finished-product-type selection relate — decided, C18.** Four levels, not
+      three: the platform catalogues the types, a cultivator's listing selects a subset, Block 3's
+      plant inherits that subset with **no per-plant override**, and the member chooses one of them at
+      harvest as the form the plant is delivered in — Block 6. Three narrow, one selects. The build
+      already matched, so nothing changed here; the override is now closed rather than deferred, and
+      the one question the entry left — reading the set live versus snapshotting it — is ruled in
+      Block 5's favour of a snapshot
 - [~] Administrator screens for strain and product type CRUD. Endpoint work is Block 9; the models
       are here. **Strains are done** — `/admin/strains` and the three routes under it, over
       `app/club/strains/api.py`. **Finished product types are not**, and neither is the cultivator's own
@@ -1155,7 +1157,9 @@ The spine of the product. Nothing in Blocks 4 to 10 can start without it.
       Strain comes through the listing, which *is* the (cultivator, strain) pair, so the two cannot
       disagree
 - [x] Available finished product types — inherited from the listing, no per-plant override, per
-      **C18**. Reads live; snapshotting it onto the order is a Block 5 question
+      **C18**, and the override is now closed rather than deferred. **It reads live, and C18 has ruled
+      that it should not**: the set is snapshotted onto the order in Block 5, so the docstring on
+      `Plant.finished_product_types` saying the question is open is behind the register until then
 - [x] Status: preflowering, in bloom, harvested, processed, shipped — `member-roles`. Plus the actual
       harvest date from `harvest.md`, tied to the status by a check constraint
 - [x] Derived: cultivator pseudonym, leaf rating, days to bloom, days to harvest. The day counts are
@@ -1328,6 +1332,12 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
       holds the member's money until delivery is confirmed and releases it to the cultivator then.
       Where the funds actually sit is a commercial matter and out of scope for the application; the
       state and the reporting are not — **C9**, **C10**
+- [ ] **Snapshot the finished product types onto the order — C18.** What a member may choose from at
+      harvest is fixed when they buy, copied off the cultivator's listing, on the same precedent as
+      `payments.Subscription`: what a member agreed to is copied onto the member's own row. Today
+      `Plant.finished_product_types` reads live, so a cultivator editing a listing changes what an
+      existing owner may choose — including narrowing it to nothing. This is the line that makes that
+      docstring's open question closed — **C18**
 - [ ] **Crop failure: substitute first.** An equivalent plant — same strain, a leaf rating no lower,
       the next available harvest date. Ownership moves to the substitute serial and the held funds
       follow it, so no money moves. Refund only where no equivalent exists or the member declines —
@@ -1379,7 +1389,13 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [ ] Member plant inventory — plants owned, and where each is in its cycle
 - [ ] Cultivator converts an estimated harvest date to an actual one — `harvest`
 - [ ] Harvest notification to the owner to finalise the transaction — needs Block 8
-- [ ] Member chooses the finished product type at harvest — `product-types`
+- [ ] **Member chooses the finished product type at harvest — `product-types`, C18.** The choice is
+      the fourth and last level of C18: the platform catalogues, the listing selects, the plant
+      inherits, the member picks one. It is recorded **on the finalisation record, not as a column on
+      the plant** — a choice has a time, an actor and a status. The list offered is the set
+      snapshotted onto the order in Block 5, **intersected with the live catalogue**: a cultivator's
+      later listing edit cannot reach a closed sale, but a type the platform has retired is gone for
+      everyone — **C18**, **C35**
 - [ ] **Delivery address model.** Does not exist. Members need to manage several — `drawio`
 - [ ] Member confirms the delivery address at harvest. Months can pass between order and harvest,
       so the address is confirmed here rather than reused from the order — **C8**
@@ -1422,6 +1438,11 @@ The journey in `member-plant-purchase` is a specific three-step drill-down, not 
 - [!] How a priced finished product type is paid for. Not in the MVP, but it lands on this
       screen the moment oil or gummies are listed — **C35**. It is a second payment for something
       delivered later, so decide then whether the same hold-until-delivery rule applies to it — **C9**
+- [!] **What happens when every type a member was sold has since been retired by the platform.** C18
+      snapshots the available set onto the order and intersects it with the live catalogue at
+      finalisation, so the intersection can come back empty. It is the same hold, substitute or refund
+      branch C35 owns, without the money — and a silent default into whatever is left is the one
+      answer that is wrong — **C18**, **C35**
 
 ---
 
