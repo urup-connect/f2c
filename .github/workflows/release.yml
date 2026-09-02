@@ -209,6 +209,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
 
+      - name: Check the deployment variables
+        # Before `azure/login`, which reports three unset variables as a fault
+        # in its own `auth-type`. See `.github/scripts/require_vars.py`.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: qa
+        run: >-
+          python3 .github/scripts/require_vars.py
+          AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+          ACR_NAME
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -275,6 +286,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+
+      - name: Check the deployment variables
+        # The build arguments as well as the login. `SITE_URL` and
+        # `SUPPORT_EMAIL` are checked again inside the club Dockerfile, but only
+        # after `npm ci` has run; `CDN_BASE_URL` and `APP_ENV` are checked
+        # nowhere until `next build` throws from inside a layer. The market
+        # takes two of the four, which is why they are split by application here
+        # exactly as they are in `Assemble the build arguments` below.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: qa
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          case "$APP" in
+            club)   per_app='CLUB_SITE_URL CLUB_CDN_BASE_URL CLUB_SUPPORT_EMAIL' ;;
+            market) per_app='MARKET_SITE_URL' ;;
+            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
+          esac
+          # Unquoted on purpose: each name is its own argument.
+          # shellcheck disable=SC2086
+          python3 .github/scripts/require_vars.py \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            ACR_NAME APP_ENV $per_app
 
       - uses: azure/login@v2
         with:
@@ -365,6 +400,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check the deployment variables
+        # The four container app names too. Unset, `az containerapp update
+        # --name ''` fails on a resource that does not exist rather than on a
+        # name nobody set. `ACR_NAME` is for `Move the environment tag`.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: qa
+        run: >-
+          python3 .github/scripts/require_vars.py
+          AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+          ACR_NAME AZURE_RESOURCE_GROUP
+          CONTAINERAPP_API CONTAINERAPP_WORKER CONTAINERAPP_MAIL_WORKER
+          CONTAINERAPP_BEAT
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -413,6 +462,23 @@ jobs:
         app: ${{ fromJSON(needs.changes.outputs.frontends) }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the deployment variables
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: qa
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          case "$APP" in
+            club)   per_app='CONTAINERAPP_CLUB' ;;
+            market) per_app='CONTAINERAPP_MARKET' ;;
+            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
+          esac
+          # shellcheck disable=SC2086
+          python3 .github/scripts/require_vars.py \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            ACR_NAME AZURE_RESOURCE_GROUP $per_app
 
       - uses: azure/login@v2
         with:

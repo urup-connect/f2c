@@ -100,6 +100,31 @@ jobs:
           ref: ${{ inputs.sha }}
           fetch-depth: 1
 
+      - name: Fetch the deployment scripts from trunk
+        # Trunk, not `inputs.sha`, and only `.github/scripts`. `promote-api`
+        # takes the same line on `deploy-api.sh`: deployment tooling comes from
+        # trunk so that a fix to it reaches the promotion of an older commit.
+        # Beside the workspace rather than into it -- the checkout above cleans
+        # what it lands in.
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          path: trunk
+
+      - name: Check the deployment variables
+        # Before `azure/login`, which reports three unset variables as a fault
+        # in its own `auth-type`. A promotion is the first time this
+        # environment's variables are read at all, so this is where a `uat` or
+        # `production` environment nobody finished setting up shows up.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: ${{ inputs.to_env }}
+        run: >-
+          python3 trunk/.github/scripts/require_vars.py
+          AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+          ACR_NAME
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -213,6 +238,19 @@ jobs:
           # commit too.
           fetch-depth: 1
 
+      - name: Check the deployment variables
+        # Checked out from trunk above, so this reads the current list rather
+        # than the one that shipped with the commit being promoted.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: ${{ inputs.to_env }}
+        run: >-
+          python3 .github/scripts/require_vars.py
+          AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+          ACR_NAME AZURE_RESOURCE_GROUP
+          CONTAINERAPP_API CONTAINERAPP_WORKER CONTAINERAPP_MAIL_WORKER
+          CONTAINERAPP_BEAT
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -264,6 +302,37 @@ jobs:
           ref: ${{ inputs.sha }}
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Fetch the deployment scripts from trunk
+        # Trunk, not `inputs.sha`, and only `.github/scripts`. `promote-api`
+        # takes the same line on `deploy-api.sh`: deployment tooling comes from
+        # trunk so that a fix to it reaches the promotion of an older commit.
+        # Beside the workspace rather than into it -- the checkout above cleans
+        # what it lands in.
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          path: trunk
+
+      - name: Check the deployment variables
+        # This job builds and deploys, so it needs both halves: the target
+        # environment's build arguments and its container app name.
+        env:
+          VARS: ${{ toJSON(vars) }}
+          ENVIRONMENT: ${{ inputs.to_env }}
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          case "$APP" in
+            club)   per_app='CLUB_SITE_URL CLUB_CDN_BASE_URL CLUB_SUPPORT_EMAIL CONTAINERAPP_CLUB' ;;
+            market) per_app='MARKET_SITE_URL CONTAINERAPP_MARKET' ;;
+            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
+          esac
+          # shellcheck disable=SC2086
+          python3 trunk/.github/scripts/require_vars.py \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            ACR_NAME AZURE_RESOURCE_GROUP APP_ENV $per_app
 
       - uses: azure/login@v2
         with:
