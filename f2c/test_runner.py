@@ -1,6 +1,6 @@
 """The test runner, which holds what Django's own test environment does not
-cover here: mail, the staticfiles backend, and a check that no test leaves a
-settings override behind it.
+cover here: mail, the task queue, the staticfiles backend, the host the test
+client sends, and a check that no test leaves a settings override behind it.
 
 **Django's own isolation does not cover this project.**
 ``setup_test_environment()`` swaps ``settings.EMAIL_BACKEND`` for the locmem
@@ -63,10 +63,21 @@ Pinning the plain backend here keeps the suite about the templates.
 Nothing is lost by that: the manifest path is exercised where it matters, in the
 API image's build, where ``collectstatic`` runs and fails the build on an asset
 that cannot be resolved.
+
+**The test client's host is the fourth, and it is only noise.** Every request
+the test client makes arrives as ``testserver``, which no deployment maps and
+``DJANGO_STOREFRONT_HOSTS`` therefore never names. Django's runner turns
+``DEBUG`` off, and with it off ``storefronts.resolution`` logs a warning on any
+host it cannot map -- so a green run printed one line of "no storefront mapped
+for host 'testserver'" per request and buried whatever else was in the log.
+Mapping it to the club here says what the fallback already does, and leaves the
+warning doing its job everywhere it means something: a deployed host that was
+left out of the mapping.
 """
 from django.test.runner import DiscoverRunner
 from django.test.utils import override_settings
 
+from app.core.storefronts.models import Storefront
 from f2c.celery import app as celery_app
 
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
@@ -76,8 +87,8 @@ PLAIN_STATICFILES = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
 
 class MailSafeRunner(DiscoverRunner):
-    """``DiscoverRunner`` with locmem mailers, eager tasks, plain staticfiles, and
-    a leak check."""
+    """``DiscoverRunner`` with locmem mailers, eager tasks, plain staticfiles, a
+    mapped test host, and a leak check."""
 
     #: Set by `teardown_test_environment` when a settings override outlived the
     #: tests that enabled it. Read by `run_tests`, which turns it into a failure.
@@ -131,11 +142,22 @@ class MailSafeRunner(DiscoverRunner):
         )
         self._staticfiles.enable()
 
+        # `testserver` is the only host the test client ever sends, and no
+        # deployment maps it. See the module docstring: without this every
+        # request logs a warning meant for a misconfigured deployment. Mapped
+        # to the club, which is where the unresolved fallback lands anyway, so
+        # nothing about what is under test changes.
+        self._storefront_hosts = override_settings(
+            STOREFRONT_HOSTS={'testserver': Storefront.CLUB},
+        )
+        self._storefront_hosts.enable()
+
         # What `settings._wrapped` has to be again once the tests are done:
         # every override enabled by a test is expected to put back the object it
-        # replaced. Captured *after* the override above rather than before it,
-        # because disabling that one restores this runner's own snapshot and
-        # would paper over exactly the fault the check below is looking for.
+        # replaced. Captured *after* the overrides above rather than before
+        # them, because disabling one of those restores this runner's own
+        # snapshot and would paper over exactly the fault the check below is
+        # looking for.
         self._settings_expected = settings._wrapped
 
     def teardown_test_environment(self, **kwargs):
@@ -165,6 +187,7 @@ class MailSafeRunner(DiscoverRunner):
                 and not name.startswith('__')
             )
 
+        self._storefront_hosts.disable()
         self._staticfiles.disable()
         (
             celery_app.conf.task_always_eager,

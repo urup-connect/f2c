@@ -173,10 +173,30 @@ dmypy.json
 cython_debug/
 
 # Django
-/static/
+#
+# `/static/` cannot be ignored wholesale, and that is the same trap as `lib/`
+# above. `STATICFILES_DIRS` points at this directory and everything in it is
+# source: `static/cc_admin/` is the admin's brand skin -- brand.css, its four
+# woff2 faces and the badge -- referenced by `templates/admin/base_site.html`
+# and asserted by `f2c/tests/test_admin_branding.py`. Ignored, those six files
+# were in no commit, and a clean checkout failed three tests on assets that
+# exist on every developer's disk and nowhere else.
+#
+# So the directory itself is not ignored -- a negation inside an ignored
+# directory does not apply, because git never descends into it. `/static/*`
+# ignores its *contents*, and `!/static/cc_admin/` puts one subtree back.
+# Anything else that lands in `static/` -- a stray `collectstatic` run writing
+# an admin tree in here, which is what happened -- stays out.
+/static/*
+!/static/cc_admin/
+
+# `collectstatic` output: `STATIC_ROOT`, written by the image build and read by
+# WhiteNoise. Generated, never edited, and it contains a copy of every asset
+# above.
+/staticfiles/
+
 /media/
 
 # IDE
 .idea/
-/static/
 /notingit/

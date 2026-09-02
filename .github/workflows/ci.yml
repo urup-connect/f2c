@@ -335,6 +335,43 @@ jobs:
       run:
         working-directory: frontend
 
+    env:
+      # **`next build` cannot import a single route without these four.** Both
+      # applications read them at module evaluation -- `lib/site.ts` ends with
+      # `export const SITE_CONFIG = readSiteConfig(process.env)` -- and the root
+      # layout, `sitemap.ts`, `robots.ts` and `lib/api-address.ts` all import
+      # that. So the build fails while collecting each route's segment config,
+      # reported as `Failed to collect page data for /_not-found` rather than as
+      # a missing variable, and the three steps before it pass because none of
+      # them imports the route tree.
+      #
+      # Nothing noticed for the same reason the brand assets did not: it works
+      # on a developer's machine, where `.env.local` supplies these and is
+      # gitignored, and it works in `release.yml`, which passes the real values
+      # as build arguments. This job had neither.
+      #
+      # Throwaway, and none of them is deployed. `.invalid` is reserved by
+      # RFC 2606 and resolves nowhere, which is the point: a value that looked
+      # like a real host is a value somebody eventually mistakes for one. The
+      # build reads them, validates them and writes them into canonical tags in
+      # an artefact this job discards.
+      #
+      # `qa` rather than `local`, so the checks the deployed path takes are the
+      # ones exercised here: `lib/site.ts` permits a plain-http CDN_BASE_URL
+      # only when APP_ENV is `local`, and indexing is refused unless it reads
+      # `production`.
+      APP_ENV: qa
+
+      # The club and the market are built by one `npm run build --workspaces`
+      # in one process, so they share this. Fine for a build check -- it is the
+      # origin canonical tags are composed from, and this artefact is discarded.
+      SITE_URL: https://ci.invalid
+
+      # Club only. `frontend/market/lib/site.ts` declares neither, which is why
+      # `release.yml` passes the market two build arguments and the club four.
+      CDN_BASE_URL: https://cdn.ci.invalid/f2c
+      SUPPORT_EMAIL: ci@ci.invalid
+
     steps:
       - uses: actions/checkout@v4
 

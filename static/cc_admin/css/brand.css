@@ -1,0 +1,373 @@
+/*
+    Cultivators Collective brand skin for the Django admin.
+
+    Loaded from templates/admin/base_site.html into the extrastyle block, which sits
+    after Django's own base.css in the cascade. Almost everything here is a redefinition
+    of a variable Django already declares in admin/css/base.css, so the admin keeps its
+    own layout and behaviour and only changes colour, type and shape. That is deliberate:
+    a Django upgrade that reworks the admin's markup does not break this file.
+
+    The palette is a copy of the tokens in frontend/app/globals.css. Next.js and Django
+    share no build step, so the hex values live in two places. globals.css is the source
+    of truth and api/tests/test_admin_branding.py fails if this file drifts from it.
+
+    Dark mode is deliberately absent. The brand has no dark palette (see the note at the
+    top of globals.css), so base_site.html drops Django's dark_mode.css and theme.js
+    rather than rendering an unreviewed colour scheme. The toggle button is hidden below.
+
+    Colour pairings here are checked against WCAG AA. Olive Green is the one palette
+    colour that fails as text on any light ground (2.99:1 on white), so it is used only
+    for focus rings, borders and decoration -- never for text or as a button fill.
+
+    Assets in ../fonts/ and ../img/ are copies, so Django serves the admin whether or
+    not Next.js is running or reachable. The woff2 files are the Latin and Latin Extended
+    subsets next/font already produces for the frontend, so both sides render the same
+    glyphs. The badge is frontend/public/brand/logo-badge-on-green.png resampled to 68px
+    -- twice its 34px slot, for high-DPI screens, and a fiftieth of the original bytes.
+*/
+
+/* Latin and Latin Extended only: enough for member names, and half the bytes of the
+   full Google Fonts set. Both faces are variable, hence the weight ranges. */
+@font-face {
+    font-family: "DM Sans";
+    font-style: normal;
+    font-weight: 100 1000;
+    font-display: swap;
+    src: url("../fonts/dm-sans-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+        U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: "DM Sans";
+    font-style: normal;
+    font-weight: 100 1000;
+    font-display: swap;
+    src: url("../fonts/dm-sans-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+        U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+        U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: "Playfair Display";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("../fonts/playfair-display-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+        U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: "Playfair Display";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("../fonts/playfair-display-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+        U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+        U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+html[data-theme="light"],
+html[data-theme="dark"],
+:root {
+    /* Palette -- mirrors the theme block in frontend/app/globals.css */
+    --cc-forest-green: #1F3B2D;
+    --cc-forest-green-deep: #0F1C13;
+    --cc-olive-green: #7BA05D;
+    --cc-sage-green: #C7D9B0;
+    --cc-cream-warm: #F9F1E8;
+    --cc-cream-cool: #F2F4ED;
+    --cc-bark: #422B1C;
+    --cc-bark-light: #725C4E;
+    --cc-clay-red: #8E2F2A;
+
+    /* Derived shades. color-mix rather than new hex values, so a palette change
+       carries through instead of leaving a hand-picked tint behind. */
+    --cc-hairline: color-mix(in srgb, var(--cc-sage-green) 45%, var(--cc-cream-warm));
+    --cc-row-highlight: color-mix(in srgb, var(--cc-sage-green) 55%, #FFFFFF);
+    --cc-clay-red-dark: color-mix(in srgb, var(--cc-clay-red) 82%, #000000);
+
+    /* Shape -- the radii from the brand guidelines app mockup */
+    --cc-radius-card: 1rem;
+    --cc-radius-control: 0.75rem;
+    --cc-radius-pill: 9999px;
+
+    /* --- Django admin variables from here down --- */
+
+    --primary: var(--cc-forest-green);
+    --secondary: var(--cc-forest-green);
+    /* Sage, not Olive: this lands as text on the Forest Green header (8.12:1) and as
+       the calendar header ground under Django's hardcoded #333 (8.41:1). */
+    --accent: var(--cc-sage-green);
+    --primary-fg: var(--cc-cream-warm);
+
+    /* Django spends --body-bg on surfaces -- modules, the login card, dropdown panels,
+       the sidebar -- and only once on body itself, which is overridden below. So this
+       is the card colour, and the page keeps Cream Warm behind it. */
+    --body-bg: #FFFFFF;
+    --body-fg: var(--cc-bark);
+    --body-quiet-color: var(--cc-bark-light);
+    --body-medium-color: var(--cc-bark);
+    --body-loud-color: var(--cc-forest-green-deep);
+
+    --header-bg: var(--cc-forest-green);
+    --header-color: var(--cc-cream-warm);
+    --header-branding-color: var(--cc-cream-warm);
+    --header-link-color: var(--cc-cream-warm);
+
+    --breadcrumbs-bg: var(--cc-forest-green-deep);
+    --breadcrumbs-fg: var(--cc-sage-green);
+    --breadcrumbs-link-fg: var(--cc-cream-warm);
+
+    --link-fg: var(--cc-forest-green);
+    --link-hover-color: var(--cc-forest-green-deep);
+    --link-selected-fg: var(--cc-forest-green-deep);
+
+    --hairline-color: var(--cc-hairline);
+    --border-color: var(--cc-sage-green);
+
+    --error-fg: var(--cc-clay-red);
+
+    --darkened-bg: var(--cc-cream-cool);
+    --selected-bg: var(--cc-cream-cool);
+    --selected-row: var(--cc-row-highlight);
+
+    --button-fg: var(--cc-cream-warm);
+    --button-bg: var(--cc-forest-green);
+    --button-hover-bg: var(--cc-forest-green-deep);
+    /* The primary action is the darker of the two, so it reads as the heavier button. */
+    --default-button-bg: var(--cc-forest-green-deep);
+    --default-button-hover-bg: var(--cc-forest-green);
+    --close-button-bg: var(--cc-bark-light);
+    --close-button-hover-bg: var(--cc-bark);
+    --delete-button-bg: var(--cc-clay-red);
+    --delete-button-hover-bg: var(--cc-clay-red-dark);
+
+    --object-tools-fg: var(--cc-cream-warm);
+    --object-tools-bg: var(--cc-bark-light);
+    --object-tools-hover-bg: var(--cc-bark);
+
+    --message-success-bg: color-mix(in srgb, var(--cc-sage-green) 60%, #FFFFFF);
+    --message-warning-bg: color-mix(in srgb, var(--cc-cream-warm) 70%, var(--cc-olive-green));
+    --message-error-bg: color-mix(in srgb, var(--cc-clay-red) 12%, #FFFFFF);
+    --message-info-bg: var(--cc-cream-cool);
+    --message-debug-bg: var(--cc-cream-cool);
+
+    --font-family-primary:
+        "DM Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+        "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+    /* Not a Django variable. Django has no display face, so the rules further down
+       reach for this one. */
+    --cc-font-family-display: "Playfair Display", ui-serif, Georgia, serif;
+
+    /* Pinned, so the theme survives even if dark_mode.css is reintroduced upstream
+       or the meta color-scheme tag changes. */
+    color-scheme: light;
+}
+
+/* The one place Django uses --body-bg as a page ground rather than a surface. */
+body {
+    background: var(--cc-cream-warm);
+}
+
+/*
+    The frontend sets display type on every heading level, so the admin does too.
+    Tracking is only tightened where the guidelines tighten it.
+
+    The heading classes are listed alongside `.module > h2` rather than relying on it,
+    because fieldset.html renders `h{{ heading_level|default:2 }}` -- an inline nested
+    inside another fieldset comes out as an h3, and the element selector would miss it.
+*/
+#site-name,
+#content h1,
+#content h2,
+#content h3,
+.module > h2,
+.module > table > caption,
+fieldset .fieldset-heading,
+fieldset .inline-heading,
+:not(.inline-related) .collapse summary,
+#changelist-filter h2,
+.login #header h1 {
+    font-family: var(--cc-font-family-display);
+}
+
+#content h1 {
+    letter-spacing: -0.02em;
+}
+
+/* Small uppercase labels are set loose in the guidelines. Django already uppercases
+   exactly these two selectors, so only the tracking needs correcting -- matching its
+   selectors rather than widening them keeps the tracking off anything Django left in
+   sentence case. */
+.module > table > caption,
+.inline-group h2 {
+    letter-spacing: 0.12em;
+}
+
+/* Header: the badge sits next to the wordmark, so the wordmark needs to stop
+   pretending to be a 300-weight system font. */
+#branding #site-name {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 500;
+}
+
+#branding #site-name a:link,
+#branding #site-name a:visited {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--cc-cream-warm);
+}
+
+#branding .cc-logo {
+    width: 34px;
+    height: 34px;
+    /* The badge artwork is drawn for a Forest Green ground and carries its own, so it
+       is rounded rather than left as a hard square against the header. */
+    border-radius: var(--cc-radius-control);
+    flex: 0 0 auto;
+}
+
+/*
+    Dark mode is not supported, so the toggle would be a control that does nothing.
+    base_site.html drops dark_mode.css, which is also where .theme-toggle is styled --
+    without this it would render as a bare browser button in the header.
+*/
+.theme-toggle {
+    display: none;
+}
+
+/*
+    Shape. Django's chrome is square; the brand's is not.
+
+    Deliberately no `overflow: hidden` on any of these. The date picker Django opens
+    for date_of_birth is a position: absolute .calendarbox inside the same fieldset,
+    and a clipping ancestor would cut it in half. #changelist is left out for a
+    different reason: it is a bare flex wrapper around the filter sidebar and the
+    results table, with no background of its own, so a radius on it would be
+    invisible and the clipping would break the table's horizontal scroll.
+
+    The top corners are handled on the headers instead, which is what the next rule
+    is for.
+*/
+.module,
+fieldset.module,
+.inline-group,
+#changelist-filter {
+    border-radius: var(--cc-radius-card);
+}
+
+/*
+    The Forest Green header sits flush against the top of its card, so it has to
+    follow the same corners. Which element carries that background depends on the
+    fieldset: normally the heading itself, but on a collapsible one Django moves it
+    to the <summary> and makes the heading transparent. UserAdmin's Permissions and
+    Record fieldsets are both collapsible, so both cases are live here.
+
+    The caption selector is child-scoped on purpose. `.module caption` would also
+    match the date picker's own month caption several levels down inside the
+    fieldset, and round something that is not a card header.
+*/
+.module > h2,
+.module > table > caption,
+fieldset .fieldset-heading,
+fieldset .inline-heading,
+:not(.inline-related) .collapse summary,
+#changelist-filter h2 {
+    border-radius: var(--cc-radius-card) var(--cc-radius-card) 0 0;
+}
+
+.button,
+input[type="submit"],
+input[type="button"],
+.submit-row input,
+.submit-row a,
+a.button {
+    border-radius: var(--cc-radius-control);
+}
+
+/* Object tools are the small Add and History actions; pills suit them and match the
+   frontend's own pill buttons. */
+.object-tools a,
+.object-tools a:link,
+.object-tools a:visited {
+    border-radius: var(--cc-radius-pill);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="url"],
+input[type="number"],
+input[type="tel"],
+input[type="date"],
+input[type="time"],
+select,
+textarea {
+    border-radius: 0.5rem;
+    border-color: var(--cc-sage-green);
+}
+
+/* Olive is the one palette colour that cannot carry text, so this is where it earns
+   its place: a visible focus ring on every ground the admin uses. */
+:is(input, select, textarea, button, a, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--cc-olive-green);
+    outline-offset: 2px;
+}
+
+/*
+    Django styles the sidebar's current app with --header-color, which is a header
+    colour on a header ground. On the sidebar's Cream Cool ground that would be cream
+    on cream. Forest Green reads at 11:1 instead.
+*/
+#nav-sidebar .current-app .section:link,
+#nav-sidebar .current-app .section:visited {
+    color: var(--cc-forest-green);
+}
+
+/* The messages the erase and suspend actions emit are the loudest thing a member
+   record can produce, so they get a coloured edge rather than a flat panel. */
+ul.messagelist li {
+    border-left: 4px solid var(--cc-bark-light);
+    border-radius: 0.5rem;
+}
+
+ul.messagelist li.success {
+    border-left-color: var(--cc-forest-green);
+}
+
+ul.messagelist li.warning {
+    border-left-color: var(--cc-olive-green);
+}
+
+ul.messagelist li.error {
+    border-left-color: var(--cc-clay-red);
+}
+
+/*
+    The login screen is the only admin page a member could plausibly reach, so it is
+    worth having it read as the brand rather than as Django.
+
+    These carry a `body` prefix on purpose. login.css is the one admin stylesheet that
+    loads *after* this file, and it declares `.login` and `.login #container` itself --
+    at equal specificity it would win on source order, and these rules would silently
+    do nothing. The extra element selector settles it.
+*/
+body.login {
+    background: var(--cc-cream-warm);
+}
+
+body.login #container {
+    border: 1px solid var(--cc-sage-green);
+    border-radius: var(--cc-radius-card);
+    box-shadow: 0 1px 2px rgb(15 28 19 / 4%), 0 8px 24px rgb(15 28 19 / 6%);
+}
