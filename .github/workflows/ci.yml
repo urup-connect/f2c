@@ -248,6 +248,39 @@ jobs:
           sys.exit('MySQL never became ready.')
           PY
 
+      - name: Grant the test databases to the application user
+        # MYSQL_USER in the service container above is granted rights on
+        # MYSQL_DATABASE and nothing else, but the test runner does not use that
+        # database: it creates, migrates and drops `test_f2c`. Without this the
+        # suite never starts -- "Access denied for user 'f2c'@'%' to database
+        # 'test_f2c'" -- while every step before it passes, because they all use
+        # the granted database.
+        #
+        # Granted as root, which is the only account here that can hand out
+        # privileges. MySQL accepts a grant on a database that does not exist
+        # yet, which is the case at this point in the job.
+        #
+        # The pattern is `test\_f2c%`: the backslash escapes the `_` so it is a
+        # literal underscore rather than LIKE's single-character wildcard, and
+        # the trailing `%` covers the `test_f2c_1`, `test_f2c_2` ... databases
+        # `test --parallel` would create. `test --shuffle` below runs in one
+        # process today; this way adding `--parallel` needs no change here.
+        run: |
+          python - <<'PY'
+          import MySQLdb
+
+          connection = MySQLdb.connect(
+              host='127.0.0.1', port=3306, user='root', passwd='ci-root',
+          )
+          cursor = connection.cursor()
+          cursor.execute(
+              r"GRANT ALL PRIVILEGES ON `test\_f2c%`.* TO 'f2c'@'%'"
+          )
+          cursor.execute('FLUSH PRIVILEGES')
+          connection.close()
+          print("The application user can now create its test databases.")
+          PY
+
       - name: Confirm the database is the one under test
         # A guard against the quiet failure mode of this whole job: if
         # `database_config` fell back to SQLite -- a typo in a variable name, a
