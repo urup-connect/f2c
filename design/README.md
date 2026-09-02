@@ -28,7 +28,7 @@ the rule above:
 | [plan.md](plan.md) | The roadmap: what the platform is, where the work stands, and the order the remaining blocks can be built in |
 | [todo.md](todo.md) | Every outstanding item from the brief and the design set, in build order, each marked built, partial, not built, or blocked |
 | [conflict.md](conflict.md) | Where the brief in `twp-tasks/` disagrees with what is built, with itself, or with the older plan — and what should be done about each |
-| [deploy.md](deploy.md) | Standing QA up on Azure: the resources, every configuration entry and where it is stored, and what has to change first |
+| [deploy.md](deploy.md) | Standing QA up on Azure: the resources, every configuration entry and where it is stored, what has to change first, and the pipeline that builds each image and promotes a release to UAT and production |
 
 The brief itself is in [twp-tasks/](twp-tasks/): a set of short subject documents and six drawio
 story diagrams. It is the statement of intent. Where it and the built system disagree, `conflict.md`

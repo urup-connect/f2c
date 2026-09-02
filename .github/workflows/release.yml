@@ -1,0 +1,452 @@
+# Build the three images, push them to the shared Azure Container Registry, and
+# deploy to QA.
+#
+# **Why this is a second file and not more jobs in `ci.yml`.** Three reasons,
+# none of them a preference:
+#
+#   * `ci.yml` runs on `pull_request`, forks included. Pushing to a registry
+#     needs `id-token: write` and an `AcrPush` role assignment, and that pairing
+#     does not belong on a workflow whose trigger includes code nobody has
+#     reviewed yet.
+#   * `ci.yml` sets `cancel-in-progress: true`, which is right for a test run
+#     and wrong for a push. A build cancelled halfway through leaves partly
+#     pushed layers and an environment tag pointing at neither the old image nor
+#     the new one.
+#   * The triggers do not overlap. Tests want every pull request; images want a
+#     merge to trunk. One file means every job carries an `if:` guard, and the
+#     guards are where a pipeline like this rots.
+#
+# The tests still gate the build: the `test` job below *calls* `ci.yml`, so
+# there is one definition of green and no image is pushed until it holds.
+#
+# **What this deploys and what it does not.** QA only, automatically, on a merge
+# to trunk. `promote.yml` moves a release on to UAT and production behind the
+# GitHub environment approvals. Nothing here writes to those environments.
+#
+# **The registry holds two kinds of artefact and they are tagged differently.**
+# `f2c/api:<sha>` is environment-agnostic -- design/deploy.md section 3, Block 0
+# P6 -- so the same image is promoted unchanged and its tag names only the
+# commit. The two frontends bake `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
+# `SUPPORT_EMAIL` at build time (risk R-D4), so a QA frontend image is not a
+# production frontend image and never can be; those are tagged
+# `f2c/club:qa-<sha>` so the two cannot be confused by anyone reading the
+# repository listing.
+#
+# The one-time Azure and GitHub setup is `.github/scripts/azure-oidc-setup.sh`.
+
+name: Release
+
+on:
+  push:
+    branches: [master, main]
+
+  # For the first run, when nothing has changed but everything needs building,
+  # and for a rebuild after a registry or platform failure.
+  workflow_dispatch:
+    inputs:
+      api:
+        description: 'Build and deploy the API (api, worker, mail-worker, beat)'
+        type: boolean
+        default: false
+      club:
+        description: 'Build and deploy the club frontend'
+        type: boolean
+        default: false
+      market:
+        description: 'Build and deploy the market frontend'
+        type: boolean
+        default: false
+      deploy:
+        description: 'Deploy to QA after building. Unticked builds and pushes only'
+        type: boolean
+        default: true
+
+# **A literal prefix, not `${{ github.workflow }}`.** `ci.yml` is called from
+# here, and in a called workflow that expression evaluates to *this* workflow's
+# name -- so sharing the expression would leave this run queued behind a
+# concurrency group it is itself holding, until it timed out.
+#
+# `cancel-in-progress` is false: a superseded release is still a release that
+# pushed layers, and a half-cancelled push is worse than a redundant one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # One registry for every environment -- design/deploy.md section 2. Basic
+  # tier, so tag immutability and repository-scoped tokens are not available;
+  # that is why every deployment below pins a digest rather than a tag.
+  REGISTRY: ${{ vars.ACR_NAME }}.azurecr.io
+  API_REPOSITORY: f2c/api
+
+jobs:
+  # --------------------------------------------------------------- what changed
+  changes:
+    name: Decide what to build
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.decide.outputs.api }}
+      frontends: ${{ steps.decide.outputs.frontends }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, because the diff below is against the commit this
+          # push replaced and a shallow clone does not have it.
+          fetch-depth: 0
+
+      - name: Decide
+        id: decide
+        # Plain `git diff` rather than a marketplace action. This job decides
+        # what reaches a deployed environment, and one fewer third party in that
+        # path is worth ten lines of shell.
+        #
+        # **The shared frontend lockfile counts as a change to both frontends.**
+        # `frontend/package-lock.json` is one file for the whole npm workspace
+        # and `npm ci` resolves every member from it, so a dependency bump that
+        # touches no file under `club/` still changes what a club image
+        # contains.
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          WANT_API: ${{ inputs.api }}
+          WANT_CLUB: ${{ inputs.club }}
+          WANT_MARKET: ${{ inputs.market }}
+          DEPLOY_MARKET: ${{ vars.DEPLOY_MARKET }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = 'workflow_dispatch' ]; then
+            api="$WANT_API"
+            club="$WANT_CLUB"
+            market="$WANT_MARKET"
+            echo "Dispatched: api=$api club=$club market=$market"
+          elif [ -z "$BEFORE" ] \
+               || [ "$BEFORE" = '0000000000000000000000000000000000000000' ] \
+               || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            # An empty or all-zero `before`, or a commit this clone does not
+            # have, means there is no diff to take -- a new branch, a force
+            # push, a history that was rewritten. Building everything is the
+            # only answer that cannot silently skip an image that needed it.
+            echo "No usable base commit ($BEFORE). Building everything."
+            api=true; club=true; market=true
+          else
+            files=$(git diff --name-only "$BEFORE" "$HEAD_SHA")
+            echo "Changed files:"
+            echo "$files" | sed 's/^/  /'
+
+            api=false; club=false; market=false
+            api_paths='^(Dockerfile|\.dockerignore|manage\.py|pyproject\.toml|poetry\.lock|requirements\.txt|app/|f2c/|deploy/|templates/|static/)'
+            club_paths='^frontend/(club/|package\.json|package-lock\.json|\.dockerignore)'
+            market_paths='^frontend/(market/|package\.json|package-lock\.json|\.dockerignore)'
+
+            echo "$files" | grep -Eq "$api_paths" && api=true
+            echo "$files" | grep -Eq "$club_paths" && club=true
+            echo "$files" | grep -Eq "$market_paths" && market=true
+          fi
+
+          # The market storefront is optional in QA -- design/deploy.md decision
+          # D2 -- so an environment that does not carry it says so once, here,
+          # rather than in every job below.
+          if [ "$DEPLOY_MARKET" != 'true' ] && [ "$market" = 'true' ]; then
+            echo "vars.DEPLOY_MARKET is not 'true': skipping the market image."
+            market=false
+          fi
+
+          # A JSON array for the frontend matrices below. Empty when neither
+          # frontend changed, which produces no matrix jobs at all.
+          frontends='[]'
+          if [ "$club" = 'true' ] && [ "$market" = 'true' ]; then
+            frontends='["club","market"]'
+          elif [ "$club" = 'true' ]; then
+            frontends='["club"]'
+          elif [ "$market" = 'true' ]; then
+            frontends='["market"]'
+          fi
+
+          {
+            echo "api=$api"
+            echo "frontends=$frontends"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo '### Building'
+            echo ''
+            echo '| Image | Build |'
+            echo '| --- | --- |'
+            echo "| api | $api |"
+            echo "| club | $club |"
+            echo "| market | $market |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------- the gate
+  test:
+    name: Tests
+    # One definition of green, in `ci.yml`. Nothing below runs until it passes.
+    uses: ./.github/workflows/ci.yml
+
+  # -------------------------------------------------------------------- the API
+  build-api:
+    name: Build the API image
+    needs: [changes, test]
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    # The QA environment holds the federated credential this job authenticates
+    # with. The push target is the shared registry, so the image this produces
+    # is the one production will eventually run -- see `promote.yml`.
+    environment: qa
+    permissions:
+      contents: read
+      # The OIDC token `azure/login` exchanges. Without it there is no way to
+      # reach Azure that does not involve a stored password.
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign in to the registry
+        # Writes a short-lived token into the Docker config from the identity
+        # above. No `ACR_PASSWORD`, and the registry's admin user stays off.
+        run: az acr login --name "$ACR_NAME"
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          # No environment prefix. This image reads every environment-specific
+          # value from the container app at runtime, which is what makes the
+          # promotion in `promote.yml` a retag rather than a rebuild.
+          tags: ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}:${{ github.sha }}
+          # `image.revision` is how "which commit is running in UAT" gets
+          # answered from the registry instead of from somebody's memory. It is
+          # also what `promote.yml` relies on to rebuild the frontends at the
+          # same commit as the API image being promoted.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+          # A provenance attestation turns the push into an OCI index with a
+          # second, platform-less manifest inside it. Nothing here consumes the
+          # attestation, and a single-manifest image is one less thing between a
+          # digest and a running revision.
+          provenance: false
+
+      - name: Report
+        run: |
+          {
+            echo '### API image'
+            echo ''
+            echo '    ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}@${{ steps.build.outputs.digest }}'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------- the frontends
+  build-frontend:
+    name: Build the ${{ matrix.app }} image
+    needs: [changes, test]
+    if: needs.changes.outputs.frontends != '[]'
+    runs-on: ubuntu-latest
+    environment: qa
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      # One frontend failing to build should not cancel the other. They deploy
+      # independently, so a half-successful run is a usable outcome.
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changes.outputs.frontends) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign in to the registry
+        run: az acr login --name "$ACR_NAME"
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+
+      - name: Assemble the build arguments
+        id: args
+        # **The club takes four and the market takes two.** The market
+        # Dockerfile declares neither `CDN_BASE_URL` nor `SUPPORT_EMAIL` --
+        # design/deploy.md 4.3, because the club film and the blocked-membership
+        # screen are both the club's -- so passing them would be a build
+        # argument nothing reads.
+        #
+        # `SITE_URL` and `SUPPORT_EMAIL` are both checked hard inside the club
+        # Dockerfile, so an unset variable fails the build naming the argument
+        # the operator actually has to set, rather than producing an image whose
+        # canonical tag points at nowhere.
+        env:
+          APP: ${{ matrix.app }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          CLUB_SITE_URL: ${{ vars.CLUB_SITE_URL }}
+          CLUB_CDN_BASE_URL: ${{ vars.CLUB_CDN_BASE_URL }}
+          CLUB_SUPPORT_EMAIL: ${{ vars.CLUB_SUPPORT_EMAIL }}
+          MARKET_SITE_URL: ${{ vars.MARKET_SITE_URL }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'build_args<<BUILD_ARGS_EOF'
+            echo "APP_ENV=${APP_ENV}"
+            case "$APP" in
+              club)
+                echo "SITE_URL=${CLUB_SITE_URL}"
+                echo "CDN_BASE_URL=${CLUB_CDN_BASE_URL}"
+                echo "SUPPORT_EMAIL=${CLUB_SUPPORT_EMAIL}"
+                ;;
+              market)
+                echo "SITE_URL=${MARKET_SITE_URL}"
+                ;;
+            esac
+            echo 'BUILD_ARGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          # The workspace root, not the application directory. That is where the
+          # lockfile and the hoisted `node_modules` live, and `next.config.ts`
+          # pins `outputFileTracingRoot` to the same place -- the two have to
+          # agree or the traced output describes a tree the build cannot see.
+          context: frontend
+          file: frontend/${{ matrix.app }}/Dockerfile
+          push: true
+          # **`qa-` prefixed, and that prefix is load-bearing.** The build
+          # arguments above are baked into the image, so this artefact is only
+          # ever valid for QA -- risk R-D4. An unprefixed tag would look
+          # promotable and would eventually ship a production storefront
+          # rendering QA canonical tags.
+          tags: ${{ env.REGISTRY }}/f2c/${{ matrix.app }}:qa-${{ github.sha }}
+          build-args: ${{ steps.args.outputs.build_args }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            za.co.f2c.environment=qa
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          provenance: false
+
+  # ----------------------------------------------------------------- deployment
+  deploy-api:
+    name: Deploy the API to QA
+    needs: [changes, build-api]
+    if: |
+      needs.changes.outputs.api == 'true'
+      && (github.event_name == 'push' || inputs.deploy)
+    runs-on: ubuntu-latest
+    environment: qa
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        # **Four container apps off one image, and the order matters.** See
+        # `.github/scripts/deploy-api.sh`, which is shared with `promote.yml`.
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}@${{ needs.build-api.outputs.digest }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_API: ${{ vars.CONTAINERAPP_API }}
+          APP_WORKER: ${{ vars.CONTAINERAPP_WORKER }}
+          APP_MAIL_WORKER: ${{ vars.CONTAINERAPP_MAIL_WORKER }}
+          APP_BEAT: ${{ vars.CONTAINERAPP_BEAT }}
+        run: bash .github/scripts/deploy-api.sh
+
+      - name: Move the environment tag
+        # A moving `:qa` tag so the registry listing answers "what is in QA"
+        # without a trip to the portal. Server-side: no pull, no push, no layer
+        # transfer. The deployment above pinned the digest, so this tag is a
+        # label rather than something a running revision depends on.
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          SOURCE: ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}@${{ needs.build-api.outputs.digest }}
+          TARGET: ${{ env.API_REPOSITORY }}:qa
+        run: |
+          az acr import --name "$ACR_NAME" \
+            --source "$SOURCE" --image "$TARGET" --force
+
+  deploy-frontend:
+    name: Deploy the ${{ matrix.app }} frontend to QA
+    needs: [changes, build-frontend]
+    if: |
+      needs.changes.outputs.frontends != '[]'
+      && (github.event_name == 'push' || inputs.deploy)
+    runs-on: ubuntu-latest
+    environment: qa
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changes.outputs.frontends) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        # The tag was pushed moments ago, and the deployment names the digest
+        # anyway. On Basic tier a tag is mutable, so a revision pinned to a tag
+        # is a revision that can change what it runs without a deployment.
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          REGISTRY: ${{ env.REGISTRY }}
+          APP: ${{ matrix.app }}
+          TAG: qa-${{ github.sha }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_CLUB: ${{ vars.CONTAINERAPP_CLUB }}
+          APP_MARKET: ${{ vars.CONTAINERAPP_MARKET }}
+        run: |
+          set -euo pipefail
+
+          digest=$(bash .github/scripts/acr-digest.sh "$ACR_NAME" "f2c/${APP}:${TAG}")
+
+          case "$APP" in
+            club)   container_app="$APP_CLUB" ;;
+            market) container_app="$APP_MARKET" ;;
+            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
+          esac
+
+          az containerapp update \
+            --name "$container_app" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${REGISTRY}/f2c/${APP}@${digest}" \
+            --output none
+
+          echo "$container_app is on f2c/${APP}@${digest}"

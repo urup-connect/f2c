@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+#
+# One-time setup: the identity GitHub Actions uses to push to the registry and
+# roll out container apps, and the GitHub variables the workflows read.
+#
+# Run it once per environment:
+#
+#     ENVIRONMENT=qa         ACR_NAME=... RESOURCE_GROUP=rg-f2c-qa-weu  ./azure-oidc-setup.sh
+#     ENVIRONMENT=uat        ACR_NAME=... RESOURCE_GROUP=rg-f2c-uat-weu ./azure-oidc-setup.sh
+#     ENVIRONMENT=production ACR_NAME=... RESOURCE_GROUP=rg-f2c-prod-weu ./azure-oidc-setup.sh
+#
+# **No passwords anywhere, and that is the point.** The workflows authenticate
+# with a federated credential: GitHub mints a short-lived OIDC token, Entra ID
+# exchanges it for an access token, and nothing is stored in the repository. It
+# is the same argument design/deploy.md section 2 makes for reaching blob storage
+# with a managed identity rather than an account key -- a key is a thing that has
+# to be rotated, copied between environments and kept out of screenshots.
+#
+# **One application registration per environment, and the reason is production.**
+# A single registration with rights over all three resource groups would mean
+# the QA build job holding write access to production. The GitHub environment
+# approval would still gate the *workflow*, but the credential itself would not
+# be limited, and a credential is worth what it can reach rather than what it is
+# usually used for.
+#
+# The federated credential's subject is `environment:<name>`, so a token can
+# only be minted by a job that declares `environment: <name>` -- which is what
+# makes the reviewer requirement on UAT and production an enforced gate rather
+# than a convention.
+#
+# Requires the Azure CLI signed in with rights to create app registrations and
+# assign roles, and the GitHub CLI signed in with admin on the repository.
+
+set -euo pipefail
+
+: "${ENVIRONMENT:?ENVIRONMENT is required -- qa, uat or production}"
+: "${ACR_NAME:?ACR_NAME is required -- the shared container registry}"
+: "${RESOURCE_GROUP:?RESOURCE_GROUP is required -- the resource group for this environment}"
+
+REPOSITORY="${REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+APP_NAME="${APP_NAME:-f2c-gha-${ENVIRONMENT}}"
+
+subscription_id=$(az account show --query id -o tsv)
+tenant_id=$(az account show --query tenantId -o tsv)
+
+echo "Repository:    $REPOSITORY"
+echo "Environment:   $ENVIRONMENT"
+echo "Subscription:  $subscription_id"
+echo "Registry:      $ACR_NAME"
+echo "Resource group: $RESOURCE_GROUP"
+echo
+
+# ---------------------------------------------------------- the app registration
+app_id=$(az ad app list --display-name "$APP_NAME" --query '[0].appId' -o tsv)
+
+if [ -z "$app_id" ]; then
+    echo "==> Creating the application registration $APP_NAME"
+    app_id=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
+else
+    echo "==> $APP_NAME already exists ($app_id)"
+fi
+
+if ! az ad sp show --id "$app_id" >/dev/null 2>&1; then
+    echo "==> Creating the service principal"
+    az ad sp create --id "$app_id" --output none
+fi
+
+sp_object_id=$(az ad sp show --id "$app_id" --query id -o tsv)
+
+# ------------------------------------------------------ the federated credential
+#
+# The subject ties the credential to jobs that declare this environment. A job
+# without `environment: <name>` cannot mint a token with it, however much
+# repository access its author has.
+credential_name="github-${ENVIRONMENT}"
+
+if ! az ad app federated-credential show \
+        --id "$app_id" \
+        --federated-credential-id "$credential_name" >/dev/null 2>&1; then
+    echo "==> Adding the federated credential $credential_name"
+    az ad app federated-credential create \
+        --id "$app_id" \
+        --parameters "$(
+            cat <<JSON
+{
+  "name": "${credential_name}",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:${REPOSITORY}:environment:${ENVIRONMENT}",
+  "description": "GitHub Actions, ${ENVIRONMENT} environment",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+JSON
+        )" \
+        --output none
+else
+    echo "==> The federated credential $credential_name already exists"
+fi
+
+# --------------------------------------------------------------------- the roles
+#
+# `AcrPush` on the registry, because both `release.yml` and `promote.yml` push
+# frontend images -- a promotion rebuilds them (risk R-D4). It includes pull.
+registry_id=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+
+echo "==> AcrPush on $ACR_NAME"
+az role assignment create \
+    --assignee-object-id "$sp_object_id" \
+    --assignee-principal-type ServicePrincipal \
+    --role AcrPush \
+    --scope "$registry_id" \
+    --output none 2>/dev/null || echo "    already assigned"
+
+# `Contributor` scoped to this environment's resource group and nothing wider.
+#
+# It is broader than this pipeline needs -- the workflows only ever call
+# `containerapp update` -- and narrowing it to a custom role carrying
+# `Microsoft.App/containerApps/read` and `/write` is the obvious hardening step.
+# Recorded here rather than done, because a custom role definition is a fourth
+# thing to keep in step across three environments.
+echo "==> Contributor on $RESOURCE_GROUP"
+az role assignment create \
+    --assignee-object-id "$sp_object_id" \
+    --assignee-principal-type ServicePrincipal \
+    --role Contributor \
+    --scope "/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}" \
+    --output none 2>/dev/null || echo "    already assigned"
+
+# ---------------------------------------------------------- the GitHub variables
+#
+# Variables rather than secrets. None of the three identifies a credential that
+# can be used on its own: without the federated trust above, and without a job
+# running in this repository under this environment, a client ID is not a way in.
+# Keeping them readable means whoever is debugging a failed deployment can see
+# which subscription it was aimed at.
+echo
+echo "==> Setting the GitHub environment variables for $ENVIRONMENT"
+
+set_var() {
+    gh variable set "$1" --env "$ENVIRONMENT" --repo "$REPOSITORY" --body "$2"
+    echo "    $1"
+}
+
+set_var AZURE_CLIENT_ID "$app_id"
+set_var AZURE_TENANT_ID "$tenant_id"
+set_var AZURE_SUBSCRIPTION_ID "$subscription_id"
+set_var AZURE_RESOURCE_GROUP "$RESOURCE_GROUP"
+
+# The registry is shared by every environment -- design/deploy.md section 2 --
+# so this one is repository-wide.
+gh variable set ACR_NAME --repo "$REPOSITORY" --body "$ACR_NAME"
+echo "    ACR_NAME (repository-wide)"
+
+cat <<REMAINING
+
+==> Done for $ENVIRONMENT.
+
+Still to set for this environment, because only you know the values. The
+container app names are what \`az containerapp create\` was given; the four
+build arguments are design/deploy.md sections 4.2 and 4.3.
+
+  gh variable set --env $ENVIRONMENT \\
+      CONTAINERAPP_API          # f2c-api
+      CONTAINERAPP_WORKER       # f2c-worker
+      CONTAINERAPP_MAIL_WORKER  # f2c-mail-worker
+      CONTAINERAPP_BEAT         # f2c-beat
+      CONTAINERAPP_CLUB         # f2c-club
+      CONTAINERAPP_MARKET       # f2c-market
+      APP_ENV                   # qa | uat | production
+      CLUB_SITE_URL             # https://qa.f2c-cannabis.co.za
+      CLUB_CDN_BASE_URL
+      CLUB_SUPPORT_EMAIL        # members@f2c-cannabis.co.za
+      MARKET_SITE_URL           # https://qa.f2c.co.za
+      DEPLOY_MARKET             # 'true' to build and deploy the market storefront
+
+DEPLOY_MARKET gates the market storefront everywhere, which is decision D2 --
+QA can skip it while the store is on the back burner. It saves a container app,
+two DNS records and a certificate, and it saves none of the EMAIL_F2C_* entries:
+the API refuses to start without a working market mailer whether the market
+frontend is deployed or not.
+
+Two things this script does not do:
+
+  1. **Reviewers on UAT and production.** Set them in Settings > Environments.
+     Without them, promote.yml deploys to production the moment somebody
+     dispatches it, and the approval record is the audit trail that matters when
+     R-D1 and R-D2 are written up.
+
+  2. **Let the container apps pull.** Each app needs its own managed identity
+     with AcrPull on the registry, which is separate from the push rights above:
+
+       az containerapp identity assign -n <app> -g $RESOURCE_GROUP --system-assigned
+       principal=\$(az containerapp show -n <app> -g $RESOURCE_GROUP \\
+           --query identity.principalId -o tsv)
+       az role assignment create --assignee-object-id "\$principal" \\
+           --assignee-principal-type ServicePrincipal \\
+           --role AcrPull --scope $registry_id
+       az containerapp registry set -n <app> -g $RESOURCE_GROUP \\
+           --server ${ACR_NAME}.azurecr.io --identity system
+
+     Do that for all six, and turn the registry's admin user off:
+
+       az acr update --name $ACR_NAME --admin-enabled false
+
+REMAINING

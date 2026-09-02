@@ -39,6 +39,17 @@ on:
   # So a red build can be re-run after an infrastructure blip without an empty
   # commit.
   workflow_dispatch:
+  # `release.yml` and `promote.yml` call this workflow rather than repeating any
+  # of it. What "green" means is defined once, here, and no image is pushed to
+  # the registry until it holds.
+  #
+  # **The concurrency group below is why the callers must not reuse it.** In a
+  # called workflow `github.workflow` evaluates to the *caller's* name, so if a
+  # caller declares the same `${{ github.workflow }}-${{ github.ref }}` group at
+  # workflow level, the caller ends up waiting on a group it is itself holding
+  # and the run deadlocks until it times out. Both callers use a literal prefix
+  # (`release-`, `promote-`) for exactly that reason.
+  workflow_call:
 
 # A second push to the same branch cancels the first. CI that is still busy with
 # a superseded commit is CI nobody waits for.

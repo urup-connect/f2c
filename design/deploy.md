@@ -1,7 +1,8 @@
-# Deploying to QA
+# Deploying to QA, and promoting to UAT and production
 
 What has to exist on Azure before anybody outside the team can see this platform, which
-configuration entry carries which fact, and where each one is stored.
+configuration entry carries which fact, where each one is stored, and how a release moves from
+one environment to the next.
 
 This document describes a deployment that **does not exist yet**. Every other document in this set
 describes the system as it stands; this one is the exception, and it is written as a runbook rather
@@ -16,7 +17,7 @@ hostname split is **C30**. Neither is reopened here.
 
 ## 1. What is left, and what shape it is
 
-Block 0's remaining lines split three ways, and the proportions are worth stating because they
+Block 0's remaining lines split four ways, and the proportions are worth stating because they
 decide who does the work:
 
 - **Provisioning.** None of the Azure resources exist. This is an afternoon with a subscription and
@@ -25,6 +26,10 @@ decide who does the work:
   list.
 - **Code.** Four small items, in section 5. None is more than an hour, and one of them is not in
   `todo.md` at all.
+- **Delivery.** Three GitHub Actions workflows and three shell scripts, in section 6. **Written,
+  and the only part of this document that describes something that exists.** What it still needs
+  is the one-time Azure and GitHub setup that 6.5 and 6.6 set out, which cannot be done before
+  the registry in step 1 exists.
 
 **The critical path used to be none of them, and that has changed.** It was a mailbox.
 `noreply@f2c.co.za` timed out during `AUTH` against the same cPanel server that
@@ -37,7 +42,7 @@ and it sat in the provider's queue rather than the team's.
 **It authenticates now.** Re-probed on 2 September 2026: EHLO, STARTTLS and `AUTH` against
 `mail.f2c.co.za:587` answer `235 Authentication succeeded` in under a second, with the credentials
 already in `.env` and no repository change. **Nothing on this deployment now waits on anybody
-outside the team**, so the three items above are the whole of it and the order in section 6 is
+outside the team**, so the items above are the whole of it and the order in section 7 is
 decided by what the team can do first, not by what it is waiting for. The dependency itself has not
 gone away — the API container still refuses to start without a working market mailer, deployed
 market frontend or not — so a mailbox that stops authenticating stops the API, and that is worth
@@ -58,8 +63,8 @@ One resource group per environment, `rg-f2c-qa-weu`, West Europe throughout.
 | Container Apps environment | With a Log Analytics workspace |
 | Container App — API | `min-replicas 1`, pinned |
 | Container App — club frontend | Port 3000 |
-| Container App — market frontend | Optional in QA. See section 7 |
-| Container Apps Job | Cron, running the API image. See section 5.2 |
+| Container App — market frontend | Optional in QA. See section 8 |
+| Container App — Celery worker, mail worker and beat | Three more, off the API image, and none of them serves traffic. Superseded the Container Apps Job earlier revisions named — see section 5.2 |
 
 **`min-replicas 1` is not a performance setting.** Scale-to-zero plus the four DNS lookups in
 `payfast_addresses` risks timing out an inbound Payfast notification, and a dropped notification is
@@ -122,7 +127,7 @@ remains the documentation and needs no change for this.
 | **Azure Key Vault** | `DJANGO_FIELD_ENCRYPTION_KEY`, `DJANGO_BLIND_INDEX_PEPPER` | These two are Block 0 P4. Key Vault gives versioning, soft delete and purge protection, which is most of the backup and rotation procedure P4 asks for. Referenced from the container app through the same managed identity that reaches blob storage |
 | **Container App secrets** | Every other secret: database password, Redis URL, mail passwords, Payfast key and passphrase, `DJANGO_SECRET_KEY` | Referenced from environment variables as `secretref:`. A second Key Vault hop for these buys little — they are all rotatable without touching stored data, which is exactly what the two above are not |
 | **Container App environment variables** | Everything else: hosts, origins, flags, amounts, addresses | Non-secret, and visible in the portal is the right property for them. A wrong `DJANGO_ALLOWED_HOSTS` should be readable by whoever is debugging it |
-| **GitHub Actions environment `qa`** | The frontend **build arguments**, plus registry credentials | `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` are evaluated by `lib/site.ts` when the module is first loaded, which happens during prerendering. They belong to the build, not to the container app |
+| **GitHub Actions environments `qa`, `uat` and `production`** | The frontend **build arguments**, the container app names, and the three Azure identifiers the federated credential is minted against | `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` are evaluated by `lib/site.ts` when the module is first loaded, which happens during prerendering. They belong to the build, not to the container app. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
 
 **The consequence of that last row is worth stating rather than discovering.** Because those four
 are build arguments, **a QA frontend image cannot be promoted to production** — each environment
@@ -130,6 +135,11 @@ builds its own. The API image is environment-agnostic and can be promoted, which
 bought when `NEXT_PUBLIC_DJANGO_API_URL` became `DJANGO_API_PUBLIC_URL`. The frontends did not get
 the same treatment because `SITE_URL` is wrong in a way that shows up in a canonical tag, and the
 API address was wrong in a way that broke every request after sign-in.
+
+**That one asymmetry decides the shape of the whole delivery pipeline**, which is section 6: the
+API is promoted by moving a digest between environments, the frontends are rebuilt from the same
+commit for each one, and the unit that moves between environments is therefore a commit rather
+than an image.
 
 ---
 
@@ -588,11 +598,251 @@ throwaway secret key that was already there — not by weakening the refusal, an
 into the image. A RUN-line variable does not persist into the image, and none of the four is what a
 container runs with.
 
-**The gap this leaves open is that CI still does not build the image.** Any future settings-time
-requirement will break the build the same way and be found the same way — by whoever next runs
-compose. A `docker build` step in `ci.yml` is the fix and is not yet written.
+**The gap this left open was that CI did not build the image, and that is now closed.**
+`release.yml` builds and pushes all three on every merge to trunk — section 6 — so the next
+settings-time requirement breaks a build in CI rather than on the machine of whoever next runs
+compose. It is still not caught on the pull request that introduces it: the build runs after the
+merge, because pushing to the registry from a workflow triggered by a fork is the permission this
+pipeline deliberately does not grant (6.1). A build-only job on pull requests, pushing nothing,
+would close that too and is not written.
 
-## 6. The order
+---
+
+## 6. The pipeline
+
+Three workflows and three shell scripts, and one fact shapes all of them: **the API image can be
+promoted between environments and the frontend images cannot.** Section 3 has why — the frontends
+bake four values at build time — and everything below is a consequence.
+
+| File | Trigger | What it does |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | Pull requests, pushes to trunk, and a call from the two below | The whole suite against MySQL 8.4. Unchanged except for the `workflow_call` trigger that lets the other two reuse it |
+| `.github/workflows/release.yml` | Push to trunk, or dispatch | Works out which of the three images the commit changed, builds and pushes those, deploys them to QA |
+| `.github/workflows/promote.yml` | Dispatch only, taking a commit SHA and a target environment | Moves the API digest to UAT or production, and rebuilds the frontends for it |
+| `.github/scripts/deploy-api.sh` | Called by both | Rolls one API digest across the four container apps that run it, in the one order that works |
+| `.github/scripts/acr-digest.sh` | Called by both | Resolves a tag to the digest it points at |
+| `.github/scripts/azure-oidc-setup.sh` | By hand, once per environment | The application registration, the federated credential, the two role assignments and the GitHub variables |
+
+**Trunk-based, with the environments as the gates rather than the branches.** A merge to `master`
+builds and deploys QA on its own; UAT and production are `promote.yml` dispatches behind GitHub
+environment reviewers. **The `qa` branch is redundant under this and should go** — a long-lived
+environment branch drifts from trunk, and what eventually reaches production is then a merge commit
+nothing ever tested as one. Worth noting in passing that `ci.yml` has never run on that branch
+anyway: its push trigger is `[main, master]`.
+
+### 6.1 The build is a second workflow, not more jobs in `ci.yml`
+
+Three reasons, and none of them is a preference:
+
+- **`ci.yml` runs on `pull_request`, forks included.** Pushing to the registry needs
+  `id-token: write` and an `AcrPush` role assignment, and that pairing does not belong on a workflow
+  whose trigger includes code nobody has reviewed yet.
+- **`ci.yml` sets `cancel-in-progress: true`.** That is right for a test run and wrong for a push: a
+  build cancelled halfway through leaves partly pushed layers and an environment tag pointing at
+  neither the old image nor the new one. Weakening it for the build would weaken it for the tests,
+  which is the one place it earns its keep.
+- **The triggers do not overlap.** Tests want every pull request; images want a merge to trunk. One
+  file means every job carries an `if:` guard, and the guards are where a pipeline like this rots.
+
+**The tests still gate the build, and there is still only one definition of green.** `ci.yml` gained
+a `workflow_call` trigger; `release.yml` calls it, and every build job is `needs: test`. Nothing is
+copied between the two files, so what CI proves cannot fall out of step with what a release proves.
+
+**One footgun, recorded because it costs an hour to diagnose.** In a called workflow
+`${{ github.workflow }}` evaluates to the *caller's* name. `ci.yml` groups its concurrency on that
+expression, so a caller declaring the same group would sit waiting on a group it was itself holding
+until the run timed out. Both callers use a literal prefix — `release-`, `promote-` — for that
+reason and no other.
+
+### 6.2 What the registry holds
+
+One registry for every environment, as section 2 sets out. Three repositories:
+
+```
+f2c/api      :<sha>                   plus the moving tags :qa :uat :production
+f2c/club     :qa-<sha> :uat-<sha> :production-<sha>
+f2c/market   :qa-<sha> :uat-<sha> :production-<sha>
+```
+
+**The API tag names only the commit; the frontend tags name the environment as well. That asymmetry
+is the whole design in one line.** An `f2c/club` image built for QA is not a production artefact and
+never can be — R-D4 — so an unprefixed frontend tag would look promotable and would eventually ship
+a production storefront rendering QA canonical tags. The prefix is load-bearing rather than
+decorative.
+
+**Every deployment pins a digest, and the moving tags are labels for people.** The registry is Basic
+tier and tag immutability is a Premium feature, so a tag here *can* be moved — which makes a
+container app revision pinned to `:qa` a revision whose contents can change with no deployment and
+no record of one. `deploy-api.sh` refuses a tag reference outright rather than trusting its caller to
+pass a digest. What `:qa`, `:uat` and `:production` buy is that "what is running in UAT" is
+answerable from the registry listing instead of from the portal, and the ladder check in 6.4 depends
+on that.
+
+**Every image carries `org.opencontainers.image.revision`.** Without it, "which commit is running in
+production" becomes archaeology the first time somebody needs the answer during an incident. It is
+also what makes a frontend rebuild at promotion time possible: the label on the API image being
+promoted names the commit the frontends have to be rebuilt from.
+
+Two build settings worth knowing about. `provenance: false`, because a provenance attestation turns
+the push into an OCI index with a second, platform-less manifest inside it and nothing here consumes
+the attestation — a single manifest is one less thing between a digest and a running revision. And
+the GitHub Actions layer cache, scoped per image, which is what keeps a frontend rebuild at
+promotion time from being a cold `npm ci`.
+
+### 6.3 Deploying one service, or two, or all three
+
+**A commit builds only the images it changed.** `release.yml` takes a plain `git diff` against the
+commit the push replaced — no marketplace action, because this job decides what reaches a deployed
+environment and one fewer third party in that path is worth ten lines of shell:
+
+| Image | Rebuilt when the commit touches |
+| --- | --- |
+| `f2c/api` | `Dockerfile`, `.dockerignore`, `manage.py`, `pyproject.toml`, `poetry.lock`, `requirements.txt`, `app/`, `f2c/`, `deploy/`, `templates/`, `static/` |
+| `f2c/club` | `frontend/club/`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/.dockerignore` |
+| `f2c/market` | `frontend/market/`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/.dockerignore` |
+
+**The shared lockfile counts as a change to both frontends**, because `frontend/package-lock.json`
+is one file for the whole npm workspace and `npm ci` resolves every member from it. A dependency
+bump touching nothing under `club/` still changes what a club image contains.
+
+**When there is no usable base commit, everything is built.** An empty or all-zero
+`github.event.before` — a new branch, a force push, a rewritten history — means there is no diff to
+take, and building everything is the only answer that cannot silently skip an image that needed it.
+For the first run against an empty registry, use the dispatch and its per-service ticks rather than
+relying on a diff at all.
+
+**`DEPLOY_MARKET` gates the market storefront in every environment**, which is decision D2 stated
+once instead of in six places. It saves nothing in the API's configuration — the API refuses to start
+without a working market mailer whether the market frontend is deployed or not, which is section 1.
+
+**"Deploy the backend" is four container apps and not one, and the order is a constraint rather than
+a style.** Section 5.2 puts `api`, `worker`, `mail-worker` and `beat` all on the same image, chosen
+between by the first argument to `deploy/entrypoint.sh`. Only `api` runs `migrate` — the workers
+deliberately do not, because a second process racing the first through the same schema change on
+every deployment is worse than a slightly longer start-up. So the API goes first, `deploy-api.sh`
+waits for its revision to provision, and only then do the three that serve no traffic follow. A
+worker started against a schema the API has not moved yet is the overnight-wrong-writes failure 5.2
+is written against.
+
+That wait is also where a bad migration surfaces, which is R-D3 arriving in practice. When it times
+out, or the revision reports unhealthy, the script prints the `az containerapp logs show` command for
+that exact revision — the entrypoint gate names the check it refused on, and reading that is faster
+than reading the portal.
+
+**Nothing in an image update changes the scale rules**, so `beat` stays capped at one replica through
+every deployment. That matters: two beats publish every job twice, and while all three scheduled
+tasks are idempotent, each duplicate writes its own `ScheduledRun` row and the history stops being
+readable — which is the one thing that table exists for.
+
+### 6.4 Promotion is a commit, not an image
+
+**The input to `promote.yml` is a commit SHA, and that is forced rather than chosen.** One of the two
+kinds of artefact can be moved and the other has to be rebuilt:
+
+- **The API is promoted by moving the digest.** `az acr import` retags it inside the registry —
+  server-side, no pull, no push, no rebuild — and the container apps are updated to that same digest.
+  What ran in QA is bit-for-bit what runs in production. That is what Block 0 P6 bought when
+  `NEXT_PUBLIC_DJANGO_API_URL` became `DJANGO_API_PUBLIC_URL`.
+- **The frontends are rebuilt from the commit**, with the target environment's build arguments, and
+  tagged for that environment. R-D4 again: `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL`
+  are read by `lib/site.ts` when the module is first loaded, which happens during prerendering, so
+  they are in the image rather than in front of it. **That rebuild is reproducible because the
+  base image is pinned by digest and the lockfile is committed** — R-D7. It would not be otherwise,
+  and "the same commit rebuilt" would have been a weaker claim than it sounds.
+
+An image tag as the input would have worked for the API and would have been meaningless for the
+frontends. A commit works for both.
+
+**What stands in for re-running the tests, and why they are not re-run.** A called workflow runs at
+the *caller's* ref, so calling `ci.yml` from here would test trunk rather than the commit being
+promoted, and report green for the wrong code. The gate is the registry instead: `f2c/api:<sha>`
+exists only because `release.yml` built it, and that job is `needs: test`. **An image in the registry
+is therefore a commit that passed against MySQL 8.4.** A SHA with no image is refused with that
+explanation rather than built here.
+
+**The ladder is enforced, not assumed.** A promotion to production checks that the digest being
+promoted is the one `f2c/api:uat` points at, and refuses when it is not — the alternative being
+production receiving a release UAT never saw. The tag is written as the *last* step of a successful
+UAT promotion, so it means "this is running there" rather than "somebody tried to put this there".
+`skip_ladder_check` overrides it for the case that will eventually arise; it takes a deliberate tick,
+emits a warning annotation, and is recorded in the run.
+
+**Rollback is the same mechanism run backwards, and for the API it needs no rebuild:** dispatch the
+previous SHA, or pin the previous Container Apps revision. A frontend rollback is a rebuild of the
+previous commit, which is minutes rather than seconds, and is one more thing R-D4 costs.
+
+### 6.5 The credential is federated, and there is one per environment
+
+**No passwords anywhere.** GitHub mints a short-lived OIDC token, Entra ID exchanges it for an access
+token, and nothing is stored in the repository. It is the same argument section 2 makes for reaching
+blob storage with a managed identity: a key is a thing that has to be rotated, copied between
+environments and kept out of screenshots.
+
+**One application registration per environment, and the reason is production.** A single registration
+with rights over all three resource groups would mean the QA build job holding write access to
+production. The GitHub environment approval would still gate the *workflow*, but the credential
+itself would not be limited — and a credential is worth what it can reach rather than what it is
+usually used for.
+
+Each registration gets a federated credential whose subject is
+`repo:<owner>/<repo>:environment:<name>`. **That subject is what turns the reviewer requirement into
+an enforced gate rather than a convention:** a job that does not declare `environment: production`
+cannot mint a production token at all, however much repository access its author has.
+
+Two role assignments per environment. `AcrPush` on the shared registry — push and not merely pull,
+because a promotion rebuilds the frontends. And `Contributor` scoped to that environment's resource
+group and nothing wider. **The second is broader than this pipeline needs**, which only ever calls
+`containerapp update`; narrowing it to a custom role carrying `Microsoft.App/containerApps/read` and
+`/write` is the obvious hardening step, recorded here rather than done because a custom role
+definition is a fourth thing to keep in step across three environments.
+
+**The container apps pull with their own identities, which is a separate grant from the above.** Each
+of the six gets a system-assigned identity with `AcrPull` on the registry, and
+`az containerapp registry set --identity system`. Then the registry's admin user goes off:
+
+```
+az acr update --name <registry> --admin-enabled false
+```
+
+An admin user left enabled is a username and password that works from anywhere, for every repository
+in the registry, and outlives whoever last used it.
+
+### 6.6 The GitHub side
+
+Three environments — `qa`, `uat`, `production` — with **required reviewers on the last two**. That is
+the approval, and it is also the audit trail: who released what, to which environment, and when.
+Worth having before R-D1 and R-D2 are written up rather than after.
+
+`azure-oidc-setup.sh` writes the first three rows; the rest are values only the operator knows.
+
+| Variable | Scope | What it is |
+| --- | --- | --- |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | Environment | Written by the setup script |
+| `AZURE_RESOURCE_GROUP` | Environment | `rg-f2c-qa-weu` and its siblings |
+| `ACR_NAME` | Repository | One registry for all three environments — section 2 |
+| `CONTAINERAPP_API`, `CONTAINERAPP_WORKER`, `CONTAINERAPP_MAIL_WORKER`, `CONTAINERAPP_BEAT` | Environment | The four names from 5.2 |
+| `CONTAINERAPP_CLUB`, `CONTAINERAPP_MARKET` | Environment | The two storefronts |
+| `APP_ENV` | Environment | A frontend build argument — see the note below |
+| `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` | Environment | Section 4.2 |
+| `MARKET_SITE_URL` | Environment | Section 4.3 |
+| `DEPLOY_MARKET` | Environment | `true` to build and deploy the market storefront — D2 |
+
+**Variables rather than secrets, the three Azure identifiers included.** None of them is usable on
+its own: without the federated trust, and without a job running in this repository under that
+environment, a client ID is not a way in. Keeping them readable means whoever is debugging a failed
+deployment can see which subscription it was aimed at — the same argument section 3 makes for the
+container app's non-secret environment variables.
+
+**`APP_ENV` and the GitHub environment name are two different strings and are allowed to disagree.**
+The environment is `production` because that is the GitHub convention and it is what the frontend
+image tag is prefixed with; `APP_ENV` is whatever the frontends expect, which D5 declined to change.
+The tag prefix is the environment name and never `APP_ENV`, so the two never have to be reconciled —
+but somebody reading `f2c/club:production-<sha>` on an image whose `APP_ENV` is `prod` should know
+that is deliberate.
+
+---
+
+## 7. The order
 
 1. Provision the resource group, registry, MySQL, Managed Redis, storage account and Log Analytics.
    No containers yet. **This is now the first step.** It used to be raising the
@@ -601,24 +851,37 @@ compose. A `docker build` step in `ci.yml` is the fix and is not yet written.
 2. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
    (5.1) are done.
 3. Create the Key Vault, generate the QA encryption keys, load the secrets.
-4. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
+4. Run `.github/scripts/azure-oidc-setup.sh` for `qa`, create the three GitHub environments with
+   reviewers on `uat` and `production`, and set the variables in 6.6. The registry from step 1 has
+   to exist first; nothing else here does.
+5. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
    misconfiguration by name — that is what it is for, and it is cheaper to meet it with one
    container running than with three.
-5. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
-6. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
+
+   That first deployment is a `release.yml` dispatch with only `api` ticked, not a hand-run
+   `az containerapp update` — the first thing worth proving about the pipeline is that it can
+   reach one container app.
+6. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
+7. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
    passkey enrolment, sign-up, Payfast sandbox checkout, membership activation, profile edit,
    `/admin/members` and `/admin/strains`.
-7. Add the Container Apps Job (5.2).
-8. Market hostnames and container, if QA is to carry the market at all — section 7.
-9. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
-   holds a real member.
+8. Add the worker, mail worker and beat container apps (5.2). Redeploy through the pipeline, which
+   is where `deploy-api.sh` first rolls all four in order rather than one.
+9. Market hostnames and container, if QA is to carry the market at all — section 8.
+10. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
+    holds a real member.
+11. Repeat steps 1 and 3 to 6 for UAT, and then for production, in that order. Each needs its own
+    resource group, its own hostnames and certificates, its own encryption keys (R-D5), its own
+    application registration (6.5) and its own GitHub environment. The registry is shared and is
+    not repeated, and neither is step 2. From then on a release reaches those two environments
+    through `promote.yml` and 6.4, and never through a rebuild off trunk.
 
-Steps 1 to 7 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
+Steps 1 to 8 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
 work. The provider used to be on that list and no longer is.
 
 ---
 
-## 7. Open decisions
+## 8. Open decisions
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
@@ -626,11 +889,12 @@ work. The provider used to be on that list and no longer is.
 | D2 | Whether QA carries the market storefront at all | **Skip it while the store is on the back burner.** It saves a container app, two DNS records and a certificate. It saves **none** of the `EMAIL_F2C_*` entries — the API needs those to boot either way, which is section 1 |
 | D3 | Payfast sandbox or live in QA | **Sandbox.** Live in QA moves real money on a test environment. The cost is that the production credentials are first exercised in production, which is an argument for one deliberate live transaction at cutover rather than for a live QA |
 | D4 | Key Vault, or container app secrets alone | **Key Vault for the two encryption keys**, container app secrets for everything else. It is one resource and a role assignment, and it discharges most of P4 |
-| D5 | Whether the frontends' `APP_ENV` and Django's `DJANGO_ENV` should share a vocabulary | Leave them. Correcting `prod` to `production` touches the CI workflow, `compose.yaml` and both frontends for no behavioural gain. Documented in 4.1 instead |
+| D5 | Whether the frontends' `APP_ENV` and Django's `DJANGO_ENV` should share a vocabulary | Leave them. Correcting `prod` to `production` touches the CI workflow, `compose.yaml` and both frontends for no behavioural gain. Documented in 4.1 instead, and in 6.6 for what it means when the GitHub environment is called `production` and `APP_ENV` is not |
+| D6 | Whether a promotion is a branch merge, a git tag or a dispatch | **Settled, in section 6: trunk-based, with a dispatch.** A merge to `master` deploys QA on its own; UAT and production are dispatches of a named commit behind environment reviewers. Branch-per-environment was the alternative and it drifts — what reaches production is then a merge commit nothing tested as one |
 
 ---
 
-## 8. Risks
+## 9. Risks
 
 - **R-D1. West Europe puts members' identity numbers outside South Africa.** Lawful under POPIA
   s72(1)(a), but it has to appear in the privacy notice and the PAIA manual before real members are
@@ -648,8 +912,44 @@ work. The provider used to be on that list and no longer is.
 - **R-D4. A QA frontend image cannot be promoted to production**, because `SITE_URL`, `APP_ENV`,
   `CDN_BASE_URL` and `SUPPORT_EMAIL` are build arguments — section 3. What is deployed to production
   is therefore not the artefact that was tested, only the same commit rebuilt. **Accepted**, and the
-  mitigation is that the three values which differ are all addresses rather than behaviour.
+  mitigation is that the three values which differ are all addresses rather than behaviour. This is
+  the reason `promote.yml` takes a commit rather than an image tag — 6.4 — and R-D7 below is what
+  makes that rebuild reproducible.
 - **R-D5. The QA environment has its own encryption keys, so a production backup cannot be restored
   into it to reproduce a fault.** That is the point of separate keys and the trade is deliberate:
   reproducing a production data fault in QA would mean QA holding production identity numbers.
   **Accepted.**
+- **R-D6. The ladder check reads a mutable tag.** A promotion to production refuses a digest that
+  `f2c/api:uat` does not point at — 6.4 — but tag immutability is a Premium registry feature and
+  this registry is Basic, so anyone holding `AcrPush` can move that tag. The check therefore guards
+  against a mistake and not against intent. **Accepted:** the population that can move the tag is
+  the population that can approve the promotion, and the GitHub environment approval is the control
+  that matters.
+- **R-D7. A frontend promotion rebuilds, and the rebuild has to be byte-identical to what was
+  tested.** `npm ci` installs exactly what the committed lockfile says, so the dependency tree was
+  never the exposure — but both frontend Dockerfiles named `node:24-slim`, a floating tag, and a
+  base image republished between the QA build and the production build changes the operating
+  system packages underneath an application whose own code and dependencies are identical.
+  **Closed.** All four Dockerfiles pin by digest through a single `ARG` each — `node:24-slim` at
+  Node 24.20.0 and `python:3.14-slim` at Python 3.14.7, both resolved 2 September 2026 — so what a
+  commit describes is a fixed image rather than whatever the tag pointed at on the day it was
+  rebuilt. One `ARG` per file rather than a digest on each `FROM` is deliberate: a digest copied
+  three times is a digest that can be bumped twice, and a build stage on one Node with a runtime
+  stage on another surfaces as something else entirely. `Dockerfile.dev` is pinned too, not for
+  reproducibility — nothing is promoted from it — but so that a developer and a deployment are on
+  the same Node.
+
+  Two consequences worth stating rather than discovering. **A pinned base is a base that stops
+  receiving operating system security updates**, so bumping it is now a task somebody owns rather
+  than something that happens by itself; `docker buildx imagetools inspect node:24-slim` gives the
+  next one, and it is the *top-level* index digest that is wanted rather than one platform's
+  manifest. And **the service containers in `ci.yml` are deliberately not pinned** — `mysql:8.4`
+  and `redis:7-alpine` stay on tags, because Azure Database for MySQL patches itself within 8.4
+  and a CI job frozen behind it would prove the schema against a server production no longer runs.
+  That is section 2's argument for `8.4` over `8`, and it stops at the minor version on purpose.
+- **R-D8. The four API container apps are updated one after another, so there is a window in which
+  the API runs the new revision and the workers still run the old one.** `deploy-api.sh` orders it
+  that way on purpose — only the API migrates, and a worker must not start against a schema that
+  has not moved — but it means a migration has to be readable by the *previous* worker code as well
+  as by the previous API revision, which is R-D3 with a second reader. **Accepted**, and it is the
+  same constraint rather than a new one: a migration that satisfies R-D3 satisfies this.

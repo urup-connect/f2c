@@ -15,7 +15,30 @@
 #
 # See design/conflict.md C31 for what this runs on and why.
 
-FROM python:3.14-slim AS build
+# **The base image is pinned by digest, and the tag beside it is there to be
+# read rather than resolved.** design/deploy.md R-D7.
+#
+# This image is *promoted* between environments rather than rebuilt -- 6.4 --
+# so what production runs is the artefact QA ran, whatever tag it came from,
+# and R-D7 does not bite here the way it bites the two frontends. Pinned
+# anyway, for the rebuild that does happen: a rebuild of an older commit, to
+# reproduce a fault or to ship a fix on top of it, should produce the image
+# that commit described and not the one `3.14-slim` happens to point at
+# today.
+#
+# **One ARG rather than a digest on each FROM line.** A digest copied twice
+# is a digest that can be bumped once, and a build stage on one Python with a
+# runtime stage on another is a difference that surfaces as something else
+# entirely.
+#
+# python:3.14-slim as at 2 September 2026, which is Python 3.14.7. To bump it, take
+# the *top-level* digest -- the multi-platform index, not one platform's
+# manifest:
+#
+#     docker buildx imagetools inspect python:3.14-slim
+ARG PYTHON_IMAGE=python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
+
+FROM ${PYTHON_IMAGE} AS build
 
 # `default-libmysqlclient-dev` is the MariaDB client library on Debian, which is
 # what mysqlclient links against. Naming the driver's build dependencies here is
@@ -37,7 +60,7 @@ RUN python -m venv /venv \
     && /venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
 
-FROM python:3.14-slim AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 # `libmariadb3` is the runtime half of the build dependency above -- the shared
 # library mysqlclient loads. `ca-certificates` carries the DigiCert roots that

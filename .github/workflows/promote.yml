@@ -1,0 +1,352 @@
+# Promote a release from QA to UAT, and from UAT to production.
+#
+# **The unit of promotion is a commit, not an image, and that is forced on us
+# rather than chosen.** design/deploy.md section 3 splits the artefacts in two:
+#
+#   * `f2c/api` reads every environment-specific value from the container app at
+#     runtime -- that is what Block 0 P6 bought when `NEXT_PUBLIC_DJANGO_API_URL`
+#     became `DJANGO_API_PUBLIC_URL`. So the API is promoted by *moving the
+#     digest*: `az acr import` retags it server-side, no pull, no push, no
+#     rebuild. What ran in QA is bit-for-bit what runs in production.
+#   * The two frontends bake `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
+#     `SUPPORT_EMAIL` at build time, because `lib/site.ts` reads them when the
+#     module is first loaded, which is during prerendering. A QA frontend image
+#     therefore *cannot* be promoted -- risk R-D4 -- and promoting one means
+#     rebuilding the same commit with the target environment's build arguments.
+#
+# One of the two can be promoted and the other has to be rebuilt, so the input
+# below is a commit SHA. An image tag would work for the API and would be
+# meaningless for the frontends.
+#
+# **What stands in for re-running the tests.** `ci.yml` is not called from here,
+# and deliberately: a called workflow runs at the *caller's* ref, so it would
+# test trunk rather than the commit being promoted, and report green for the
+# wrong code. The gate is the registry instead. `f2c/api:<sha>` exists only
+# because `release.yml` built it, and that job has `needs: test` -- so an image
+# in the registry is a commit that passed on MySQL 8.4. A SHA with no image is
+# refused below rather than built here.
+#
+# **The ladder is enforced, not assumed.** Promoting to production checks that
+# the digest is the one UAT is currently running. Deploying to production
+# something that was never in UAT is possible -- `skip_ladder_check` -- but it
+# takes a deliberate tick and it is recorded in the run.
+
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full commit SHA to promote. Must already have images in the registry'
+        type: string
+        required: true
+      to_env:
+        description: 'Target environment'
+        type: choice
+        required: true
+        options: [uat, production]
+      api:
+        description: 'Promote the API (api, worker, mail-worker, beat)'
+        type: boolean
+        default: true
+      club:
+        description: 'Rebuild and deploy the club frontend'
+        type: boolean
+        default: true
+      market:
+        description: 'Rebuild and deploy the market frontend'
+        type: boolean
+        default: false
+      skip_ladder_check:
+        description: 'Promote to production something UAT is not running. Recorded in the run'
+        type: boolean
+        default: false
+
+# A literal prefix rather than `${{ github.workflow }}` -- see the note in
+# `ci.yml`. One promotion per environment at a time, and never cancelled
+# halfway: a cancelled promotion can leave the API rolled forward and a frontend
+# on the previous release.
+concurrency:
+  group: promote-${{ inputs.to_env }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ${{ vars.ACR_NAME }}.azurecr.io
+  API_REPOSITORY: f2c/api
+
+jobs:
+  # ------------------------------------------------------------------ the checks
+  verify:
+    name: Verify the release
+    runs-on: ubuntu-latest
+    # The environment gate applies here, before anything is resolved, so an
+    # unapproved promotion never reads the target's configuration at all.
+    environment: ${{ inputs.to_env }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api_digest: ${{ steps.resolve.outputs.api_digest }}
+      frontends: ${{ steps.resolve.outputs.frontends }}
+    steps:
+      - name: Confirm the commit exists
+        uses: actions/checkout@v4
+        with:
+          # A bad SHA fails here, with "couldn't find remote ref", before any
+          # Azure call has been made.
+          ref: ${{ inputs.sha }}
+          fetch-depth: 1
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve the API digest and check the ladder
+        id: resolve
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          API_REPOSITORY: ${{ env.API_REPOSITORY }}
+          SHA: ${{ inputs.sha }}
+          TO_ENV: ${{ inputs.to_env }}
+          WANT_API: ${{ inputs.api }}
+          WANT_CLUB: ${{ inputs.club }}
+          WANT_MARKET: ${{ inputs.market }}
+          SKIP_LADDER: ${{ inputs.skip_ladder_check }}
+          DEPLOY_MARKET: ${{ vars.DEPLOY_MARKET }}
+        run: |
+          set -euo pipefail
+
+          digest=''
+          if [ "$WANT_API" = 'true' ]; then
+            # The registry is the gate. No image means no `release.yml` run, and
+            # no `release.yml` run means the commit was never proved against
+            # MySQL 8.4 -- see the header.
+            if ! digest=$(bash .github/scripts/acr-digest.sh \
+                            "$ACR_NAME" "${API_REPOSITORY}:${SHA}"); then
+              echo "::error::No ${API_REPOSITORY}:${SHA} in the registry." \
+                   "Only a commit that has been through release.yml -- and therefore" \
+                   "through the tests -- can be promoted. Run release.yml first."
+              exit 1
+            fi
+            echo "API digest: $digest"
+
+            # **Production takes what UAT is running, and nothing else.** The
+            # `:uat` tag is moved by this workflow as the last step of a UAT
+            # promotion, so it is a faithful record of what was signed off.
+            if [ "$TO_ENV" = 'production' ] && [ "$SKIP_LADDER" != 'true' ]; then
+              uat_digest=$(bash .github/scripts/acr-digest.sh \
+                             "$ACR_NAME" "${API_REPOSITORY}:uat" || echo '')
+
+              if [ -z "$uat_digest" ]; then
+                echo "::error::${API_REPOSITORY}:uat does not exist, so there is" \
+                     "nothing signed off to promote. Promote to UAT first, or tick" \
+                     "skip_ladder_check and say why in the run."
+                exit 1
+              fi
+
+              if [ "$uat_digest" != "$digest" ]; then
+                echo "::error::UAT is running $uat_digest and this promotion carries" \
+                     "$digest. Production would receive a release UAT never saw." \
+                     "Promote this commit to UAT first, or tick skip_ladder_check."
+                exit 1
+              fi
+              echo "Ladder check passed: this is the digest UAT is running."
+            elif [ "$SKIP_LADDER" = 'true' ]; then
+              echo "::warning::skip_ladder_check is set. $TO_ENV is receiving a" \
+                   "release that was not verified in the environment below it."
+            fi
+          fi
+
+          club="$WANT_CLUB"
+          market="$WANT_MARKET"
+          if [ "$DEPLOY_MARKET" != 'true' ] && [ "$market" = 'true' ]; then
+            echo "vars.DEPLOY_MARKET is not 'true' for $TO_ENV: skipping the market."
+            market=false
+          fi
+
+          frontends='[]'
+          if [ "$club" = 'true' ] && [ "$market" = 'true' ]; then
+            frontends='["club","market"]'
+          elif [ "$club" = 'true' ]; then
+            frontends='["club"]'
+          elif [ "$market" = 'true' ]; then
+            frontends='["market"]'
+          fi
+
+          {
+            echo "api_digest=$digest"
+            echo "frontends=$frontends"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Promoting to ${TO_ENV}"
+            echo ''
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${SHA}\` |"
+            echo "| API | ${digest:-not promoted} |"
+            echo "| Frontends rebuilt | ${frontends} |"
+            echo "| Ladder check skipped | ${SKIP_LADDER} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------- the API, by digest
+  promote-api:
+    name: Promote the API to ${{ inputs.to_env }}
+    needs: verify
+    if: inputs.api && needs.verify.outputs.api_digest != ''
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.to_env }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Trunk, not the promoted SHA. What is wanted here is the *current*
+          # deployment script, not the one that shipped with the release -- a
+          # fix to the roll-out order should apply to a promotion of an older
+          # commit too.
+          fetch-depth: 1
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}@${{ needs.verify.outputs.api_digest }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_API: ${{ vars.CONTAINERAPP_API }}
+          APP_WORKER: ${{ vars.CONTAINERAPP_WORKER }}
+          APP_MAIL_WORKER: ${{ vars.CONTAINERAPP_MAIL_WORKER }}
+          APP_BEAT: ${{ vars.CONTAINERAPP_BEAT }}
+        run: bash .github/scripts/deploy-api.sh
+
+      - name: Move the environment tag
+        # Last, and only on success. This tag is what the next promotion's
+        # ladder check reads, so it must mean "this is running here" rather than
+        # "somebody tried to put this here".
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          SOURCE: ${{ env.REGISTRY }}/${{ env.API_REPOSITORY }}@${{ needs.verify.outputs.api_digest }}
+          TARGET: ${{ env.API_REPOSITORY }}:${{ inputs.to_env }}
+        run: |
+          az acr import --name "$ACR_NAME" \
+            --source "$SOURCE" --image "$TARGET" --force
+
+  # ------------------------------------------------- the frontends, rebuilt
+  promote-frontend:
+    name: Rebuild the ${{ matrix.app }} frontend for ${{ inputs.to_env }}
+    needs: verify
+    if: needs.verify.outputs.frontends != '[]'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.to_env }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.verify.outputs.frontends) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # **The promoted commit, and this is the whole reason the input is a
+          # SHA.** The four build arguments below differ per environment, so the
+          # artefact cannot be moved -- what is carried forward is the source.
+          ref: ${{ inputs.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign in to the registry
+        run: az acr login --name "$ACR_NAME"
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+
+      - name: Assemble the build arguments
+        id: args
+        # The target environment's values, read from that GitHub environment.
+        # The market Dockerfile declares neither `CDN_BASE_URL` nor
+        # `SUPPORT_EMAIL` -- design/deploy.md 4.3.
+        env:
+          APP: ${{ matrix.app }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          CLUB_SITE_URL: ${{ vars.CLUB_SITE_URL }}
+          CLUB_CDN_BASE_URL: ${{ vars.CLUB_CDN_BASE_URL }}
+          CLUB_SUPPORT_EMAIL: ${{ vars.CLUB_SUPPORT_EMAIL }}
+          MARKET_SITE_URL: ${{ vars.MARKET_SITE_URL }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'build_args<<BUILD_ARGS_EOF'
+            echo "APP_ENV=${APP_ENV}"
+            case "$APP" in
+              club)
+                echo "SITE_URL=${CLUB_SITE_URL}"
+                echo "CDN_BASE_URL=${CLUB_CDN_BASE_URL}"
+                echo "SUPPORT_EMAIL=${CLUB_SUPPORT_EMAIL}"
+                ;;
+              market)
+                echo "SITE_URL=${MARKET_SITE_URL}"
+                ;;
+            esac
+            echo 'BUILD_ARGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/${{ matrix.app }}/Dockerfile
+          push: true
+          # Prefixed with the environment, because that is what the image is
+          # specific to. `f2c/club:production-<sha>` and `f2c/club:qa-<sha>` are
+          # the same source and different artefacts, and the tag is the only
+          # place that shows.
+          tags: ${{ env.REGISTRY }}/f2c/${{ matrix.app }}:${{ inputs.to_env }}-${{ inputs.sha }}
+          build-args: ${{ steps.args.outputs.build_args }}
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            za.co.f2c.environment=${{ inputs.to_env }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          provenance: false
+
+      - name: Deploy
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          APP: ${{ matrix.app }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_CLUB: ${{ vars.CONTAINERAPP_CLUB }}
+          APP_MARKET: ${{ vars.CONTAINERAPP_MARKET }}
+        run: |
+          set -euo pipefail
+
+          case "$APP" in
+            club)   container_app="$APP_CLUB" ;;
+            market) container_app="$APP_MARKET" ;;
+            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
+          esac
+
+          az containerapp update \
+            --name "$container_app" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${REGISTRY}/f2c/${APP}@${DIGEST}" \
+            --output none
+
+          echo "$container_app is on f2c/${APP}@${DIGEST}"

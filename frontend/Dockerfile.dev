@@ -17,7 +17,15 @@
 # directory owned by somebody else is a permissions argument with no upside on a
 # stack that is not reachable from anywhere.
 
-FROM node:24-slim
+# **Pinned by digest, like the two deployed images.** Not for reproducibility
+# -- nothing is ever promoted from here -- but so that a developer and a
+# deployment are on the same Node. Diagnosing a bug under `next dev` on one
+# patch release that only exists on another is a day nobody gets back.
+#
+# node:24-slim as at 2 September 2026, Node 24.20.0. Keep it in step with
+# `club/Dockerfile` and `market/Dockerfile`; nothing here notices if it
+# drifts.
+FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
 WORKDIR /workspace
 
