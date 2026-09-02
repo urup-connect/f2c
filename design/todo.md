@@ -53,20 +53,28 @@ in on a deployed environment today.**
       and sat there until the ten-second timeout. `_mailer` does not catch that — it refuses only
       `USE_TLS` and `USE_SSL` together. Probed rather than assumed: 465 presents a certificate with
       no subject, issuer or SANs and fails verification, while 587 presents the cPanel certificate
-      covering the mail host and verifies. **Both are 587 with STARTTLS now, and the club mailbox
-      authenticates.**
+      covering the mail host and verifies. **Both are 587 with STARTTLS now, and both mailboxes
+      authenticate.**
       **`EMAIL_CC_FROM` and `EMAIL_F2C_FROM` were missing entirely**, which mattered more than the
       port: absent, `_from_email` falls back to `DEFAULT_FROM_EMAIL` under `DEBUG` — the *market's*
       address — so every club email was set to send as a domain the club's provider does not own.
       That is the failure the settings docstring names. Both senders are now the authenticated
       mailbox for their own storefront.
-      Two things left, and neither is a repo change:
-  - [ ] **The market mailbox does not authenticate.** `noreply@f2c.co.za` times out during AUTH,
-        repeatably, where `noreply@f2c-cannabis.co.za` succeeds against the same server with the
-        same settings — both hosts resolve to one cPanel box. A mailbox or host-side matter to take
-        up with the provider, not a settings one
-  - [ ] **The deployed environments have none of it.** The values above are in a local `.env`; QA
-        and production need the same eight variables per storefront set on the Container App
+      One thing left, and it is not a repo change:
+  - [x] **The market mailbox authenticates now.** It did not: `noreply@f2c.co.za` timed out during
+        AUTH, repeatably, where `noreply@f2c-cannabis.co.za` succeeded against the same server with
+        the same settings — both hosts resolve to one cPanel box, so it was always a mailbox or
+        host-side matter rather than a settings one. **Re-probed on 2 September 2026 and it
+        succeeds**: EHLO, STARTTLS, AUTH against `mail.f2c.co.za:587` answers `235 Authentication
+        succeeded` in 0.6s with the credentials already in `.env`, and the club mailbox still does
+        the same. Nothing in the repository changed to fix it. **This was the critical path in
+        `deploy.md` section 1** — `MAILERS` is built for both storefronts unconditionally, so the
+        API container could not start without it — and that path is now clear
+  - [ ] **The deployed environments.** The eight variables per storefront are present in `.env.qa`,
+        `.env.prod` and `.env.uat`, but nothing in `deploy/` or `.github/` pushes an env file to a
+        Container App, so each environment still needs them set on the app itself. **Left open
+        because it could not be verified rather than because it is known to be outstanding** — the
+        Container App configuration was not readable from the session that closed the line above
 - [x] **The test suite must not reach a mail server, and it was pointed at one** — `f2c/test_runner.py`.
       Django's `setup_test_environment` stubs `EMAIL_BACKEND`, and nothing in this project sends
       through it: mail goes per storefront through `MAILERS` and `send(using=...)`. So a developer
@@ -249,9 +257,9 @@ the table of the three levels.
       with the deployment configuration below
 - [ ] **None of the mail above has been seen in a real mailbox.** It is tested against Django's
       outbox; whether it arrives, renders and survives a spam filter is not known. **No longer
-      blocked** — P1 has configured a provider and the club mailbox authenticates on 587 — so this
-      is one `sendtestemail` per storefront and a look at what lands. The market half waits on that
-      mailbox authenticating
+      blocked** — P1 has configured a provider and both mailboxes authenticate on 587 — so this
+      is one `sendtestemail` per storefront and a look at what lands. **The market half no longer
+      waits on anything**: the mailbox that was failing AUTH now succeeds
 - [ ] Account-level revocation is still a Django admin action with no tests of its own. The
       notification it sends is tested directly — `test_notifications` — but `suspend_accounts`
       itself, and the other two actions beside it, are not

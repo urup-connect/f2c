@@ -129,9 +129,11 @@ pages carry no `href`**, honestly. `club-navigation.ts` is the count.
 QA and production have no mail configuration — not because none exists. P1 said sign-in codes print
 to a console, and that was wrong: the console backend survives only under `DEBUG` and `_mailer`
 refuses to boot a deployed environment naming no host, so this was always provisioning rather than
-code. A provider is now configured locally for both storefronts and the club mailbox authenticates.
-What is left of P1 is the market mailbox, which does not, and the same values set on the deployed
-environments. Block 0 in `todo.md` has twenty lines still open, one blocked and one part-built.
+code. A provider is now configured locally for both storefronts and **both mailboxes
+authenticate** — the market's `noreply@f2c.co.za`, which timed out during AUTH for weeks and was the
+one item sitting in the provider's queue, succeeds as of 2 September 2026 with no repository change.
+What is left of P1 is the same values set on the deployed environments, and nothing in it waits on
+anybody outside the team. Block 0 in `todo.md` has twenty lines still open, one blocked and one part-built.
 
 ---
 

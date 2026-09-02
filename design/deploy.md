@@ -26,14 +26,22 @@ decide who does the work:
 - **Code.** Four small items, in section 5. None is more than an hour, and one of them is not in
   `todo.md` at all.
 
-**The critical path is not any of them.** It is a mailbox. `noreply@f2c.co.za` times out during
-`AUTH` against the same cPanel server that `noreply@f2c-cannabis.co.za` authenticates against, and
-`f2c/settings.py` builds `MAILERS` for **both** storefronts unconditionally — `_mailer` refuses a
-deployed environment naming no `EMAIL_F2C_HOST`, and `_from_email` does the same for the sender.
-So the API container does not start until the market mailbox works, **whether or not the market
-frontend is deployed at all**. The store being on the back burner does not move this off the path;
-it only makes it look as though it should be. Raise it with the provider first, because it is the
-one item that sits in somebody else's queue.
+**The critical path used to be none of them, and that has changed.** It was a mailbox.
+`noreply@f2c.co.za` timed out during `AUTH` against the same cPanel server that
+`noreply@f2c-cannabis.co.za` authenticates against, and `f2c/settings.py` builds `MAILERS` for
+**both** storefronts unconditionally — `_mailer` refuses a deployed environment naming no
+`EMAIL_F2C_HOST`, and `_from_email` does the same for the sender. So the API container could not
+start until the market mailbox worked, **whether or not the market frontend was deployed at all**,
+and it sat in the provider's queue rather than the team's.
+
+**It authenticates now.** Re-probed on 2 September 2026: EHLO, STARTTLS and `AUTH` against
+`mail.f2c.co.za:587` answer `235 Authentication succeeded` in under a second, with the credentials
+already in `.env` and no repository change. **Nothing on this deployment now waits on anybody
+outside the team**, so the three items above are the whole of it and the order in section 6 is
+decided by what the team can do first, not by what it is waiting for. The dependency itself has not
+gone away — the API container still refuses to start without a working market mailer, deployed
+market frontend or not — so a mailbox that stops authenticating stops the API, and that is worth
+knowing before it is diagnosed as a container fault.
 
 ---
 
@@ -586,27 +594,27 @@ compose. A `docker build` step in `ci.yml` is the fix and is not yet written.
 
 ## 6. The order
 
-1. **Raise the `noreply@f2c.co.za` mailbox with the provider.** Section 1. It is on the critical
-   path and it is in somebody else's queue, so it starts first regardless of what else is ready.
-2. Provision the resource group, registry, MySQL, Managed Redis, storage account and Log Analytics.
-   No containers yet.
-3. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
+1. Provision the resource group, registry, MySQL, Managed Redis, storage account and Log Analytics.
+   No containers yet. **This is now the first step.** It used to be raising the
+   `noreply@f2c.co.za` mailbox with the provider, which authenticates as of 2 September 2026 —
+   section 1.
+2. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
    (5.1) are done.
-4. Create the Key Vault, generate the QA encryption keys, load the secrets.
-5. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
+3. Create the Key Vault, generate the QA encryption keys, load the secrets.
+4. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
    misconfiguration by name — that is what it is for, and it is cheaper to meet it with one
    container running than with three.
-6. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
-7. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
+5. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
+6. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
    passkey enrolment, sign-up, Payfast sandbox checkout, membership activation, profile edit,
    `/admin/members` and `/admin/strains`.
-8. Add the Container Apps Job (5.2).
-9. Market hostnames and container, if QA is to carry the market at all — section 7.
-10. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
-    holds a real member.
+7. Add the Container Apps Job (5.2).
+8. Market hostnames and container, if QA is to carry the market at all — section 7.
+9. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
+   holds a real member.
 
-Steps 1 to 8 are about a week of elapsed time, most of it waiting on DNS, TLS and the provider
-rather than on work.
+Steps 1 to 7 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
+work. The provider used to be on that list and no longer is.
 
 ---
 
