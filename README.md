@@ -147,6 +147,70 @@ The site is then on http://127.0.0.1:8000/ and the admin on http://127.0.0.1:800
 server. Anything that depends on async views, async ORM access, streaming
 responses, or long-lived connections must be tested through Uvicorn.
 
+### The scheduled jobs
+
+Three jobs run on a timer and none of them runs itself: `lapse_memberships`
+withdraws access from a membership that has stopped paying, and two purges
+enforce the retention windows POPIA asks for. **You do not need any of this
+running to develop.** With no `DJANGO_REDIS_URL` set, Celery runs every task
+inline at the point it is called, and the whole test suite works that way.
+
+To run a job now, in the foreground, and see what it did:
+
+```
+.venv\Scripts\python.exe manage.py lapse_memberships --dry-run
+.venv\Scripts\python.exe manage.py purge_email_dispatches --dry-run
+.venv\Scripts\python.exe manage.py purge_campaign_touches --dry-run
+```
+
+Each command is the same job the timer runs, plus a `--dry-run` that changes
+nothing. Drop the flag and the run is recorded in the admin under **Scheduled
+runs**, exactly as the nightly one would be.
+
+To exercise the queue itself -- a real broker, real workers -- the compose stack
+runs all three processes:
+
+```
+docker compose up -d redis celery-worker celery-mail celery-beat
+docker compose logs -f celery-worker
+```
+
+**`celery-mail` is the one a local sign-in needs.** Every outbound email is a
+task now, on a queue of its own -- `celery-worker` consumes `scheduled` and will
+not touch it. So with Redis up and `celery-mail` down, `/auth/otp/start` answers
+200 and no code ever arrives; the row sits on `queued` in the admin under
+**Emails sent**. The code itself is printed by whichever container sends it:
+
+```
+docker compose logs -f celery-mail
+```
+
+With no Redis at all -- `manage.py runserver` and a blank `DJANGO_REDIS_URL` --
+tasks run inline and none of this applies, which is the point of that fallback.
+
+**If any container dies with `Permission denied: '/app/staticfiles'`, run
+`docker compose down -v` and bring it up again.** That is a stale
+`api-staticfiles` volume: a named volume is initialised once, on creation, so one
+created root-owned by an older image stays root-owned through every later
+`--build`, and the container writes as uid 10001. Nothing is lost -- the volume
+holds only collectstatic output, rebuilt at every start.
+
+Outside compose, with `DJANGO_REDIS_URL` pointed at a local Redis:
+
+```
+.venv\Scripts\python.exe -m celery -A f2c worker -Q scheduled,mail --loglevel info --pool solo
+.venv\Scripts\python.exe -m celery -A f2c beat --loglevel info
+```
+
+`--pool solo` on Windows, and it is not optional: the default prefork pool needs
+`fork`, which Windows does not have, so a worker started without it accepts
+tasks and fails every one of them.
+
+`-Q scheduled,mail` because one process here stands in for the two a deployment
+runs. That is fine on a developer's machine, where nothing is competing; it is
+the arrangement `compose.yaml` and `deploy/deploy.md` deliberately do not use,
+because a purge holding the single slot would put a sign-in code behind it.
+
 ### The two storefronts
 
 `.
@@ -895,11 +959,24 @@ payment integration that silently falls back to a sandbox is one that takes a
 member's money into an account nobody is watching. A **publicly reachable
 `notify_url`**, because Payfast's notification is server-to-server and it is the
 only thing that activates a membership; nothing on localhost can receive one, and
-`manage.py payfast_notify` stands in for it in development. And **something that
-runs `manage.py lapse_memberships`** on a schedule -- a daily cron or an App
-Service WebJob. Until that exists an unpaid or cancelled membership keeps its
-access indefinitely, which is the largest gap in the feature and is recorded as
-risk 2 in `design/features/payments.md`.
+`manage.py payfast_notify` stands in for it in development. And **a Celery
+worker and a beat scheduler**, which is what runs `lapse_memberships` nightly;
+without them an unpaid or cancelled membership keeps its access indefinitely.
+Both are the API image with a different argument -- `deploy/entrypoint.sh worker`
+and `... beat` -- and both are in `compose.yaml` locally. Beat must be capped at
+one replica: it publishes on a timer with no coordination, so two of it means
+every job published twice. The schedule itself is `CELERY_BEAT_SCHEDULE` in
+`f2c/settings.py`, and `f2c/queue.py` records why this is Celery rather than the
+timer-triggered Azure Function App `design/todo.md` used to call for.
+
+**And a third container, `deploy/entrypoint.sh mail-worker`, which is on the
+authentication path.** Every outbound email is a task on the `mail` queue --
+`app/core/storefronts/mail.py` carries the argument for taking the SMTP
+conversation out of the request -- and that queue has its own worker so a
+twenty-five-minute nightly purge cannot sit in front of a sign-in code. With it
+down the API answers normally and nobody without a passkey can get in, which is
+the one failure mode this arrangement introduces: watch
+`EmailDispatch.objects.pending()`, not `failed()`.
 
 The real email provider matters twice over now: the payment link emailed to a
 member whose address is already on file is the whole fallback for a duplicate

@@ -103,7 +103,14 @@ services:
       # on every request for a stylesheet. The `dev` branch of the entrypoint
       # collects into it at start-up, so it never holds an older build's files.
       - api-staticfiles:/app/staticfiles
-    environment:
+    # Anchored, so `celery-worker` and `celery-beat` below get this block
+    # verbatim rather than a copy that drifts. **They have to be identical.**
+    # The worker runs the job that withdraws member access and the two that
+    # delete personal information, so a worker reading a different database,
+    # different storefront default or different retention window than the API is
+    # a worker doing the wrong thing to real records -- and every one of those
+    # values is set here and nowhere else in this stack.
+    environment: &api-environment
       # DEBUG is load-bearing here in more places than it looks. It selects the
       # console email backend, Payfast's published sandbox merchant, the local
       # disk fallbacks for documents and avatars, and `localhost` as the
@@ -204,6 +211,98 @@ services:
       redis:
         condition: service_healthy
 
+  # ------------------------------------------------------------------- workers
+  # Three processes, and the split is not arbitrary in any of the three cuts.
+  #
+  # **beat apart from any worker**, because two of beat means every scheduled
+  # job published twice, so it must never have replicas added while a worker
+  # may.
+  #
+  # **the mail queue apart from the scheduled one**, because both workers run
+  # one task at a time and the nightly purges hold theirs for up to
+  # twenty-five minutes. Shared, a sign-in code requested at 01:05 waits
+  # behind the housekeeping -- a member who cannot get in, not a slow email.
+  # `CELERY_TASK_ROUTES` in `f2c/settings.py` is the other half of that.
+  #
+  # **`celery-mail` is the one this stack needs running to sign in.** With the
+  # Redis container up, `CELERY_TASK_ALWAYS_EAGER` is off and a sign-in code
+  # is published rather than sent inline. Without this service consuming it,
+  # `otp/start` answers 200 and no code ever arrives -- so a developer who
+  # brings up `api` alone gets an API that looks healthy and a login that does
+  # not work. `docker compose logs -f celery-mail` is where a code goes now,
+  # and the console mailer prints it there rather than in the API log.
+  #
+  # Both run here rather than being left to a deployment, and that is the point
+  # of moving the schedule into Django at all: `docker compose up` gives you the
+  # same two processes QA and production run, so a task can be written and
+  # watched locally. Nothing about the old Function App plan could be exercised
+  # on a developer's machine.
+  #
+  # Watching them work, without waiting for 01:00:
+  #
+  #     docker compose exec api python manage.py lapse_memberships --dry-run
+  #     docker compose exec api python manage.py shell -c   #         "from app.core.payments.tasks import lapse_memberships;   #          lapse_memberships.delay()"
+  #
+  # The first runs in the API container and reports. The second publishes to
+  # Redis, and `docker compose logs -f celery-worker` shows the worker pick it
+  # up -- which is the half that only a real broker exercises.
+  #
+  # And the same for a send, which needs no schedule at all:
+  #
+  #     docker compose logs -f celery-mail
+  #
+  # then request a sign-in code. The message body, with the code in it, is
+  # printed by that container.
+  celery-worker:
+    build:
+      context: .
+    # `dev-worker`, not `worker`: the deployment gate cannot pass with
+    # DJANGO_DEBUG on. Same trade the `api` service makes -- see the header and
+    # deploy/entrypoint.sh.
+    command: ["dev-worker"]
+    volumes:
+      # The working tree, so an edit to a task is picked up on restart. The
+      # worker has no autoreloader; `docker compose restart celery-worker` is
+      # the loop.
+      - .:/app
+    environment: *api-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-mail:
+    build:
+      context: .
+    # Every email the platform sends. See the header above: with Redis up,
+    # nothing signs in without this running.
+    command: ["dev-mail-worker"]
+    volumes:
+      # As above -- an edit to a template or to `mail.py` needs
+      # `docker compose restart celery-mail`, since the worker has no
+      # autoreloader.
+      - .:/app
+    environment: *api-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: .
+    command: ["dev-beat"]
+    volumes:
+      - .:/app
+    environment: *api-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # ----------------------------------------------------------------- frontends
   club:
     build:
@@ -273,6 +372,20 @@ services:
 
 volumes:
   mysql-data:
+
+  # **If a container dies with `Permission denied: '/app/staticfiles'`, this
+  # volume is the reason and `docker compose down -v` is the fix.**
+  #
+  # The image creates `/app/staticfiles` owned by uid 10001, and Docker
+  # initialises a new named volume by copying that directory with its ownership
+  # -- so a volume created from the current image is writable by the container.
+  # But **a named volume is initialised once, on creation, and never again.** One
+  # created against an image that had no such directory is owned by root, stays
+  # owned by root through every later `--build`, and the `dev` entrypoint's
+  # `collectstatic` fails on it as uid 10001 every time.
+  #
+  # Deleting it costs nothing: the only thing in here is collectstatic output,
+  # and the `dev` entrypoint rebuilds it at every container start.
   api-staticfiles:
   club-node-modules:
   club-workspace-modules:

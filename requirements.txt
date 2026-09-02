@@ -44,6 +44,18 @@ mysqlclient>=2.2.8,<3.0
 # documented way got a backend that raises on the first cache read. See
 # f2c/cache.py.
 redis>=5.2,<7.0
+# The task queue. Three jobs on this platform are computed rather than driven by
+# an event -- `lapse_memberships` and the two retention purges -- and until this
+# was added nothing ran any of them: an unpaid membership kept its access
+# indefinitely and both retention windows were undeclared policy. The schedule
+# is CELERY_BEAT_SCHEDULE in f2c/settings.py and the worker is a process in the
+# same image; see f2c/queue.py for why that rather than an Azure Function App.
+#
+# The [redis] extra is what makes Redis usable as the broker -- it pins the
+# `redis` client kombu needs, which is already named above because Django's own
+# cache backend imports it. 5.6 is the floor because it is the first line to
+# support Python 3.14, which `requires-python` asks for.
+celery[redis]>=5.6,<6.0
 # Reading and writing the cultivator stock-upload template (plant/spreadsheet.py).
 # Pure Python, no system libraries, so unlike mysqlclient above it needs nothing
 # installed on the host. `cultivator-stock-upload.md` asks for an Excel template

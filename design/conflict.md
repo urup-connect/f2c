@@ -1949,7 +1949,7 @@ anybody without them.
 | # | Blocker | Recorded in |
 | --- | --- | --- |
 | P1 | ~~No email provider. Sign-in codes and payment links print to a console~~ — **stated wrongly, and now mostly done.** The console backend only survives under `DEBUG`; `_mailer` refuses a deployed environment naming no host, so this was provisioning, not code. A cPanel provider is configured for both storefronts, the transport corrected from 465-with-STARTTLS to 587, and the two missing `EMAIL_*_FROM` senders added — without which the club sent as the market's domain. **Left:** the market mailbox does not authenticate, and QA and production carry none of the values | `authentication.md` risk 2, `backend.md` risk 3 |
-| P2 | Nothing schedules `lapse_memberships`. An unpaid membership keeps access indefinitely | `payments.md` risk 2 |
+| P2 | ~~Nothing schedules `lapse_memberships`. An unpaid membership keeps access indefinitely~~ — **closed, and wider than written.** The blocker named one job; three were unrun, the other two being the retention purges POPIA's retention principle asks for. All three now run on **Celery beat and a worker inside the application**, on the Redis P3 already provisioned, with every run recorded in `scheduling.ScheduledRun`. Not the Function App or the Container Apps Job earlier revisions specified: `design/deploy.md` 5.2 has why an out-of-application scheduler was the wrong shape three times over. **Left:** provisioning the two Container Apps — and a deployed environment with no broker refuses to start, so this cannot come back silently | `payments.md` risk 2, `deploy.md` 5.2 |
 | P3 | `LocMemCache` makes every rate limit per worker | `backend.md` risk 2, `authentication.md` risk 1 |
 | P4 | No documented backup or rotation for `DJANGO_FIELD_ENCRYPTION_KEY`. Losing it destroys every stored identity number | `backend.md` risk 1 |
 | P5 | ~~Staff password sign-in at `POST /api/auth/login` is not restricted to staff~~ — **closed by deleting the endpoint.** Nothing called it, members hold an unusable password hash so it could never have signed one in, and staff use `/admin/login/`. Restricting it would have documented the risk; removing it ends it | `authentication.md` risk 5 |
@@ -2200,7 +2200,7 @@ the database half was already built before it was written down — `f2c/database
 | Region | **West Europe**, all resources |
 | Frontends | Two Azure Container Apps — `frontend/market`, `frontend/club` — Next.js standalone output |
 | API | One Azure Container App — Django on uvicorn — answering on both `backend.*` hostnames |
-| Scheduled work | An Azure Function App on a timer, calling the API |
+| Scheduled work | **Two more Container Apps off the API image** — a Celery worker and a single-replica beat — on the Managed Redis provisioned below. Not the Function App calling the API that this row first named, and not the Container Apps Job that replaced it: `design/deploy.md` 5.2 has why both were the wrong shape |
 | Registry, media, logs | Azure Container Registry Basic, Blob via `django-storages[azure]`, Log Analytics |
 
 **`uuid7` did not need PostgreSQL.** C1 records the keys as "chosen anticipating PostgreSQL", which

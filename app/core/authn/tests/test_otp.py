@@ -25,10 +25,29 @@ from django.utils import timezone
 from app.core.authn import otp as otp_service
 from app.core.accounts.models import User, UserStatus
 from app.core.authn.models import EmailOtp
-from f2c.testing import make_member
+from f2c.testing import aflush_commit_hooks, make_member
 
 # The code as it appears in the email body: the only run of exactly six digits.
 CODE_IN_EMAIL = re.compile(r'\b(\d{6})\b')
+
+
+async def issue(user, **kwargs):
+    """``otp_service.issue``, and then the commit the send is waiting on.
+
+    **Every test here goes through this rather than through the service, and
+    the reason is a queue.** The send is published from
+    ``transaction.on_commit`` -- see ``storefronts.mail`` -- and a
+    ``TestCase`` wraps each test in a transaction it rolls back, so the
+    callback is registered and never runs. Nothing raises; the message simply
+    does not leave, and the outbox stays empty.
+
+    ``captureOnCommitCallbacks`` is Django's own answer and is what the
+    synchronous suites use. It does not fit here: these tests are ``async
+    def``, and the context manager does database work on exit. So the
+    awaitable flush from ``f2c.testing`` stands in for the commit instead.
+    """
+    await otp_service.issue(user, **kwargs)
+    await aflush_commit_hooks()
 
 
 def code_from_last_email():
@@ -76,14 +95,14 @@ class IssueTests(TestCase):
         )
 
     async def test_issue_creates_exactly_one_live_code(self):
-        await otp_service.issue(self.user)
+        await issue(self.user)
 
         self.assertEqual(await EmailOtp.objects.acount(), 1)
         self.assertEqual(await EmailOtp.objects.usable().acount(), 1)
 
     async def test_the_code_is_hashed_at_rest(self):
         """A six-digit secret in plaintext is no secret in a database dump."""
-        await otp_service.issue(self.user)
+        await issue(self.user)
         code = code_from_last_email()
 
         stored = await EmailOtp.objects.afirst()
@@ -91,7 +110,7 @@ class IssueTests(TestCase):
         self.assertTrue(check_password(code, stored.code_hash))
 
     async def test_the_code_is_emailed_to_the_member(self):
-        await otp_service.issue(self.user)
+        await issue(self.user)
 
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, ['member@example.com'])
@@ -104,16 +123,16 @@ class IssueTests(TestCase):
         self.assertNotIn('Bean', mail.outbox[0].body)
 
     async def test_the_email_says_how_long_the_code_lasts(self):
-        await otp_service.issue(self.user)
+        await issue(self.user)
 
         self.assertIn('5 minutes', mail.outbox[0].body)
 
     async def test_a_fresh_code_supersedes_the_previous_one(self):
         """Only ever one live code, so asking again cannot widen the target."""
-        await otp_service.issue(self.user)
+        await issue(self.user)
         first = code_from_last_email()
 
-        await otp_service.issue(self.user)
+        await issue(self.user)
         second = code_from_last_email()
 
         self.assertEqual(await EmailOtp.objects.acount(), 2)
@@ -125,8 +144,8 @@ class IssueTests(TestCase):
         other = await sync_to_async(User.objects.create_user)(
             email='other@example.com', status=UserStatus.ACTIVE
         )
-        await otp_service.issue(other)
-        await otp_service.issue(self.user)
+        await issue(other)
+        await issue(self.user)
 
         self.assertEqual(
             await EmailOtp.objects.usable().filter(user=other).acount(), 1
@@ -140,7 +159,7 @@ class VerifyTests(TestCase):
         )
 
     async def issue_and_read(self):
-        await otp_service.issue(self.user)
+        await issue(self.user)
         return code_from_last_email()
 
     async def test_the_right_code_verifies(self):
@@ -229,7 +248,7 @@ class VerifyTests(TestCase):
         other = await sync_to_async(User.objects.create_user)(
             email='other@example.com', status=UserStatus.ACTIVE
         )
-        await otp_service.issue(other)
+        await issue(other)
         code = code_from_last_email()
 
         self.assertFalse(await otp_service.verify(self.user, code))

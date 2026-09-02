@@ -315,10 +315,12 @@ blocks are now partly or wholly built** — the status line under each heading i
 Done: the shared cache backend — Redis, after `DatabaseCache` was tried and could not serve an async
 API; a runtime API address, so one build artefact serves two environments; the API container and both
 Next.js images; verified TLS to MySQL; the HTTPS settings `check --deploy` asks for, enforced at
-container start rather than remembered; and the CI job's silent SQLite fallback.
+container start rather than remembered; the CI job's silent SQLite fallback; and **the scheduler** —
+Celery beat and a worker in the same image, running `lapse_memberships` and the two retention purges,
+on the Redis the cache backend already required.
 
-Open: an email provider, a scheduler for `lapse_memberships`, a documented backup and rotation
-procedure for the field-encryption key, the Azure resources themselves, DNS and TLS for four
+Open: an email provider, the worker and beat Container Apps themselves, a documented backup and
+rotation procedure for the field-encryption key, the Azure resources themselves, DNS and TLS for four
 hostnames, `DJANGO_BEHIND_PROXY` on the API container, the founding administrators granted their
 authority by hand, and the transborder disclosure West Europe requires under POPIA.
 

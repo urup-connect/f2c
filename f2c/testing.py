@@ -21,8 +21,14 @@ from a sibling app would.
 services would write, so a fixture cannot grant something the application
 cannot: an inactive account still resolves to no permissions, an unpaid
 membership still grants nothing, and a limited appointment still cannot appoint.
+
+**And one thing here is not a factory at all**: :func:`flush_commit_hooks`,
+which is what a test needs in order to see an email. Sending is queued on
+commit now, and a ``TestCase`` never commits. See its docstring.
 """
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
+from django.db import DEFAULT_DB_ALIAS, connections
 
 from app.club.membership.models import ClubMembership, MembershipStatus
 from app.commerce.producers.models import Producer, ProducerMembership, ProducerRole
@@ -32,6 +38,8 @@ from app.core.storefronts.models import Storefront, StorefrontStaff
 User = get_user_model()
 
 __all__ = [
+    'aflush_commit_hooks',
+    'flush_commit_hooks',
     'make_account',
     'make_administrator',
     'make_cultivator',
@@ -154,3 +162,46 @@ def make_sharing_placeholder(nickname='Placeholder', *, producer=None):
         registered_by=producer,
     )
     return user
+
+
+def flush_commit_hooks(using=DEFAULT_DB_ALIAS):
+    """Run the pending ``transaction.on_commit`` callbacks. **Tests only.**
+
+    **Why a test needs this to see an email.** ``mail.send_storefront_email``
+    writes its ``EmailDispatch`` row and then publishes the send task from
+    ``transaction.on_commit``, because a task published before its own row
+    commits is a task that finds nothing. In production that costs nothing --
+    none of the callers is inside a transaction, so Django runs the callback
+    immediately. Under ``TestCase`` every test is wrapped in an ``atomic`` block
+    that is rolled back, so the callback is registered, never run, and the mail
+    never leaves. The transaction the send is waiting on is one the test harness
+    opened and will never commit.
+
+    Django's own answer is ``TestCase.captureOnCommitCallbacks(execute=True)``,
+    and where a test can use it, it should -- it is used in twenty-odd places in
+    this suite and reads better than a call at the end. This exists for the two
+    cases it does not fit:
+
+    * **an ``async def`` test**, where the context manager's exit does database
+      work on the calling thread. ``aflush_commit_hooks`` is the awaitable form.
+    * **a shared helper** that many tests call, where wrapping every call site
+      would be noise -- the ``post`` helper in ``authn.tests.test_api`` is the
+      example, and it stands in for "and then the request committed".
+
+    Deliberately **not** in a base ``TestCase`` that everything inherits. A test
+    that wants an email should say so, because the thing it is waiting for -- a
+    commit -- is a real step and the suite has already been bitten once by a
+    send that fired before the write it described had landed.
+    """
+    connection = connections[using]
+    pending, connection.run_on_commit = connection.run_on_commit, []
+    for entry in pending:
+        # `(sids, func)` in older Django, `(sids, func, robust)` since 4.2.
+        # Indexing rather than unpacking so a version bump does not break here.
+        entry[1]()
+
+
+#: :func:`flush_commit_hooks` for an ``async def`` test. ``thread_sensitive`` is
+#: left at its default of ``True`` on purpose: the callbacks are registered
+#: against this connection, so they have to run on the thread that owns it.
+aflush_commit_hooks = sync_to_async(flush_commit_hooks)

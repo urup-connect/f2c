@@ -1,5 +1,13 @@
 # The API container: Django on uvicorn, for Azure Container Apps.
 #
+# **One image, three roles.** The same build is the API, the Celery worker and
+# Celery beat -- `deploy/entrypoint.sh` picks between them from its first
+# argument, and `CMD` below chooses the API. That is the whole reason the
+# scheduler is Celery inside this application rather than a Function App or a
+# Container Apps Job: no second deployment artefact, no second runtime, and the
+# worker is guaranteed to be running the same code as the API that wrote the
+# rows it acts on. See design/deploy.md 5.2.
+#
 # Two stages, because `mysqlclient` is a C extension and publishes Windows-only
 # wheels -- every Linux install builds it from source and needs a compiler and
 # the MySQL client headers. Those belong in a build stage and not in the image
@@ -49,6 +57,27 @@ ENV PATH="/venv/bin:$PATH" \
 WORKDIR /app
 COPY --chown=f2c:f2c . .
 
+# **STATIC_ROOT, created here as root and handed to `f2c` -- not left to
+# `collectstatic` below to create.** It looks redundant, because the build does
+# run `collectstatic` and that would create the directory anyway. What it buys
+# is deterministic *ownership of a named volume*.
+#
+# `compose.yaml` mounts `api-staticfiles` over this path, and Docker initialises
+# a new named volume by copying the image's directory at that path, ownership
+# included. So with this line the volume root belongs to uid 10001 and the `dev`
+# entrypoint can write it. Without a directory in the image to copy from, Docker
+# creates the volume root owned by **root**, and `collectstatic` at container
+# start fails as uid 10001 with:
+#
+#     PermissionError: [Errno 13] Permission denied: '/app/staticfiles'
+#
+# **A named volume is initialised once, on creation, and never again.** A volume
+# that was created root-owned by an earlier image stays root-owned through every
+# later `--build`, so this line cannot repair one that already exists. That is
+# `docker compose down -v`, and it costs nothing here: the only thing in this
+# volume is collectstatic output, rebuilt at every container start.
+RUN mkdir -p /app/staticfiles && chown f2c:f2c /app/staticfiles
+
 # Not root. Container Apps does not require it and an image that runs as root
 # makes every later hardening decision harder than it needs to be.
 USER f2c
@@ -57,19 +86,39 @@ USER f2c
 # serves STATIC_ROOT and nothing writes to it otherwise, so without this line the
 # admin renders unstyled -- design/deploy.md 5.1.
 #
-# The two variables are throwaway and exist only so `f2c/settings.py` imports:
-# it refuses to load without DJANGO_SECRET_KEY, and with DEBUG off it also
-# requires every Payfast variable. Neither is read by `collectstatic`, neither
-# is baked into the image (a RUN-line variable does not persist), and the key
-# below is not the one the container runs with -- Container Apps supplies that.
+# The four variables are throwaway and exist only so `f2c/settings.py` imports.
+# It refuses to load without DJANGO_SECRET_KEY, without both encryption keys,
+# and -- with DEBUG off -- without every Payfast variable. None of the four is
+# read by `collectstatic`, none is baked into the image (a RUN-line variable
+# does not persist), and none is what the container runs with: Container Apps
+# supplies those.
+#
+# **The two encryption keys were missing, and the image could not build.**
+# `docker compose up --build` failed on this line naming both variables. The
+# refusal in `settings.py` is unconditional -- there is no DEBUG exemption, and
+# there should not be, because a backend that boots with encryption
+# misconfigured writes plaintext or crashes at the first identity capture
+# (design/backend.md section 3.3). `.dockerignore` keeps `.env` out of the build
+# context, also correctly, so nothing here was supplying them. Fixed by giving
+# the build its own throwaway pair -- the same trade DJANGO_SECRET_KEY above
+# already takes -- rather than by weakening the refusal.
+#
+# Both are valid 32-byte base64, which is what `common/crypto.py` requires of
+# the real ones, and both say what they are in plaintext when decoded. Fixed
+# rather than generated per build: a value that changed every build would
+# imply something read it.
 #
 # `--clear` because .dockerignore keeps staticfiles/ out of the build context
 # today; if that ever changes, a developer's stale hashed files must not ship.
 RUN DJANGO_DEBUG=1 \
     DJANGO_SECRET_KEY=build-only-never-used-at-runtime \
+    DJANGO_FIELD_ENCRYPTION_KEY=ZmllbGQtZW5jcnlwdGlvbi1idWlsZC1vbmx5ISEhISE= \
+    DJANGO_BLIND_INDEX_PEPPER=YmxpbmQtaW5kZXgtcGVwLWJ1aWxkLW9ubHkhISEhISE= \
     python manage.py collectstatic --noinput --clear
 
 EXPOSE 8000
 
 ENTRYPOINT ["/app/deploy/entrypoint.sh"]
+# The API. The worker and beat run this same image with `worker` and `beat`
+# instead -- neither serves traffic, and beat must be capped at one replica.
 CMD ["serve"]

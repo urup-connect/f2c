@@ -81,9 +81,28 @@ class ApiTestCase(TestCase):
         self.client = Client()
 
     def post(self, path, payload=None, client=None):
-        return (client or self.client).post(
-            path, data=json.dumps(payload or {}), content_type='application/json'
-        )
+        """POST as JSON, and then let the request commit.
+
+        **``captureOnCommitCallbacks`` is here rather than at each call
+        site, and it is not incidental.** Sending an email is published
+        from ``transaction.on_commit`` -- ``storefronts.mail`` says why --
+        and a ``TestCase`` wraps every test in a transaction it rolls
+        back, so without this no sign-in code ever reaches the outbox and
+        a dozen tests below fail on an empty list rather than on anything
+        they are about.
+
+        Wrapping the shared helper reads as what it is: a request ends,
+        and its transaction commits. Doing it per test would put the same
+        two lines around forty calls, most of which are not about mail at
+        all. ``f2c.testing.flush_commit_hooks`` carries the longer
+        version of this note.
+        """
+        with self.captureOnCommitCallbacks(execute=True):
+            return (client or self.client).post(
+                path,
+                data=json.dumps(payload or {}),
+                content_type='application/json',
+            )
 
     def get(self, path, client=None):
         return (client or self.client).get(path)
@@ -401,12 +420,16 @@ class OtpStorefrontRoutingTests(ApiTestCase):
     """
 
     def start(self, email, host):
-        return self.client.post(
-            '/api/auth/otp/start',
-            data=json.dumps({'email': email}),
-            content_type='application/json',
-            headers={'host': host},
-        )
+        # Its own client call rather than the base helper, because only this
+        # class sets a Host header -- so it needs its own commit too. See
+        # `post`.
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(
+                '/api/auth/otp/start',
+                data=json.dumps({'email': email}),
+                content_type='application/json',
+                headers={'host': host},
+            )
 
     @override_settings(**STOREFRONT_ROUTING)
     def test_a_code_requested_at_the_club_leaves_by_the_club_server(self):

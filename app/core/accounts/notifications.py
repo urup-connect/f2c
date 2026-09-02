@@ -25,7 +25,8 @@ interchangeable:
     market should not receive a cannabis club's letterhead.
 
 Both send on commit, and neither reports failure to its caller. See
-``_deliver``.
+``_deliver``, which has less to swallow than it used to now that the send
+itself happens in a worker.
 """
 import logging
 
@@ -43,20 +44,25 @@ logger = logging.getLogger(__name__)
 
 
 def _deliver(*, storefront, kind, template, subject_template, user, name, by):
-    """Render and send, blocking, swallowing a mail failure into the log.
+    """Render and queue, swallowing a failure to queue into the log.
 
-    **The one place in this project that sends with the failure suppressed, and
-    it is deliberate.** Everywhere else a send that raises should reach the
-    caller: a sign-in code that did not send means the member cannot sign in, so
-    a 503 is the truthful answer. Here the caller is an administrator who has
-    just suspended somebody, and the suspension is already committed. Raising
-    would fail the admin action after the block took effect -- telling the
-    administrator it did not work when it did, and inviting them to do it again.
+    **What this catches has shrunk, and what it is for has not.** A send no
+    longer talks to a mail server here -- ``storefronts.mail`` records the
+    message and a worker hands it over -- so the mail failures this was written
+    to suppress now happen in the worker, are retried there, and land on the
+    ``EmailDispatch`` row either way. What is left to raise is a template that
+    will not render and a database that will not take the row.
+
+    Those are still swallowed, for the original reason. The caller is an
+    administrator who has just suspended somebody, and the suspension is already
+    committed. Raising would fail the admin action after the block took effect --
+    telling the administrator it did not work when it did, and inviting them to
+    do it again.
 
     A block that took effect and a member who was not told is the lesser
     failure, and it is recoverable: the log line names the account, and until
-    ``P1`` configures a mail provider it is the *expected* outcome rather than an
-    exception, because the console backend cannot reach anybody.
+    ``P1`` configures a mail provider nothing reaches anybody anyway, because the
+    console backend cannot.
     """
     brand = brand_for(storefront)
     body = render_to_string(template, {'name': name, 'brand': brand})

@@ -24,7 +24,34 @@ fixtures. This makes it structural rather than a habit: every alias in
 ``MAILERS`` becomes locmem for the duration, so ``django.core.mail.outbox``
 collects what any storefront sends and no host is contacted.
 
-**The staticfiles backend is the second.** ``STORAGES['staticfiles']`` is
+**The task queue is the second.** CI runs with ``DJANGO_ENV=qa`` and a Redis
+container, on purpose -- it is the only place the deployed cache backend is
+exercised -- and the Celery broker is derived from that same URL. So in CI, and
+for any developer with the compose stack up, ``CELERY_TASK_ALWAYS_EAGER`` is
+*off*: a test that called a task would publish it to Redis, get an ``AsyncResult``
+back, assert on a database that nothing had touched, and fail for a reason that
+has nothing to do with the test. No worker is listening, and there should not be
+one -- a suite that needs a second process running is a suite that fails
+differently on every machine.
+
+Eager is pinned here rather than in ``settings.py`` because it is a property of
+running tests, not of an environment. Both halves are set: the Django setting,
+for anything that reads it, and ``app.conf`` directly, because Celery loads its
+configuration from settings once at finalisation and does not watch them
+afterwards.
+
+**Retries are pinned off, and that follows from eager rather than being a
+second decision.** Every email is a task now, and ``storefronts.deliver_email``
+retries a transport failure five times by default. Run eagerly those five
+retries happen inline, immediately, with the countdown ignored -- so a test
+that patches the mail backend to fail would hand over six times and then
+surface whichever of Celery's eager-retry behaviours the installed version
+has, instead of the failure it set up. Zero retries makes the first attempt
+the last one, which is what a test asserting "a refused send is recorded as
+failed" means. The retry logic itself is tested by overriding this back up,
+in ``storefronts.tests.test_tasks``, where that is the subject.
+
+**The staticfiles backend is the third.** ``STORAGES['staticfiles']`` is
 WhiteNoise's ``CompressedManifestStaticFilesStorage``, which resolves every
 ``{% static %}`` through ``staticfiles.json`` and raises ``ValueError: Missing
 staticfiles manifest entry`` when there is none. Django's runner turns ``DEBUG``
@@ -40,6 +67,8 @@ that cannot be resolved.
 from django.test.runner import DiscoverRunner
 from django.test.utils import override_settings
 
+from f2c.celery import app as celery_app
+
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
 
 #: Django's own, not WhiteNoise's manifest backend. See the module docstring.
@@ -47,7 +76,8 @@ PLAIN_STATICFILES = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
 
 class MailSafeRunner(DiscoverRunner):
-    """``DiscoverRunner`` with locmem mailers, plain staticfiles, and a leak check."""
+    """``DiscoverRunner`` with locmem mailers, eager tasks, plain staticfiles, and
+    a leak check."""
 
     #: Set by `teardown_test_environment` when a settings override outlived the
     #: tests that enabled it. Read by `run_tests`, which turns it into a failure.
@@ -65,6 +95,30 @@ class MailSafeRunner(DiscoverRunner):
         settings.MAILERS = {
             alias: {'BACKEND': LOCMEM} for alias in self._real_mailers
         }
+
+        # Tasks inline, with no broker and no worker. See the module docstring
+        # for why this cannot live in `settings.py`: in CI the broker is real.
+        #
+        # `EMAIL_SEND_MAX_RETRIES=0` rides along with eager rather than being
+        # its own switch, because it is the same fact: inline retries are
+        # immediate, so five of them are five extra hand-overs between a test
+        # and the failure it arranged. See the module docstring.
+        self._eager = override_settings(
+            CELERY_TASK_ALWAYS_EAGER=True,
+            CELERY_TASK_EAGER_PROPAGATES=True,
+            EMAIL_SEND_MAX_RETRIES=0,
+        )
+        self._eager.enable()
+
+        # The same two on the app itself. Celery reads Django's settings once,
+        # when it finalises, so the override above is invisible to it -- and
+        # `app.conf` is what the task actually consults when it is called.
+        self._real_eager = (
+            celery_app.conf.task_always_eager,
+            celery_app.conf.task_eager_propagates,
+        )
+        celery_app.conf.task_always_eager = True
+        celery_app.conf.task_eager_propagates = True
 
         # `override_settings` rather than an assignment, because
         # `staticfiles_storage` is a lazy object built once and rebuilt only on
@@ -112,6 +166,11 @@ class MailSafeRunner(DiscoverRunner):
             )
 
         self._staticfiles.disable()
+        (
+            celery_app.conf.task_always_eager,
+            celery_app.conf.task_eager_propagates,
+        ) = self._real_eager
+        self._eager.disable()
         settings.MAILERS = self._real_mailers
         super().teardown_test_environment(**kwargs)
 

@@ -72,6 +72,9 @@ class AdminPageTests(TestCase):
             ('admin:storefronts_storefrontstaff_change', (appointment.pk,)),
             ('admin:storefronts_storefrontstaff_add', ()),
             ('admin:producers_producer_change', (self.producer.pk,)),
+            # No add page for this one: a run is something that happened, not
+            # data to enter, so `ScheduledRunAdmin` refuses it.
+            ('admin:scheduling_scheduledrun_changelist', ()),
         ):
             with self.subTest(page=name):
                 response = self.client.get(reverse(name, args=args), follow=True)

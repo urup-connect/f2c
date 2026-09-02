@@ -6,11 +6,13 @@ that stubs the upload would pass with the hashing broken.
 import shutil
 import tempfile
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from app.core.documents.models import Document, DocumentVersion
+from app.core.documents.storage import FILESYSTEM_BACKEND
 from app.core.storefronts.models import Storefront
 from f2c.testing import make_account
 
@@ -58,14 +60,24 @@ class DocumentsTestCase(TestCase):
         cls.enterClassContext(override_settings(
             MEDIA_ROOT=cls._media,
             MEDIA_URL='media/',
+            # Built from the configured dict rather than restated, because
+            # `override_settings` replaces STORAGES wholesale: an alias left out
+            # here does not fall back, it stops existing, and the first thing to
+            # ask for it gets a KeyError. Restating three of the four is how
+            # `avatars` went missing for the duration of these tests.
+            #
+            # Every file-backed alias is still pinned below, `avatars` included.
+            # That is the point of the override and not a formality: the aliases
+            # read the environment at startup, so a developer with an Azure
+            # container in their .env would otherwise run this suite against it.
             STORAGES={
-                'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+                **settings.STORAGES,
+                'default': {'BACKEND': FILESYSTEM_BACKEND},
                 'staticfiles': {
                     'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'
                 },
-                'documents': {
-                    'BACKEND': 'django.core.files.storage.FileSystemStorage'
-                },
+                'documents': {'BACKEND': FILESYSTEM_BACKEND},
+                'avatars': {'BACKEND': FILESYSTEM_BACKEND},
             },
         ))
         super().setUpClass()

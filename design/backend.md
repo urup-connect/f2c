@@ -482,9 +482,22 @@ account.
 when, and whether the mail server took it — and it stores **no email address at all**. Every email
 this platform sends goes to a member record, so the log holds a foreign key and reads the address off
 the account at the moment of sending. Erasure clearing `User.email` therefore removes the address
-from the send history too, in one write, with nothing here to keep in step. It stores no message body
-either: a sign-in code and a payment token both live in the body, and neither belongs in a table
-staff can read. What is left after an erasure is which kinds of letter an anonymous account was sent
+from the send history too, in one write, with nothing here to keep in step.
+
+**It keeps no message body either, and that survived the move to a queue by being made
+deliberate rather than incidental.** A sign-in code and a payment token both live in the body, and
+neither belongs in a table staff can read. Since sends run in a Celery worker, something has to
+carry the text from the request that composed it to the process that sends it — and the two
+candidates were an `EmailDispatch.body` column and a Celery task argument. The task argument was
+rejected: it sits in a Redis list in cleartext until a worker takes it, readable by anything
+holding the broker key. So the column exists, and the write that records the outcome is the write
+that erases it: `body` is in both `SENT_FIELDS` and `FAILED_FIELDS`, and the check constraint
+`email_dispatch_body_is_cleared_once_settled` makes it a property of the schema rather than of two
+methods. The text lives for the seconds a message is in flight; a row anybody reads holds none,
+and it is in no admin fieldset. Without that, hashing the code at rest in `EmailOtp` would have
+been quietly undone by a plaintext copy in a send log with a twelve-month window.
+
+What is left after an erasure is which kinds of letter an anonymous account was sent
 and when, which is the collective's own operating record. Age-based retention is separate and is a
 schedule: `EMAIL_DISPATCH_RETENTION_DAYS`, enforced by `manage.py purge_email_dispatches` on a
 timer.
@@ -1235,7 +1248,7 @@ under Uvicorn. Both Next.js images are written too. What is left is provisioning
 | `DJANGO_BEHIND_PROXY=true` on the API container | **The single highest-consequence variable.** Container Apps ingress is a reverse proxy, so without it `verify_notification` sees Envoy's address and rejects every Payfast notification. `payments.W001` fires on `check --deploy` and the entrypoint gates on it, so a revision missing it never starts |
 | A Payfast merchant, and a reachable `notify_url` | Without both, no membership activates. The notification is server-to-server, so Django's public address has to be reachable from the internet. **This is F2C's merchant account**, which is correct for the membership fee and wrong for everything else — C10 |
 | A second gateway, and a second merchant account | Member purchases collect into the **Cultivators Collective's** account through PayGate or Stitch. Neither is chosen and nothing is built, so no plant order can be paid for at all — C10.1 |
-| Something that runs `manage.py lapse_memberships` | **A timer-triggered Function App — C31**, not the cron or WebJob the command's own docstring still names. It needs a protected endpoint on the API for the Function to call. Until it exists, an unpaid membership keeps its access indefinitely |
+| Something that runs `manage.py lapse_memberships` | **Built, and not as this row said.** A **Celery worker and beat**, off the API image — `deploy/entrypoint.sh worker` and `... beat`, beat capped at one replica. Not the Function App or the Container Apps Job earlier revisions named: both kept the schedule in platform configuration and out of any commit, and neither could be run locally. It covers all three unrun jobs, not just this one. The schedule is `CELERY_BEAT_SCHEDULE`, the record is `scheduling.ScheduledRun`, and the broker is database 1 of the Redis already provisioned below. No protected endpoint was needed — C31, `design/deploy.md` 5.2 |
 | A shared cache backend | **Built.** Azure Managed Redis deployed, `redis:7-alpine` locally; `f2c/cache.py` refuses a deployed environment naming none, and refuses `redis://` where the access key would travel in clear |
 | `manage.py check --deploy` | **Enforced rather than remembered.** The entrypoint runs it at `--fail-level WARNING` before Uvicorn starts, so a warning is a failed revision and the previous one keeps serving |
 

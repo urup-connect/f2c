@@ -6,15 +6,26 @@ first-class credential, not a back door. Three things keep a six-digit code
 honest: it is hashed at rest, it dies after ``OTP_TTL_SECONDS``, and it is
 burned after ``OTP_MAX_ATTEMPTS`` wrong guesses.
 
-Django 6.1 has no async email API and password hashing is deliberately slow, so
-neither runs on the event loop. Hashing goes to a worker thread from here; the
-mail hand-over goes to one inside ``storefronts.mail``, which keeps the dispatch
-row it writes on this connection rather than the thread's -- see ``_send``.
+Password hashing is deliberately slow and does not run on the event loop; it
+goes to a worker thread from here. **The mail server is no longer on this path
+at all** -- ``storefronts.mail`` records the message and a Celery worker hands
+it over, so what used to be a ten-second SMTP timeout inside a sign-in request
+is now one ``INSERT`` and a publish to Redis. That mattered more here than
+anywhere else on the platform: this is the only route into an account that has
+no passkey yet, so a mail provider having a bad afternoon was an authentication
+outage.
+
+**And it closed a small leak on the way.** A refused hand-over used to raise out
+of ``issue`` and out of ``otp/start`` as a 500, while an address with no account
+got a clean 200 -- so the failure of a mail server was, briefly, a way to ask
+whether an address belonged to a member. Both answers are now 200, which is what
+that endpoint always meant to say.
 
 Every code sent is recorded, in ``storefronts.EmailDispatch``. A code that
 cannot be delivered is the one authentication failure a member cannot diagnose
 and cannot work around, so "was it sent, and did the server take it?" has to be
-answerable without a mail provider's console.
+answerable without a mail provider's console -- and it is the only place that
+answers it now, since the request no longer waits to find out.
 """
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -43,14 +54,18 @@ async def _send(user, name, code, storefront):
     phishing attempt, which is the one thing a member must be able to tell about
     a one-time code.
 
-    **Async rather than a ``sync_to_async`` of the whole send**, which is what
-    this was. The send now writes a dispatch row, and a send wrapped whole runs
-    that write on whichever thread the wrapper picked -- either one with a
-    database connection of its own that cannot see the caller's transaction, or
-    the shared executor thread that a hanging mail server would then stall.
-    ``asend_storefront_email`` splits it instead: the SMTP hand-over on a worker
-    thread, the database on this one. Rendering stays here because a cached
-    template is a string interpolation, not I/O.
+    **This awaits a record, not a send.** ``asend_storefront_email`` writes the
+    ``EmailDispatch`` row and publishes one task; a Celery worker holds the SMTP
+    conversation. So this returns as soon as the code is durably recorded, and
+    it does **not** report whether a mail server took the message -- ``mail``
+    sets out why that trade is the right way round on this path in particular.
+    Rendering stays here because a cached template is a string interpolation,
+    not I/O.
+
+    The code reaches the worker through the ``EmailDispatch`` row rather than
+    through the task payload, which is deliberate: a task argument sits in Redis
+    in cleartext, and hashing the code at rest in ``EmailOtp`` would count for
+    very little if a plaintext copy were queued alongside it.
 
     ``trigger`` is ``MEMBER`` with nobody named, and both halves of that are the
     truth rather than a shortcut. Somebody asked for this code -- it is not a
@@ -84,6 +99,11 @@ async def issue(user, purpose=EmailOtp.Purpose.LOGIN, *, storefront=None):
 
     Superseding the previous code means only ever one live code per user, so
     requesting a new one cannot widen the guessing surface.
+
+    **Returns before the email leaves.** The send is queued -- see ``_send`` --
+    so a caller that gets no exception knows the code exists and is recorded,
+    not that it has been accepted by a mail server. ``EmailDispatch`` is where
+    the second question is answered.
 
     ``storefront`` is which shopfront the member is signing in to, and it comes
     from the host the request arrived on -- not from what the member belongs to.

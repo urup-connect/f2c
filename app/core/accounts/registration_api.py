@@ -149,29 +149,41 @@ async def register(request, payload: CustomerRegisterIn):
     * **503** -- twice, for two unrelated reasons that share one property: the
       submission is fine and the customer can only come back. Either this
       storefront requires agreement to a document this contract does not collect
-      (``registration.ConsentRequired``), or the sign-in code could not be sent
-      (``UNDELIVERABLE_DETAIL``). The same code ``/documents/current`` answers
-      with when a required document has no published revision.
+      (``registration.ConsentRequired``), or the sign-in code could not be
+      **recorded and queued** (``UNDELIVERABLE_DETAIL``). The same code
+      ``/documents/current`` answers with when a required document has no
+      published revision.
 
-      **The second of those is the one this endpoint had to decide, because a
-      mail outage lands differently here than anywhere else on this API.** A
-      failed send during sign-in is retryable and idempotent; a failed send
-      during registration follows a row that has already committed, so letting
-      the exception through would answer 500 to somebody whose account exists,
-      and every retry would do it again. The same outage 500s
-      ``/auth/login/start`` and the club's duplicate-registration path today --
-      neither is fixed here, and ``design/todo.md`` Block 0 carries it beside
-      the mail provider itself.
+      **The second of those used to mean "a mail server refused it", and it does
+      not any more.** Sends go through a Celery worker -- ``storefronts.mail``
+      carries the argument -- so an unreachable SMTP host is not something this
+      endpoint can find out about: it answers 200, the ``EmailDispatch`` row
+      ends up ``failed``, and the worker retries before it settles there. That
+      is the better outcome for the failure that actually happens, which is a
+      provider being briefly slow rather than permanently gone -- the code
+      arrives late instead of never, and the account is usable when it does.
 
-    **Async, and it has to be.** ``authn.otp.issue`` is async -- Django has no
-    async email API and password hashing is deliberately slow, so both run in a
-    worker thread rather than blocking the event loop -- and the service it
-    calls is ordinary synchronous ORM code. So the write crosses into a thread
-    and the send stays on the loop, rather than the reverse.
+      **What is left under this 503 is the case where nothing will retry**: the
+      database or the broker is unreachable, so no row was written and no task
+      was published. Nobody is coming back for it, which is exactly when the
+      customer needs telling. The account is kept either way -- see
+      ``UndeliverableCodeTests`` and ``BrokerOutageTests`` for the two shapes.
 
-    **The code is emailed after the write has committed**, outside the service's
+      What was given up is a truthful immediate refusal during a mail outage.
+      Worth naming rather than glossing: the customer is now told to check an
+      inbox, and if the outage outlasts ``EMAIL_SEND_MAX_RETRIES`` nothing
+      arrives and nothing explains why. The recovery is unchanged -- registering
+      again is a duplicate, and the duplicate path queues another code.
+
+    **Async, and it has to be.** ``authn.otp.issue`` is async -- password hashing
+    is deliberately slow, so it runs in a worker thread rather than blocking the
+    event loop -- and the service it calls is ordinary synchronous ORM code. So
+    the write crosses into a thread and the queueing stays on the loop, rather
+    than the reverse.
+
+    **The code is queued after the write has committed**, outside the service's
     transaction, which is what ``sync_to_async`` around the service buys beyond
-    thread safety: a code emailed inside the transaction is a code that outlives
+    thread safety: a code queued inside the transaction is a code that outlives
     a rollback, and a customer holding a sign-in code for an account that was
     never created has no way to understand what happened.
     """
@@ -211,9 +223,16 @@ async def register(request, payload: CustomerRegisterIn):
         try:
             await otp_service.issue(outcome.sign_in_for, storefront=storefront)
         except Exception:
+            # **Reached only when the code could not be recorded or queued** --
+            # an unreachable database or broker. A mail server that refuses the
+            # message does not land here at all now; the worker owns that, and
+            # the row records it. See the docstring on why that narrowing is
+            # what makes 503 still the right answer for what is left: nothing
+            # was written, so nothing is going to retry.
             logger.exception(
                 'customers: registration accepted but the sign-in code could '
-                'not be sent; answering 503'
+                'not be recorded or queued; answering 503. Nothing will retry '
+                'this -- the customer holds an account they cannot sign in to.'
             )
             raise HttpError(503, UNDELIVERABLE_DETAIL) from None
 

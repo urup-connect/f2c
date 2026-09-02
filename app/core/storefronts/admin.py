@@ -157,6 +157,13 @@ class EmailDispatchAdmin(admin.ModelAdmin):
     rather than "No", because an operator deciding whether to phone a member
     needs to know the difference between *we know it did not arrive* and *we
     cannot tell*.
+
+    **And one column is now an operational alarm.** Sending happens in a
+    background worker, so *Sent* passes through "Waiting to be handed over" on
+    the way to an answer. A page showing a growing list of rows stuck there is
+    the only place this platform reports that the mail worker is down -- the API
+    keeps answering normally, and sign-in codes go this way, so a member with no
+    passkey cannot get in. Filtering *Send status* to that value is the check.
     """
 
     list_display = (
@@ -188,21 +195,31 @@ class EmailDispatchAdmin(admin.ModelAdmin):
         ('The message', {
             'fields': ('id', 'kind', 'storefront', 'recipient', 'subject'),
             'description': (
-                'The subject line is kept; the body is not. A sign-in code and '
-                'a payment link both live in the body, and neither belongs in a '
-                'table staff can read. The recipient’s address is not stored '
-                'either — it is read off the account at the moment of sending, '
-                'which is why erasing an account also de-identifies its send '
-                'history.'
+                'The subject line is kept; the message text is not. A sign-in '
+                'code and a payment link both live in the body, and neither '
+                'belongs in a table staff can read — so the text is held only '
+                'between composing the email and sending it, and cleared by the '
+                'same write that records the outcome. It is not shown on this '
+                'page at all. The recipient’s address is not stored either — it '
+                'is read off the account at the moment of sending, which is why '
+                'erasing an account also de-identifies its send history.'
             ),
         }),
         ('Sent', {
-            'fields': ('send_status', 'queued_at', 'sent_at', 'send_error'),
+            'fields': (
+                'send_status', 'queued_at', 'attempts', 'sent_at', 'send_error',
+            ),
             'description': (
                 'Whether the mail server accepted the message. This is the one '
-                'stage that is genuinely known. A row still saying “Not handed '
-                'over yet” is an attempt that was interrupted — the outcome is '
-                'unknown rather than negative.'
+                'stage that is genuinely known. Sending happens in a background '
+                'worker, so “Waiting to be handed over” with no attempts against '
+                'it is the ordinary state of a message a second or two old. A '
+                'row that stays there for minutes means nothing is sending — and '
+                'because sign-in codes go this way, it means nobody without a '
+                'passkey can sign in. Attempts above one is a mail server that '
+                'refused and was tried again; “Refused” is final, after the '
+                'retries were used up or the server gave an answer worth '
+                'believing.'
             ),
         }),
         ('Delivered', {

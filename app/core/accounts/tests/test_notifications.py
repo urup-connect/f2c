@@ -215,13 +215,20 @@ class SendRecordTests(TestCase):
         self.assertEqual(0, EmailDispatch.objects.count())
 
     def test_a_mail_failure_is_still_recorded(self):
-        """The send is swallowed here -- see ``_deliver`` -- which is exactly why
-        the row matters: without it a suspension notice that never left is
-        invisible outside the application log."""
+        """A suspension notice that never left, and the row that says so.
+
+        **The log line moved and the row did not, which is the point.** The
+        failure is now the worker's, so it is logged by
+        ``storefronts.tasks`` rather than by ``notifications`` -- the caller
+        here queued the message successfully and had nothing to swallow.
+        ``EmailDispatch`` is what survives that move, and it is why an
+        operator asking "was the member told?" gets the same answer as
+        before from the same place.
+        """
         with patch(
             'django.core.mail.EmailMessage.send', side_effect=OSError('unreachable')
         ):
-            with self.assertLogs('app.core.accounts.notifications', level='ERROR'):
+            with self.assertLogs('app.core.storefronts.tasks', level='ERROR'):
                 with self.captureOnCommitCallbacks(execute=True):
                     notifications.email_membership_suspended(self.member)
 

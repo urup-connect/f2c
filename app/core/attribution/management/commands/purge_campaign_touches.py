@@ -1,43 +1,29 @@
-"""Delete campaign touches older than the retention window.
+"""Delete campaign touches older than the retention window, by hand.
 
-**A retention policy nobody runs is a retention policy nobody has.** The same
-argument ``purge_email_dispatches`` makes, applied to a table that holds less: a
-touch carries campaign labels, a referring site and a landing path, and no
-identifier of its own. What makes it personal information is the member pointing
-at it, and POPIA's retention principle applies to the pair.
+The window, why it is two years, why deleting a touch leaves the member, and why
+age is measured on ``recorded_at`` rather than ``seen_at`` are all in
+``attribution/retention.py``, which does the work. This is the operator's way
+in.
 
-The purpose has a shelf life, and it is longer than an email's. "Which channel
-brought our members" is asked year on year, so the window is two years by
-default -- long enough to compare a spring campaign against the previous one, and
-short enough that a member is not still described by an advert nobody remembers
-buying. It is declared in ``CAMPAIGN_TOUCH_RETENTION_DAYS`` and this is what
-enforces it.
+**What holds the window is the nightly Celery task**, in
+``app/core/attribution/tasks.py``. This command is the same job run by hand,
+plus ``--days`` and ``--dry-run`` -- the two things a person needs and a
+schedule must not have.
 
-Deleting a touch does not delete the member. ``Attributed`` points here with
-``SET_NULL``, so what the purge takes is the label and what it leaves is the
-record -- the member's attribution goes back to "not known", which is where every
-untagged member already sits.
-
-Meant for a timer, safe to run by hand or twice in a row, and irreversible, which
-is why ``--dry-run`` exists and why the default output is a count.
-
-Keyed on ``recorded_at``, not ``seen_at``: the age of a row is when it was
-written, and ``seen_at`` is both browser-asserted and frequently null -- so a
-window measured on it would leave exactly the rows nobody would think to check.
+A real run is recorded in ``scheduling.ScheduledRun`` exactly as the nightly one
+is, for the reason ``purge_email_dispatches`` gives.
 """
-from datetime import timedelta
-
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.utils import timezone
 
-from app.core.attribution.models import CampaignTouch
+from app.core.attribution import retention
+from app.core.scheduling.models import ScheduledTask
+from app.core.scheduling.runs import record
 
 
 class Command(BaseCommand):
     help = (
         'Delete campaign touches older than CAMPAIGN_TOUCH_RETENTION_DAYS. '
-        'Intended to run on a schedule.'
+        'Runs nightly on Celery beat; this is the same job by hand.'
     )
 
     def add_arguments(self, parser):
@@ -57,43 +43,49 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        days = options['days']
-        if days is None:
-            days = getattr(settings, 'CAMPAIGN_TOUCH_RETENTION_DAYS', 730)
+        dry_run = options['dry_run']
 
-        if days < 0:
-            raise CommandError(
-                'A retention window cannot be negative. Use 0 to keep '
-                'everything, or a number of days.'
-            )
+        # Resolved and checked here, before anything is recorded. A bad
+        # `--days` is a usage mistake, and a usage mistake must not leave a
+        # failed run in `ScheduledRun` and a traceback in the log -- an audit
+        # trail that fills up with operator typos is one nobody reads.
+        try:
+            days = retention.window(options['days'])
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
-        if days == 0:
-            # Not an error, and not a no-op reported as success: zero is the
-            # deployment that has decided to keep everything, and it should hear
-            # that its schedule ran and deliberately did nothing.
+        if dry_run:
+            # Outside `record`, and no row: a dry run changed nothing.
+            result = retention.purge_campaign_touches(days=days, dry_run=True)
+        else:
+            with record(ScheduledTask.PURGE_CAMPAIGN_TOUCHES) as run:
+                result = retention.purge_campaign_touches(days=days, dry_run=False)
+                run.affected = result.count
+                if result.disabled:
+                    run.detail = (
+                        'Retention is set to 0 days, which keeps every '
+                        'campaign touch. Nothing was deleted.'
+                    )
+
+        if result.disabled:
             self.stdout.write(
                 'Retention is set to 0 days, which keeps every campaign '
                 'touch. Nothing was deleted.'
             )
             return
 
-        cutoff = timezone.now() - timedelta(days=days)
-        stale = CampaignTouch.objects.recorded_before(cutoff)
-        count = stale.count()
-
-        if options['dry_run']:
+        if dry_run:
             self.stdout.write(
-                f'{count} campaign touch(es) recorded before '
-                f'{cutoff:%Y-%m-%d %H:%M} would be deleted. Nothing was '
+                f'{result.count} campaign touch(es) recorded before '
+                f'{result.cutoff:%Y-%m-%d %H:%M} would be deleted. Nothing was '
                 f'changed.'
             )
             return
 
-        stale.delete()
         self.stdout.write(
             self.style.SUCCESS(
-                f'{count} campaign touch(es) older than {days} day(s) '
-                f'deleted. The records that pointed at them keep everything '
-                f'else and now show no campaign.'
+                f'{result.count} campaign touch(es) older than {result.days} '
+                f'day(s) deleted. The records that pointed at them keep '
+                f'everything else and now show no campaign.'
             )
         )

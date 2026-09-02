@@ -506,7 +506,15 @@ def lapse_overdue(*, today=None):
 
 
 def _send_checkout_link(user, name, url, amount):
-    """Blocking send. Called through a thread by :func:`email_outstanding_checkout`.
+    """Render the payment link and queue it. Called on commit by
+    :func:`email_outstanding_checkout`.
+
+    The send itself happens in a Celery worker -- ``storefronts.mail`` -- so this
+    returns once the message is recorded rather than once a mail server has taken
+    it. The checkout token travels to that worker through the ``EmailDispatch``
+    row and not through the task payload, for the reason ``EmailDispatch.body``
+    gives: a task argument sits in Redis in cleartext, and this token is a bearer
+    credential for a payment page.
 
     Always the club's server, named outright rather than resolved from a request.
     The membership subscription is the club's alone -- the produce market has no

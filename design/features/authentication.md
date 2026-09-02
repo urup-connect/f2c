@@ -166,10 +166,35 @@ There is no fallback to the other storefront's server. With `DEBUG=False` a blan
 ### In development
 
 Leave both `EMAIL_*_HOST` blank and every storefront falls back to the console backend, so codes are
-printed to the terminal running Uvicorn rather than sent. Look for the message body in that output.
+printed rather than sent. **Which terminal they are printed to depends on whether a broker is
+running.** With no `DJANGO_REDIS_URL` — `manage.py runserver` on its own — the send happens inline
+and the body appears in the Uvicorn output. With the compose stack up, the send is a task on the
+`mail` queue and the body appears in `docker compose logs -f celery-mail`. If that container is not
+running, `otp/start` still answers 200 and no code is printed anywhere; the row sits on "Waiting to
+be handed over" in the admin under **Emails sent**.
 
-Django 6.1 has no async email API, and password hashing is deliberately slow, so both run in a
-worker thread rather than on the event loop.
+### The send is not in the request
+
+**`otp/start` returns once the code is recorded, not once a mail server has taken it.** The
+hand-over is a Celery task on the `mail` queue — `app/core/storefronts/mail.py` carries the
+argument, and `design/deploy.md` 5.2 the deployment shape. The reason it matters most here: this is
+the only route into an account with no passkey yet, so an SMTP conversation in the request meant a
+ten-second socket timeout against somebody else's mail server on the critical path of
+authentication, and a refused message got no second attempt at all. Transport failures are now
+retried with backoff, and `EmailDispatch` is the record of whether a code went.
+
+**It also closed a small disclosure.** A refused hand-over used to raise out of `issue` and answer
+500, while an address with no account answered 200 — so the failure of a mail server was briefly a
+way to ask whether an address belonged to a member. Both are 200 now, which is what this endpoint
+always meant to say.
+
+**What it costs is that nothing in the request can report a mail outage.** The endpoint answers
+normally whether or not anything is consuming the queue, so `EmailDispatch.objects.pending()` — a
+count that is rising rather than a few rows a second old — is the only signal that no member
+without a passkey can sign in. Watching failures alone would show nothing.
+
+Password hashing is deliberately slow, so it still runs in a worker thread rather than on the
+event loop.
 
 ## 8. Reaching it from the browser
 

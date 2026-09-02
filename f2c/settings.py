@@ -11,9 +11,15 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import ssl
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
+
+# Only the schedule parser, and it pulls in no Django and no app code -- the
+# Celery application itself is built in `f2c/celery.py`, which this file must
+# not import: it reads these settings.
+from celery.schedules import crontab
 
 # Safe to import here: it reads an environment mapping and touches no model and
 # no setting, so it does not need the app registry that this file is loaded to
@@ -24,6 +30,7 @@ from app.core.payments.gateway import payfast_config
 
 from .cache import cache_config
 from .database import database_config
+from .queue import broker_url
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -244,6 +251,9 @@ INSTALLED_APPS = [
     'app.core.documents',
     'app.core.payments',
     'app.core.attribution',
+    # The record of what the timer did. No API, no public surface -- one
+    # read-only admin page and a model the three scheduled tasks write to.
+    'app.core.scheduling',
 
     'app.commerce.producers',
 
@@ -656,6 +666,239 @@ CAMPAIGN_TOUCH_RETENTION_DAYS = int(
 # container in `compose.yaml` locally. `f2c/cache.py` carries the reasoning,
 # including why the database cache cannot serve this and was reverted.
 CACHES = {'default': cache_config(os.environ)}
+
+
+# The task queue
+# https://docs.celeryq.dev/en/stable/django/first-steps-with-django.html
+
+# **Two kinds of work run here, and they are not alike.**
+#
+# **The scheduled three**, which is what this block was built for. Each is
+# computed rather than driven by an event, and none of them runs itself:
+# `lapse_memberships` withdraws access from a membership that has stopped paying
+# -- Payfast sends no notification for a cancelled mandate or a card that
+# stopped working, so it has to be worked out from `paid_until` and then *run* --
+# and the two purges enforce the retention windows declared above, since a
+# window nothing deletes by is a sentence in this file.
+#
+# **And every outbound email**, which is event-driven and is the newer of the
+# two. A send used to happen in the request that asked for it, which put a
+# ten-second SMTP timeout inside the sign-in path and left a refused message
+# with no second attempt. `storefronts.mail` carries that argument; what it
+# costs here is a second queue and a second worker, for the reason
+# `CELERY_TASK_ROUTES` gives below.
+#
+# Until this block existed, nothing ran any of them: an unpaid membership kept
+# its access indefinitely (Block 0 P2) and both retention periods were
+# undeclared policy. `design/todo.md` proposed a timer-triggered Azure Function
+# App calling a new protected endpoint on the API, and `design/deploy.md` 5.2
+# replaced that with a Container Apps Job. **Neither is what this does.** Both
+# put the schedule in platform configuration rather than in this repository,
+# leave a failed run visible only in that platform's own logs, and cannot be
+# exercised locally or in CI. Celery moves all three into Django: the schedule
+# is below and is reviewed as code, every run leaves a `scheduling.ScheduledRun`
+# row readable in the admin, and `compose.yaml` runs the same worker a
+# deployment runs. `f2c/queue.py` carries the argument at length.
+#
+# Everything here is read by `f2c/celery.py` through `namespace='CELERY'`, so
+# `CELERY_TASK_ACKS_LATE` below is Celery's own `task_acks_late`. There is no
+# second configuration file.
+
+# Redis, on a database of its own -- derived from DJANGO_REDIS_URL rather than
+# configured separately, so a deployment provisions one Redis and gets both the
+# throttle counters and the queue. Empty outside a deployment when no Redis is
+# configured at all, which is what turns on eager execution below.
+CELERY_BROKER_URL = broker_url(os.environ)
+
+# **No broker means run every task inline, at the point it is called.** The same
+# fallback `LocMemCache` is for the cache, and a real one for one process: a
+# developer who has not started the Redis container gets working code rather
+# than a queue that silently swallows everything, and the test suite needs no
+# worker. It matters more since email moved onto the queue than it did when only
+# the nightly jobs were here -- eager is what keeps a local sign-in working with
+# no broker and no worker running. `f2c/queue.py` refuses it in qa and prod,
+# where eager would mean beat publishing into nothing, the three jobs never
+# running, and no email ever leaving.
+CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
+
+# Only consulted when eager. Without it an exception inside a task is captured
+# into a result nobody reads, so a test asserting the work happened passes while
+# the work raised.
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# **TLS verification, stated rather than left to the transport's default.** A
+# `rediss://` URL carries the access key inside it, so an unverified connection
+# is one that can be handed the key by anything that answers on the address.
+# Named here because the default has moved between kombu versions, and that is
+# not a thing to discover from a dependency bump.
+if CELERY_BROKER_URL.startswith('rediss://'):
+    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_REQUIRED}
+
+# Acknowledge after the work, not on receipt. **The default, and every
+# scheduled task relies on it; the send task deliberately overrides it.** The
+# three scheduled jobs are idempotent -- lapsing is computed from `paid_until`,
+# both purges are keyed on a cutoff -- so a worker killed mid-run costs a
+# repeat, which is harmless, while acknowledging on receipt would cost the run
+# entirely and say nothing.
+#
+# That trade only holds for idempotent work, and `storefronts.deliver_email` is
+# not: a redelivered send is a second sign-in code in a member's inbox, or a
+# second suspension notice. So it sets `acks_late=False` on itself, at the task,
+# with the reasoning next to the code that would be harmed. This line stays the
+# right default because everything scheduled here is safe to repeat -- and the
+# warning it used to carry is now a worked example rather than a hypothetical.
+CELERY_TASK_ACKS_LATE = True
+
+# One task at a time per worker process. Each scheduled job is a long database
+# pass and a send is a single SMTP conversation, so prefetching only means a
+# task sitting reserved in a worker that is busy -- and with `acks_late` above,
+# a reserved scheduled task lost to a restart is a task redelivered late.
+#
+# **This is also half of why there are two queues.** One task at a time means a
+# worker inside a twenty-five-minute purge is a worker sending no email, which
+# is what `CELERY_TASK_ROUTES` is for.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# **No result backend, deliberately.** What happened to a run is a
+# `scheduling.ScheduledRun` row -- readable in the admin months later, by an
+# operator, next to the count of what it touched. A Celery result is a blob with
+# a TTL that nothing in this project would ever read, and configuring one would
+# put a second, worse answer to the same question in a second store.
+CELERY_TASK_IGNORE_RESULT = True
+
+# Bounded, and both bounds are inside the visibility timeout below. The soft
+# limit raises inside the task so `runs.record` can mark the run failed and say
+# why; the hard limit kills the process, and is what a task wedged on a database
+# connection ends against.
+#
+# **Sized for a nightly delete pass over a whole table, which is not what an
+# email is.** `storefronts.deliver_email` cuts itself to 60/90 seconds at the
+# task, because a hand-over is one SMTP conversation against a ten-second socket
+# timeout and holding the single worker slot for twenty minutes over one message
+# would stall every send queued behind it.
+CELERY_TASK_SOFT_TIME_LIMIT = 20 * 60
+CELERY_TASK_TIME_LIMIT = 25 * 60
+
+# **How long Redis waits before deciding a delivered task was never handled.**
+# This has to exceed the hard time limit above, and the relationship is the
+# whole reason it is set: shorter, and a long-running purge is redelivered to a
+# second worker while the first is still deleting. An hour against a 25-minute
+# ceiling is the margin.
+CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600}
+
+# The worker starts before Redis is reachable often enough -- a deployment
+# rolling both at once -- that failing on the first connection is not useful.
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# **Two queues, and the reason is a login outage.**
+#
+# `CELERY_WORKER_PREFETCH_MULTIPLIER` above is 1 and the workers run with
+# `--concurrency 1`, so a worker inside a task is a worker doing nothing else.
+# The purges are long delete passes with a twenty-five-minute ceiling and they
+# run at 01:00 and 01:20. On one shared queue, a sign-in code requested at 01:05
+# waits behind the night's housekeeping -- which is not a slow email, it is a
+# member who cannot get in, on the one sign-in path that works for an account
+# with no passkey.
+#
+# So sends and scheduled jobs are separated at the broker and the deployment
+# runs a worker for each: `deploy/entrypoint.sh` has `worker` for `scheduled`
+# and `mail-worker` for `mail`, and `compose.yaml` runs both. The cost is one
+# more container in QA and production; the alternative was a queue where the
+# latency of a sign-in code depends on what time of night it is.
+#
+# **`scheduled` is the default rather than `mail`**, so a task added without a
+# route lands with the nightly work instead of in front of a member's sign-in
+# code. A slow surprise is a better failure than a delayed credential.
+CELERY_TASK_DEFAULT_QUEUE = 'scheduled'
+CELERY_TASK_ROUTES = {
+    # Keyed on the task's own registered name, which `storefronts.tasks`
+    # exports as `DELIVER_EMAIL` for exactly this -- a route keyed on a string
+    # that matches no task does not raise, it silently leaves the task on the
+    # default queue, which here would put every email behind the purges and look
+    # like it worked.
+    'storefronts.deliver_email': {'queue': 'mail'},
+}
+
+# How hard a refused email is retried, and how the wait between attempts grows.
+# Read by `storefronts.tasks`; `mail.transient` decides *which* failures are
+# retried at all, which is the more consequential half -- retrying a `550 no
+# such user` five times is not resilience.
+#
+# Five retries at 30s doubling to a 600s ceiling spans roughly fifteen minutes.
+# The number that matters is the first wait: a sign-in code that fails once and
+# arrives thirty seconds later reaches a member who is still at the screen, and
+# a code that arrives twenty minutes later reaches somebody who has given up and
+# asked for another one.
+EMAIL_SEND_MAX_RETRIES = 5
+EMAIL_SEND_BACKOFF_SECONDS = 30
+EMAIL_SEND_BACKOFF_CEILING_SECONDS = 600
+
+# UTC, matching TIME_ZONE, so the crontabs below are in UTC. **South African
+# local time is UTC+2 with no daylight saving**, so every time in the schedule
+# reads two hours later on a South African clock -- which is the clock whoever
+# asks "when does this run?" is looking at. The offsets are written out per
+# entry for that reason.
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+
+#: The schedule. **This is the whole scheduler** -- there is no cron, no
+#: Function App and no Container Apps Job, and nothing outside this repository
+#: decides when these run.
+#:
+#: Only the timed work is here. `storefronts.deliver_email` runs on the same
+#: broker and is not in this dict and never will be: it is published by the
+#: request that composed the message, so its schedule is "whenever somebody
+#: signs in".
+#:
+#: In code rather than in `django-celery-beat`'s database tables, which was the
+#: alternative. A schedule in the database is editable in the admin at runtime,
+#: and that is exactly the objection: the three entries below withdraw member
+#: access and delete personal information, so when they run belongs in a
+#: reviewed commit rather than in a form. The cost is that changing a time needs
+#: a deployment, which for a schedule that has changed never is the cheaper half
+#: of the trade.
+#:
+#: `expires` on every entry, and it is not boilerplate. Beat publishes on time
+#: whether or not a worker is listening; without an expiry, a worker that was
+#: down from 01:00 to 09:00 comes up and runs the night's three jobs during
+#: business hours -- which for `lapse_memberships` means members losing access
+#: mid-morning with no run scheduled anywhere near that time. Expired is the
+#: better outcome: the job did not run, `ScheduledRun` has no row for it, and
+#: tomorrow's run does the same work anyway, because all three are computed from
+#: the current date rather than from the last run.
+CELERY_BEAT_SCHEDULE = {
+    # 02:30 UTC -- 04:30 South African time. Before the working day, so a member
+    # whose subscription lapsed overnight meets the payment screen on their
+    # first visit rather than mid-session, and well clear of Payfast's own
+    # overnight settlement: a payment that arrives at 01:00 has to be counted
+    # before this asks who is overdue.
+    'lapse-memberships': {
+        'task': 'payments.lapse_memberships',
+        'schedule': crontab(hour=2, minute=30),
+        # Six hours. Past 08:30 UTC -- 10:30 local -- this stops being an
+        # overnight job and starts being a surprise.
+        'options': {'expires': 6 * 60 * 60},
+    },
+
+    # 01:00 UTC -- 03:00 local. Housekeeping, deliberately before the lapse run:
+    # both purges are long delete passes, and the job that touches member access
+    # should not be queued behind them.
+    'purge-email-dispatches': {
+        'task': 'storefronts.purge_email_dispatches',
+        'schedule': crontab(hour=1, minute=0),
+        'options': {'expires': 6 * 60 * 60},
+    },
+
+    # 01:20 UTC -- 03:20 local. Staggered rather than concurrent: one worker
+    # replica runs one task at a time by the prefetch setting above, so two
+    # purges at 01:00 would only mean the second waiting with its own expiry
+    # ticking.
+    'purge-campaign-touches': {
+        'task': 'attribution.purge_campaign_touches',
+        'schedule': crontab(hour=1, minute=20),
+        'options': {'expires': 6 * 60 * 60},
+    },
+}
 
 
 # Authentication: passkeys (WebAuthn)

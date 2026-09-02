@@ -107,13 +107,22 @@ class SendStorefrontEmailTests(TestCase):
         mail.outbox.clear()
 
     def send(self, storefront):
-        send_storefront_email(
-            storefront=storefront,
-            kind=EmailDispatch.Kind.LOGIN_CODE,
-            recipient=self.member,
-            subject='Subject',
-            body='Body',
-        )
+        """Queue a send and let the commit it is waiting on happen.
+
+        ``captureOnCommitCallbacks`` because the send is published from
+        ``transaction.on_commit`` and a ``TestCase`` never commits --
+        ``f2c.testing.flush_commit_hooks`` explains why that is worth a
+        line in every test that wants an email rather than being hidden
+        in a base class.
+        """
+        with self.captureOnCommitCallbacks(execute=True):
+            send_storefront_email(
+                storefront=storefront,
+                kind=EmailDispatch.Kind.LOGIN_CODE,
+                recipient=self.member,
+                subject='Subject',
+                body='Body',
+            )
         return mail.outbox[-1]
 
     def test_club_mail_leaves_by_the_club_server_as_the_club(self):

@@ -472,6 +472,12 @@ signature, because those three have to agree: a sign-in code from the store's pr
 "Cultivators Collective" is indistinguishable from a phishing attempt, and a one-time code is
 exactly the thing a member is taught to distrust on that basis.
 
+**The answer is resolved in the request and applied in a worker**, which is worth knowing because
+those are now two processes. Sending is a Celery task on the `mail` queue, so the storefront is
+decided where the host is visible, stored on the `EmailDispatch` row, and read back by the worker
+that opens the SMTP connection — the resolution never happens twice, and a worker has no request to
+resolve it from. `app/core/storefronts/mail.py` and `design/deploy.md` 5.2 carry the rest.
+
 Which storefront is decided by the **host** Django was reached on — `backend.f2c.co.za` or
 `backend.f2c-cannabis.co.za`, never the frontend's name, which Django never sees — through
 `storefront_for_request`, the same signal `rp_id()` reads, and for the same reason. It cannot be

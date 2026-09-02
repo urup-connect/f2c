@@ -208,9 +208,26 @@ class EmailTrigger(models.TextChoices):
 
 
 class EmailSendStatus(models.TextChoices):
-    """Whether a mail server took the message. The one stage SMTP reports."""
+    """Whether a mail server took the message. The one stage SMTP reports.
 
-    QUEUED = 'queued', 'Not handed over yet'
+    **``QUEUED`` means literally that now.** Before the queue it meant "an
+    attempt is in flight and nobody knows how it went", which was a window of
+    milliseconds and only ever seen on a row left behind by a process that died
+    mid-send. It is now the ordinary state of every message between the request
+    that composed it and the worker that hands it over -- normally a second or
+    two, longer while a mail server is refusing connections and the send is
+    being retried. ``attempts`` and ``send_error`` are what tell those two
+    apart: a queued row with attempts against it is a send being retried.
+
+    **``FAILED`` is terminal, and only the worker writes it.** A transport
+    failure that will be tried again leaves the row ``QUEUED``; ``FAILED``
+    means no further attempt will be made -- either the mail server refused the
+    message outright, or the retries are exhausted. That is what makes
+    ``failed()`` the queue an operator should actually be watching rather than a
+    list of messages that are still on their way.
+    """
+
+    QUEUED = 'queued', 'Waiting to be handed over'
     SENT = 'sent', 'Accepted by the mail server'
     FAILED = 'failed', 'Refused by the mail server'
 
@@ -269,8 +286,17 @@ class EmailDispatchQuerySet(models.QuerySet):
         return self.filter(kind=kind)
 
     def failed(self):
-        """Never left the building. The queue an operator should be watching."""
+        """Never left the building, and never will. See ``EmailSendStatus``."""
         return self.filter(send_status=EmailSendStatus.FAILED)
+
+    def pending(self):
+        """Composed and not yet handed over -- on the queue, or being retried.
+
+        Fresh rows here are the normal state of a message in flight. Rows that
+        stay is the signal that matters: no worker is consuming the ``mail``
+        queue, and nothing else on this platform will say so.
+        """
+        return self.filter(send_status=EmailSendStatus.QUEUED)
 
     def unconfirmed(self):
         """Accepted by a mail server and never heard of again.
@@ -304,14 +330,14 @@ class EmailDispatchQuerySet(models.QuerySet):
             return None
         return self.filter(provider_message_id=message_id).first()
 
-    def _queued_values(self, *, kind, storefront, recipient, subject, trigger,
-                       triggered_by):
+    def _queued_values(self, *, kind, storefront, recipient, subject, body,
+                       trigger, triggered_by):
         """The row a send is about to be attempted against.
 
         Shared by ``queue`` and ``aqueue`` so the two cannot drift. The subject
         is truncated rather than allowed to raise: it is descriptive, not
         load-bearing, and losing the tail of one is better than failing a
-        sign-in over it.
+        sign-in over it. The body is not truncated -- it is the message.
         """
         limit = EmailDispatch._meta.get_field('subject').max_length
         return {
@@ -319,18 +345,20 @@ class EmailDispatchQuerySet(models.QuerySet):
             'storefront': storefront,
             'recipient': recipient,
             'subject': subject[:limit],
+            'body': body,
             'trigger': trigger,
             'triggered_by': triggered_by,
         }
 
-    def queue(self, *, kind, storefront, recipient, subject, trigger,
+    def queue(self, *, kind, storefront, recipient, subject, body, trigger,
               triggered_by=None):
-        """Record an email that is about to be attempted.
+        """Record an email, with its text, for a worker to hand over.
 
-        Written *before* the send rather than after it, so a process that dies
-        mid-send leaves a row saying ``queued`` rather than no trace of a message
-        that may well have gone out. A row left on ``queued`` is therefore
-        meaningful: an attempt whose outcome nobody knows.
+        Written *before* the send and holding the message itself, which is what
+        makes the row the hand-off between the request that composed the email
+        and the worker that sends it. ``EmailDispatch.body`` says why the text
+        travels through this table rather than through the broker, and why it
+        does not stay here.
         """
         return self.create(
             **self._queued_values(
@@ -338,13 +366,14 @@ class EmailDispatchQuerySet(models.QuerySet):
                 storefront=storefront,
                 recipient=recipient,
                 subject=subject,
+                body=body,
                 trigger=trigger,
                 triggered_by=triggered_by,
             )
         )
 
-    async def aqueue(self, *, kind, storefront, recipient, subject, trigger,
-                     triggered_by=None):
+    async def aqueue(self, *, kind, storefront, recipient, subject, body,
+                     trigger, triggered_by=None):
         """:meth:`queue` for a caller on the event loop. See ``mail``."""
         return await self.acreate(
             **self._queued_values(
@@ -352,6 +381,7 @@ class EmailDispatchQuerySet(models.QuerySet):
                 storefront=storefront,
                 recipient=recipient,
                 subject=subject,
+                body=body,
                 trigger=trigger,
                 triggered_by=triggered_by,
             )
@@ -393,10 +423,14 @@ class EmailDispatch(models.Model):
     there is nothing here to scrub. It also makes one class of mistake
     impossible: nothing can log one member and write to another.
 
-    **The body is never stored; the subject always is.** A sign-in code and a
-    payment token both live in the body, and a table operators read is not the
-    place for either. The subject names the message without carrying anything
-    somebody could use.
+    **The body is stored only while the message is in flight; the subject
+    always is.** A sign-in code and a payment token both live in the body, and a
+    table operators read is not the place for either -- so ``body`` is written
+    by the request that composes the email, read by the worker that sends it,
+    and cleared in the same statement that records the outcome. A settled row
+    holds no message text, ``email_dispatch_body_is_cleared_once_settled``
+    enforces that in the database, and the column is not in any admin fieldset.
+    ``body`` carries the reasoning.
     """
 
     # The choice sets live at module level -- `EmailKind` says why -- and are
@@ -437,7 +471,39 @@ class EmailDispatch(models.Model):
     )
     subject = models.CharField(
         max_length=255,
-        help_text='The subject line as sent. The body is deliberately not kept.',
+        help_text='The subject line as sent. Kept for the life of the row.',
+    )
+
+    # **The message text, and it is carriage rather than record.** A send is now
+    # two processes: the request composes the email and a Celery worker hands it
+    # to a mail server. Something has to carry the text between them, and the
+    # two candidates were this column and the task payload.
+    #
+    # The task payload was rejected. A sign-in code and a checkout token are the
+    # two things in this project's outbound mail worth stealing, and a task
+    # argument sits in a Redis list in cleartext until a worker takes it --
+    # readable by anything holding the broker key, and captured by any tooling
+    # that inspects the queue. This column is inside MySQL, behind TLS, in the
+    # database the rest of the platform's personal information already lives in,
+    # and under the same access control.
+    #
+    # **It does not stay.** `SENT_FIELDS` and `FAILED_FIELDS` both include
+    # `body`, and `_set_sent`/`_set_failed` blank it -- so the text exists for
+    # the seconds between composing and sending, and a row an operator ever
+    # reads has none. That keeps the standing decision intact: `EmailOtp` hashes
+    # the code at rest, and a plaintext copy of it sitting in a send log for a
+    # year would have undone that quietly. It is also why nothing purges this
+    # column separately: it is empty long before the retention window matters.
+    #
+    # A row that dies `QUEUED` -- worker killed between the two writes -- keeps
+    # its body, and that is correct: it is the one case where the message may
+    # still need to go, and the retention purge collects it in due course.
+    body = models.TextField(
+        blank=True,
+        help_text=(
+            'The message text, held only until the send settles and then '
+            'cleared. Empty on every row that has been sent or has failed.'
+        ),
     )
 
     trigger = models.CharField(
@@ -466,6 +532,18 @@ class EmailDispatch(models.Model):
         choices=EmailSendStatus.choices,
         default=EmailSendStatus.QUEUED,
     )
+
+    # How many times a mail server has been asked to take this message. Zero
+    # while it waits on the queue, one for the overwhelming majority of rows.
+    # It exists because `send_error` holds only the most recent failure, and
+    # "refused once and then accepted" and "refused four times and then
+    # accepted" are the same row without this -- the first is a blip and the
+    # second is a mail provider an operator should be looking at.
+    attempts = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='How many times a mail server has been asked to take it.',
+    )
+
     queued_at = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(
         null=True,
@@ -564,6 +642,21 @@ class EmailDispatch(models.Model):
                 name='email_dispatch_sent_has_a_timestamp',
                 violation_error_message='A sent email has to say when it was sent.',
             ),
+            # The message text does not outlive the send. Enforced here and
+            # not merely in `_set_sent`/`_set_failed`, because the whole reason
+            # `body` was allowed onto this table is that it is transient -- and
+            # a future `save()` that settles a row without clearing it would
+            # leave sign-in codes in a send log for a year with nothing raising.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(send_status=EmailSendStatus.QUEUED)
+                    | models.Q(body='')
+                ),
+                name='email_dispatch_body_is_cleared_once_settled',
+                violation_error_message=(
+                    'A sent or failed email must not keep its message text.'
+                ),
+            ),
             models.CheckConstraint(
                 condition=(
                     models.Q(delivery_status=EmailDeliveryStatus.UNKNOWN)
@@ -591,22 +684,51 @@ class EmailDispatch(models.Model):
     #: forms of each cannot come to disagree about what they persist -- a
     #: mismatch there is the silent kind, leaving a status written and its
     #: timestamp not.
-    SENT_FIELDS = ('send_status', 'sent_at', 'send_error', 'provider_message_id')
-    FAILED_FIELDS = ('send_status', 'send_error')
+    #: Both settling methods write ``body`` -- see the field -- so the
+    #: statement that records an outcome is the statement that erases the
+    #: message text. Splitting those into two saves would leave a window in
+    #: which a crash keeps the text against a settled row, which is the one
+    #: state ``email_dispatch_body_is_cleared_once_settled`` forbids.
+    SENT_FIELDS = (
+        'send_status', 'sent_at', 'send_error', 'provider_message_id',
+        'attempts', 'body',
+    )
+    FAILED_FIELDS = ('send_status', 'send_error', 'attempts', 'body')
+
+    #: What a retry writes: the failure so far, and that another go was had. The
+    #: status stays ``QUEUED`` and the body is deliberately **not** in this
+    #: list -- the next attempt still needs the text to send.
+    RETRY_FIELDS = ('send_error', 'attempts')
 
     def _set_sent(self, at, provider_message_id):
         self.send_status = EmailSendStatus.SENT
         self.sent_at = at or timezone.now()
         self.send_error = ''
+        self.body = ''
         if provider_message_id:
             self.provider_message_id = str(provider_message_id)[:255]
 
     def _set_failed(self, reason):
         self.send_status = EmailSendStatus.FAILED
         self.send_error = str(reason)[:2000]
+        self.body = ''
+
+    def note_attempt(self):
+        """Count an attempt about to be made, in memory. Nothing is saved.
+
+        Called by ``mail.deliver`` immediately before the hand-over so that
+        whichever of the three settling methods runs next persists the count as
+        part of its own single statement. Incrementing in a save of its own
+        would double the writes on the happy path for a number nothing reads
+        until the send is over.
+        """
+        self.attempts += 1
+        return self
 
     def mark_sent(self, *, at=None, provider_message_id=''):
         """The mail server took it. Records when, and the provider's id if any.
+
+        Clears ``body`` in the same statement -- see the field.
 
         ``provider_message_id`` is blank under SMTP and populated by an ESP
         backend -- ``storefronts.mail`` is the one place that knows how to ask
@@ -623,7 +745,13 @@ class EmailDispatch(models.Model):
         return self
 
     def mark_failed(self, reason):
-        """The mail server refused it, and this is what it said.
+        """The send is over and it did not go. **Terminal**, and it clears ``body``.
+
+        Written when a mail server refused the message outright, and when the
+        retries ran out. A failure that will be tried again is
+        :meth:`note_retry` instead, because a row saying ``failed`` while a
+        worker is still going to send it is the one thing that would make
+        ``failed()`` useless to an operator.
 
         The reason is stored as text rather than an exception class, because what
         is useful six weeks later is "550 relay access denied" and the class name
@@ -637,6 +765,17 @@ class EmailDispatch(models.Model):
         """:meth:`mark_failed` for a caller on the event loop."""
         self._set_failed(reason)
         await self.asave(update_fields=list(self.FAILED_FIELDS))
+        return self
+
+    def note_retry(self, reason):
+        """This attempt failed and another one is coming. Stays ``QUEUED``.
+
+        Keeps the body, because the next attempt needs it, and records what went
+        wrong so that a row being retried says why rather than merely sitting
+        there. See :data:`RETRY_FIELDS`.
+        """
+        self.send_error = str(reason)[:2000]
+        self.save(update_fields=list(self.RETRY_FIELDS))
         return self
 
     def record_delivery(self, status, *, at=None, detail=''):

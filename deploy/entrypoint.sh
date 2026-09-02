@@ -50,6 +50,71 @@ connection.ensure_connection()
     return 1
 }
 
+start_worker() {
+    echo "entrypoint: starting the celery worker for the scheduled queue"
+    # `-Q scheduled`, and **the queue name is not optional**. Without it
+    # this worker consumes the default queue only, which since sends moved
+    # onto the broker is `scheduled` by configuration -- so it would still
+    # work, and would keep working right up until somebody changed
+    # CELERY_TASK_DEFAULT_QUEUE. Naming it here means this process and the
+    # `mail-worker` below each say which half of the broker they are for,
+    # and neither can quietly start eating the other's work.
+    #
+    # `--concurrency 1`, deliberately. There are three tasks a day, each a long
+    # database pass, and the schedule staggers them so they never overlap. A
+    # second process would hold a second set of database connections open all
+    # day for work that never arrives -- and it would allow two purges at once,
+    # which is the one arrangement the schedule was written to avoid.
+    #
+    # `--without-gossip --without-mingle` because there is one worker per
+    # queue. Both exist so that workers can discover each other; with
+    # single nodes they are chatter on the broker and a slower start-up.
+    # Drop them if a second replica of either is ever added.
+    exec celery -A f2c worker \
+        --queues scheduled \
+        --loglevel "${CELERY_LOG_LEVEL:-info}" \
+        --concurrency 1 \
+        --without-gossip \
+        --without-mingle
+}
+
+start_mail_worker() {
+    echo "entrypoint: starting the celery worker for the mail queue"
+    # **A separate process from the one above, and the reason is a login
+    # outage.** Both workers run one task at a time; the purges are long
+    # delete passes with a twenty-five-minute ceiling that run at 01:00 and
+    # 01:20. On a shared queue a sign-in code requested at 01:05 waits
+    # behind them, and that is not a slow email -- it is a member who
+    # cannot get in, on the one sign-in path that works for an account with
+    # no passkey yet.
+    #
+    # `--concurrency ${CELERY_MAIL_CONCURRENCY:-4}`. Unlike the scheduled
+    # queue this one has genuine bursts -- a batch of suspensions out of the
+    # admin -- and its work is a blocking socket read rather than a database
+    # pass, so one process waiting out a mail server should not be stopping
+    # three others from sending. Four is a starting point sized against one
+    # provider and one small club; the variable is there so it can be
+    # raised without a code change when the send volume says so.
+    exec celery -A f2c worker \
+        --queues mail \
+        --loglevel "${CELERY_LOG_LEVEL:-info}" \
+        --concurrency "${CELERY_MAIL_CONCURRENCY:-4}" \
+        --without-gossip \
+        --without-mingle
+}
+
+start_beat() {
+    echo "entrypoint: starting celery beat"
+    # The schedule file holds the last-run time for each entry, so a restart
+    # does not re-fire a job that already ran this period. Under /tmp because
+    # that is the writable path a Container Apps replica can count on, and
+    # because losing it costs at most one duplicate run of an idempotent job --
+    # a smaller price than a volume to administer.
+    exec celery -A f2c beat \
+        --loglevel "${CELERY_LOG_LEVEL:-info}" \
+        --schedule /tmp/celerybeat-schedule
+}
+
 case "${1:-serve}" in
     serve)
         wait_for_database
@@ -89,6 +154,91 @@ case "${1:-serve}" in
             --host 0.0.0.0 \
             --port "${PORT:-8000}" \
             --workers 1
+        ;;
+
+    worker)
+        # The Celery worker for the `scheduled` queue. Three scheduled jobs
+        # run through it -- see CELERY_BEAT_SCHEDULE in `f2c/settings.py` --
+        # and the first of them, `lapse_memberships`, is what withdraws
+        # access from a membership that has stopped paying.
+        #
+        # **Email does not run here.** It has its own queue and its own
+        # container: `mail-worker` below.
+        #
+        # **The gate runs here too, and that is the reason the worker is in this
+        # script** rather than given its own command line in the platform's
+        # configuration. This process reads the same settings the API reads and
+        # is wrong in the same ways, so it has to refuse to start for the same
+        # reasons -- and it is the process that changes member access with
+        # nobody watching, which makes booting on a misconfiguration worse here
+        # than anywhere else.
+        #
+        # **No migrations.** The API container applies them; a worker that also
+        # ran `migrate` would be a second process racing the first through the
+        # same schema change on every deployment.
+        wait_for_database
+        echo "entrypoint: running deployment checks"
+        python manage.py check --deploy --fail-level WARNING
+        start_worker
+        ;;
+
+    mail-worker)
+        # The Celery worker for the `mail` queue, which is every email this
+        # platform sends. **This container is on the sign-in path**: with it
+        # down, `EmailDispatch` rows pile up on `queued`, no code is
+        # delivered, and no member without a passkey can get in. Nothing
+        # else in the stack will report that -- the API answers normally,
+        # because answering normally is what moving the send off the request
+        # path bought. `EmailDispatch.objects.pending()` is the query that
+        # shows it, and it is the one worth alerting on.
+        #
+        # The gate and the no-migrations rule are the `worker` case's, for
+        # the same two reasons.
+        wait_for_database
+        echo "entrypoint: running deployment checks"
+        python manage.py check --deploy --fail-level WARNING
+        start_mail_worker
+        ;;
+
+    beat)
+        # The scheduler, and **it must be a singleton.** Beat publishes on a
+        # timer with no coordination between instances, so two of these means
+        # every job published twice -- two lapse runs against the same
+        # subscriptions, two purges deleting the same rows. Nothing is corrupted,
+        # because all three tasks are idempotent, but each duplicate writes its
+        # own `ScheduledRun` row and the history stops being readable. Whatever
+        # runs this must be capped at one replica.
+        #
+        # It holds no database connection of its own in normal operation -- it
+        # publishes task names to Redis and nothing else -- but the gate below
+        # needs one, for the reason given at the top of this file.
+        wait_for_database
+        echo "entrypoint: running deployment checks"
+        python manage.py check --deploy --fail-level WARNING
+        start_beat
+        ;;
+
+    dev-worker)
+        # The worker for the compose stack, and the same trade the `dev` case
+        # below makes for the API: the gate cannot pass with DJANGO_DEBUG on, so
+        # this branch does not run it. Nothing ships this -- the image's CMD is
+        # `serve`, and only compose.yaml asks for `dev-worker`.
+        wait_for_database
+        start_worker
+        ;;
+
+    dev-mail-worker)
+        # The mail worker for the compose stack. Same reason as
+        # `dev-worker`, and it is the one the local sign-in needs running:
+        # with the compose Redis up, sends are published rather than eager.
+        wait_for_database
+        start_mail_worker
+        ;;
+
+    dev-beat)
+        # Beat for the compose stack. Same reason as `dev-worker`.
+        wait_for_database
+        start_beat
         ;;
 
     check)
@@ -140,8 +290,11 @@ case "${1:-serve}" in
         ;;
 
     *)
-        # Anything else is a management command, which is how the Function App's
-        # fallback and any one-off maintenance run: `... lapse_memberships`.
+        # Anything else is a management command, which is how any one-off
+        # maintenance runs: `... lapse_memberships`, `... purge_email_dispatches
+        # --dry-run`. This used to be described as the Function App's fallback;
+        # there is no Function App, the schedule is Celery beat above, and these
+        # are the same three jobs by hand.
         exec python manage.py "$@"
         ;;
 esac

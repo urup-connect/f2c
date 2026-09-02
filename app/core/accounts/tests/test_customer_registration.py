@@ -34,7 +34,11 @@ from app.commerce.producers.models import ProducerMembership
 from app.core.accounts import registration
 from app.core.accounts.models import User, UserStatus
 from app.core.documents.models import Agreement, Audience, Document
-from app.core.storefronts.models import Storefront, StorefrontStaff
+from app.core.storefronts.models import (
+    EmailDispatch,
+    Storefront,
+    StorefrontStaff,
+)
 
 REGISTER = '/api/customers/register'
 
@@ -404,11 +408,19 @@ class EndpointTestCase(TestCase):
         mail.outbox = []
 
     def post(self, **overrides):
-        return self.client.post(
-            REGISTER,
-            data=json.dumps(submission(**overrides)),
-            content_type='application/json',
-        )
+        """POST a registration, and then let the request commit.
+
+        The sign-in code is published from ``transaction.on_commit`` --
+        ``storefronts.mail`` says why -- and a ``TestCase`` never commits,
+        so without this the outbox stays empty and every test about the
+        code fails on an empty list. See ``f2c.testing.flush_commit_hooks``.
+        """
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(
+                REGISTER,
+                data=json.dumps(submission(**overrides)),
+                content_type='application/json',
+            )
 
     def body(self, response):
         return json.loads(response.content)
@@ -568,15 +580,34 @@ class EndpointConsentGuardTests(EndpointTestCase):
 
 
 class UndeliverableCodeTests(EndpointTestCase):
-    """The account is written and the sign-in code cannot be sent.
+    """The account is written and the sign-in code does not arrive.
 
     **Found by running the endpoint against a real mail server that was not
-    answering, not by reasoning about it**, and it is the one failure mode this
-    endpoint has that no other endpoint on the API shares. A failed send during
-    sign-in is retryable and idempotent; a failed send here follows a row that
-    has already committed, so letting the exception through answers 500 to
-    somebody whose account exists -- and every retry does it again, because the
-    retry is a duplicate and the duplicate path emails too.
+    answering, not by reasoning about it.** It used to answer 503 here, and
+    these tests were what pinned that down: a failed send during registration
+    follows a row that has already committed, so letting the exception through
+    would answer 500 to somebody whose account exists, and every retry would do
+    it again because the retry is a duplicate and the duplicate path emails too.
+
+    **The queue changed the answer, and the tests below are what that change
+    looks like.** The mail server is no longer on this request path -- the code
+    is recorded and published to a worker -- so an unreachable SMTP host is not
+    something this endpoint can find out about. It answers 200, the row says
+    ``failed``, and the worker will have retried before it settled there.
+
+    That is a better outcome and it is not a free one, so it is worth being
+    exact about what was given up. **Before:** the customer was told plainly
+    that sign-up could not complete, and told it immediately. **Now:** the
+    customer is told to check their email, and if the outage outlasts the
+    retries, nothing arrives and nothing says why. What was bought is that a
+    mail server which is merely slow, or briefly down, no longer fails a
+    registration at all -- the code arrives late instead of never, and the
+    account is usable when it does.
+
+    **503 has not gone; it has narrowed.** It is still the answer when the code
+    cannot be *recorded or queued* -- an unreachable database or broker -- which
+    is the case where nothing will retry because nothing was written. See
+    ``BrokerOutageTests`` below and ``registration_api.register``.
     """
 
     def failing_mail(self):
@@ -599,11 +630,34 @@ class UndeliverableCodeTests(EndpointTestCase):
             side_effect=OSError('mail server is not answering'),
         )
 
-    def test_it_answers_503(self):
+    def test_it_answers_200_and_records_the_failure(self):
+        """**The change, asserted in one place.**
+
+        The endpoint cannot know: it queued the message and returned. What
+        knows is the row, which is the only thing that ever knew reliably --
+        the 503 covered a hand-over refused synchronously and said nothing
+        about one refused a second later.
+        """
         with self.failing_mail():
             response = self.post()
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.SendStatus.FAILED, dispatch.send_status)
+        self.assertIn('not answering', dispatch.send_error)
+
+    def test_the_reply_is_the_one_a_working_send_gets(self):
+        """Byte for byte. A customer must not be able to tell a mail outage
+        from a working send, because the reply says nothing about either --
+        it says to go and check an inbox."""
+        with self.failing_mail():
+            broken = self.post()
+        User.objects.all().delete()
+        EmailDispatch.objects.all().delete()
+
+        working = self.post()
+
+        self.assertEqual(broken.content, working.content)
 
     def test_the_account_is_kept(self):
         """Not rolled back to match the refusal.
@@ -625,17 +679,20 @@ class UndeliverableCodeTests(EndpointTestCase):
         self.assertEqual(User.objects.get().get_all_permissions(), set())
 
     def test_a_retry_answers_the_same_thing(self):
-        """Honest: sign-up genuinely cannot complete while mail is down.
+        """And queues a second code, which is what the duplicate path is for.
 
-        The retry is a duplicate, so it writes nothing and tries the same send.
+        The retry writes no account -- the address is on file -- but it does
+        send, because the confirmation screen sends everybody to the sign-in
+        screen to enter a code. Two rows, two failures, one account.
         """
         with self.failing_mail():
             first = self.post()
             second = self.post()
 
-        self.assertEqual(second.status_code, 503)
+        self.assertEqual(second.status_code, 200)
         self.assertEqual(second.content, first.content)
         self.assertEqual(User.objects.count(), 1)
+        self.assertEqual(2, EmailDispatch.objects.failed().count())
 
     def test_it_says_nothing_about_whether_the_address_was_new(self):
         """The disclosure rule has to survive a mail outage.
@@ -649,7 +706,9 @@ class UndeliverableCodeTests(EndpointTestCase):
 
         self.assertEqual(fresh.content, duplicate.content)
 
-    def test_it_succeeds_once_mail_works_again(self):
+    def test_the_code_arrives_once_mail_works_again(self):
+        """The recovery path, and the account written during the outage is the
+        one the working code belongs to."""
         with self.failing_mail():
             self.post()
         mail.outbox = []
@@ -658,6 +717,80 @@ class UndeliverableCodeTests(EndpointTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(User.objects.count(), 1)
+        self.assertEqual(1, EmailDispatch.objects.filter(
+            send_status=EmailDispatch.SendStatus.SENT
+        ).count())
+
+
+class BrokerOutageTests(EndpointTestCase):
+    """**Where the 503 went.**
+
+    A mail server that will not answer is no longer this endpoint's problem --
+    ``UndeliverableCodeTests`` says why. A broker that will not answer still
+    is, and it is the more serious of the two: nothing was queued, so nothing
+    will retry, and the customer holds an account with no way to sign in to it
+    and no reason to expect one.
+
+    503 is the same answer for the same reason it always was. The submission is
+    fine, the account is kept, and the customer can only come back.
+    """
+
+    def unreachable_broker(self):
+        """Publishing fails, as it does with Redis down.
+
+        **Patched at ``mail._enqueue_in_thread`` and not at
+        ``deliver_email.delay``, and the difference is the whole reason this
+        class needed thinking about.** ``mail`` publishes from
+        ``transaction.on_commit``. In production nothing here is inside a
+        transaction, so Django runs that callback immediately and a broker
+        failure raises inside the request -- which is what makes 503
+        reachable. Under ``TestCase`` the surrounding transaction defers the
+        callback to ``captureOnCommitCallbacks``, which is *after* the
+        response, so patching ``delay`` produces a 200 and an exception in
+        the test helper: a shape production does not have.
+
+        Patching the coroutine that ``asend_storefront_email`` awaits puts
+        the failure back where the request can see it. It is the same fault
+        one call further out, and it is the only place a test inside a
+        transaction can put it honestly.
+        """
+        async def refuse(*args, **kwargs):
+            raise OSError('Error 111 connecting to redis:6379')
+
+        return mock.patch(
+            'app.core.storefronts.mail._enqueue_in_thread', refuse
+        )
+
+    def test_it_answers_503(self):
+        with self.unreachable_broker():
+            response = self.post()
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_the_account_is_kept(self):
+        """As it is for a mail outage, and for the same reason: it is a good
+        row, and undoing it would leave the customer starting from nothing."""
+        with self.unreachable_broker():
+            self.post()
+
+        self.assertEqual(User.objects.count(), 1)
+        self.assertEqual(User.objects.get().status, UserStatus.ACTIVE)
+
+    def test_the_row_is_left_saying_it_was_never_handed_over(self):
+        """``queued``, not ``failed``. Nothing refused this message -- nothing
+        was ever asked -- and ``pending()`` is the query that finds it.
+
+        The row survives the 503 because it is written before the publish is
+        attempted, which is the same ordering that makes a send recorded
+        before it is tried. A 503 with no row would leave an operator with
+        nothing but a log line.
+        """
+        with self.unreachable_broker():
+            self.post()
+
+        self.assertEqual(1, EmailDispatch.objects.pending().count())
+        self.assertEqual(0, len(mail.outbox))
         self.assertEqual(User.objects.count(), 1)
 
 

@@ -406,29 +406,125 @@ Recorded here rather than in `todo.md` because it was found while writing this d
 because it is a deployment fault rather than a product one: nothing about it was visible locally,
 where `DEBUG` is on and the file is served.
 
-### 5.2 The scheduler is a Container Apps Job, not a Function App
+### 5.2 The scheduler is Celery inside the application, not a Function App and not a job
 
-`todo.md` carries a timer-triggered Function App plus **a protected endpoint on the API for the
-Function to call**, on the reasoning that packaging Django into the Function App would mean a second
-deployment artefact on a preview Python runtime. Both halves of that are avoidable.
-
-`deploy/entrypoint.sh` already passes any unrecognised argument straight through to `manage.py`. So
-a **Container Apps Job** on a cron schedule, running the same API image with the command as its
-argument, is the whole mechanism: one artefact, no preview runtime, and no new authenticated
-endpoint to write, test and defend.
+Three things on this platform are computed rather than driven by an event, and none of them runs
+itself:
 
 ```
-lapse_memberships          daily
-purge_email_dispatches     nightly
-purge_campaign_touches     nightly
+lapse_memberships          daily     02:30 UTC / 04:30 SAST
+purge_email_dispatches     nightly   01:00 UTC / 03:00 SAST
+purge_campaign_touches     nightly   01:20 UTC / 03:20 SAST
 ```
 
-Until something runs the first of these, an unpaid membership keeps access indefinitely — Block 0
-P2. The other two are the retention periods `EMAIL_DISPATCH_RETENTION_DAYS` and
-`CAMPAIGN_TOUCH_RETENTION_DAYS` name; neither enforces itself.
+Until something ran the first, an unpaid membership kept its access indefinitely — Block 0 P2. The
+other two are the retention periods `EMAIL_DISPATCH_RETENTION_DAYS` and
+`CAMPAIGN_TOUCH_RETENTION_DAYS` name; neither enforces itself, and a retention policy nobody runs is
+a retention policy nobody has.
 
-**This supersedes the Function App line in `todo.md` and the docstring in `lapse_memberships`**,
-which still says "a daily cron or an Azure App Service WebJob".
+**This section has now been wrong twice.** `todo.md` carried a timer-triggered Function App plus a
+protected endpoint on the API for the Function to call, on the reasoning that packaging Django into
+the Function App would mean a second deployment artefact on a preview Python runtime. This section
+then replaced that with a **Container Apps Job** on a cron schedule running the same API image with
+the command as its argument — one artefact, no preview runtime, no new authenticated endpoint. That
+was a real improvement and it was still the wrong shape, for three reasons that the Function App
+and the Job share:
+
+* **The schedule lives outside the repository.** In both designs, *when* a member loses access is a
+  cron expression in platform configuration. It is not in a commit, it is not in a review, and it
+  does not appear in a diff. `git log` cannot answer "when did we change the lapse time, and why".
+* **A failed run is visible only in that platform's own logs.** A Job that exits non-zero at 02:30
+  is an exit code in Container Apps' execution history, retained on that platform's terms. Nobody
+  taking a call from a member who says "I was switched off and I had paid" is going to find it, and
+  there is nothing to hand a POPIA enquiry that asks how the retention window is enforced.
+* **Neither can be exercised anywhere but a deployment.** No developer and no CI run has ever
+  executed a Container Apps Job. The first real run of a schedule nobody can rehearse is in
+  production, against members' access.
+
+**Celery replaces all three properties.** The schedule is `CELERY_BEAT_SCHEDULE` in
+`f2c/settings.py`, reviewed as code. Every run writes a `scheduling.ScheduledRun` row — task,
+started, finished, outcome, how many rows it touched — readable in the admin months later by
+whoever takes the call. And `compose.yaml` runs the same worker and the same beat a deployment runs,
+so a task can be written, triggered and watched on a developer's machine.
+
+`f2c/queue.py` carries the argument at length, including why the broker is Redis database 1 derived
+from `DJANGO_REDIS_URL` rather than a separate managed service: the Redis is already there for the
+throttle counters, so the queue costs nothing new to provision.
+
+**And then email joined the queue, which is the second reason this section exists.** Sends used
+to happen in the request that asked for them: a ten-second SMTP timeout inside the sign-in path,
+against a provider nobody here operates, on the one route into an account that has no passkey
+yet. A refused message got no second attempt. `app/core/storefronts/mail.py` carries that
+argument; what it means for a deployment is a third container and one hard rule about which
+queue consumes what.
+
+**What this needs from the platform.** Three more Container Apps off the same image, and none of
+them serves traffic:
+
+```
+worker       deploy/entrypoint.sh worker       1..n replicas   consumes: scheduled
+mail-worker  deploy/entrypoint.sh mail-worker  1..n replicas   consumes: mail
+beat         deploy/entrypoint.sh beat         exactly 1 replica
+```
+
+**Two queues, and the reason is a login outage rather than tidiness.** A worker runs one task at
+a time — `CELERY_WORKER_PREFETCH_MULTIPLIER` is 1 — and the two nightly purges are long delete
+passes bounded at twenty-five minutes, running at 01:00 and 01:20 UTC. On a single shared queue,
+a sign-in code requested at 01:05 waits behind the housekeeping. That is not a slow email; it is
+a member who cannot get in. `CELERY_TASK_ROUTES` sends `storefronts.deliver_email` to `mail` and
+everything else to `scheduled`, and each container names its queue with `--queues` so neither
+can quietly start eating the other's work.
+
+**`mail-worker` is on the critical path for authentication, and nothing else in the stack will
+say so when it is down.** That is the cost of moving the send off the request: the API answers
+normally, `/auth/otp/start` returns 200, and `EmailDispatch` rows accumulate on `queued` while no
+member without a passkey can sign in. `EmailDispatch.objects.pending()` is the query that shows
+it — a count that is nonzero and rising, rather than a handful of rows a second old — and it is
+the one worth alerting on. Watching `failed()` alone would show nothing at all.
+
+**All three worker apps need the API's full configuration, not a subset.** It is tempting to give a
+process that serves no traffic a trimmed environment — no `ALLOWED_HOSTS`, no CORS origins, no
+Payfast variables. That fails at start-up, because all three run `check --deploy --fail-level
+WARNING` and Django's deployment checks do not know or care that these processes have no ingress.
+It would also be wrong if it worked: a worker writes to the same tables the API does, and every
+value that decides *what* it writes — the database, `DJANGO_DEFAULT_STOREFRONT`, both retention
+windows, and for `mail-worker` the whole of `MAILERS` and `STOREFRONT_FROM_EMAIL` — is read from
+the environment. A worker configured differently from the API is a worker doing the wrong thing to
+real records, quietly and overnight; a mail worker configured differently is one sending a club
+sign-in code through the market's provider, which is the single thing a member is taught to
+distrust about a one-time code. `compose.yaml` enforces this locally with a YAML anchor: the three
+services take the API's environment block verbatim rather than a copy that can drift.
+
+**`mail-worker` may be scaled, and unlike the scheduled worker it probably should be.** Its
+concurrency is `CELERY_MAIL_CONCURRENCY`, defaulting to 4: the work is a blocking socket read
+rather than a database pass, so one process waiting out an unresponsive provider should not stop
+three others sending. Replicas are safe for the same reason — every task carries one message and
+settles one row.
+
+**`beat` must be capped at one replica, and that is a hard constraint rather than a preference.**
+Beat publishes on a timer with no coordination between instances, so two of it means every job
+published twice. Nothing is corrupted — all three scheduled tasks are idempotent, which is also
+what makes `CELERY_TASK_ACKS_LATE` safe — but each duplicate writes its own `ScheduledRun` row and
+the history stops being readable, which is the one thing the table exists for.
+
+**`storefronts.deliver_email` is the exception to that idempotence, and it says so at the task.**
+Sending the same message twice is a member receiving two sign-in codes or two suspension notices,
+so it sets `acks_late=False` on itself against the global default: a worker killed mid-hand-over
+loses the send rather than repeating it. The loss is visible — the row stays `queued` — and a
+duplicate would not be, because two rows would both look correct. Beat never publishes it, so the
+replica cap above has nothing to do with this one.
+
+Both processes run `check --deploy --fail-level WARNING` before starting, exactly as `serve` does.
+That is the reason they live in `deploy/entrypoint.sh` rather than being given their own command
+lines in platform configuration: the worker reads the same settings the API reads and is wrong in
+the same ways, and it is the process that changes member access with nobody watching.
+
+Neither runs `migrate`. The API container applies migrations; a worker that also ran them would be a
+second process racing the first through the same schema change on every deployment.
+
+**This supersedes both the Function App line in `todo.md` and the Container Apps Job described in
+earlier versions of this section**, along with the docstring in `lapse_memberships`, which used to
+say "a daily cron or an Azure App Service WebJob".
 
 ### 5.3 The founding administrators, granted by hand
 
@@ -456,6 +552,37 @@ customer registration was fixed only because its send follows a row that has alr
 A QA environment standing up against a provider still being argued with will hit both.
 
 ---
+
+### 5.6 The API image could not build — done
+
+`docker compose up --build` failed on the `collectstatic` line in `Dockerfile`, with:
+
+```
+DJANGO_FIELD_ENCRYPTION_KEY and DJANGO_BLIND_INDEX_PEPPER must both be set
+```
+
+**Three correct decisions produced a broken build between them**, which is why this went unnoticed
+and is worth recording rather than just fixing:
+
+* `f2c/settings.py` refuses to load without both encryption keys, **unconditionally — there is no
+  `DEBUG` exemption**. That is right: a backend that boots with encryption misconfigured writes
+  plaintext or crashes at the first identity capture (`backend.md` section 3.3).
+* `.dockerignore` excludes `.env` from the build context. Also right — `settings.py` calls
+  `load_dotenv` at import, so a `.env` inside the image is live configuration, and a developer's
+  holds real SMTP passwords and real storage keys.
+* The `collectstatic` RUN line supplied `DJANGO_SECRET_KEY` and `DJANGO_DEBUG` and nothing else, on
+  a comment that said those were the only two settings.py needs to import. That comment was wrong,
+  and nothing tested it: **CI never builds the image.** It runs the suite on MySQL and does not
+  `docker build`, so the only thing that exercises this line is a person running compose.
+
+Fixed by giving the build its own throwaway pair of 32-byte keys on the RUN line, beside the
+throwaway secret key that was already there — not by weakening the refusal, and not by letting `.env`
+into the image. A RUN-line variable does not persist into the image, and none of the four is what a
+container runs with.
+
+**The gap this leaves open is that CI still does not build the image.** Any future settings-time
+requirement will break the build the same way and be found the same way — by whoever next runs
+compose. A `docker build` step in `ci.yml` is the fix and is not yet written.
 
 ## 6. The order
 

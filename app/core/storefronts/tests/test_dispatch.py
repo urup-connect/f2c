@@ -6,6 +6,13 @@ The ordinary one is that a send leaves a truthful row: the right member, the
 right kind, a status that matches what the mail server did, and a timestamp
 beside it.
 
+The queue added a third. **The row is now the hand-off as well as the
+record**: it carries the message text to the worker that sends it, and it is
+cleared of that text the moment the send settles. So there are assertions
+below about a column being *empty*, and they are load-bearing -- a sign-in
+code left in a send log for the length of the retention window would be a
+quiet undoing of hashing the code at rest in the first place.
+
 The other is **what the row does not say.** ``delivery_status`` and
 ``read_status`` stay at "not reported" and "not tracked" on every send this
 deployment makes, because SMTP does not report delivery and no open beacon is
@@ -52,7 +59,11 @@ class RecordingASendTests(TestCase):
             'body': 'Body',
         }
         options.update(overrides)
-        send_storefront_email(**options)
+        # `captureOnCommitCallbacks` because the send is published from
+        # `transaction.on_commit` and a `TestCase` never commits. See
+        # `f2c.testing.flush_commit_hooks`.
+        with self.captureOnCommitCallbacks(execute=True):
+            send_storefront_email(**options)
         return EmailDispatch.objects.get()
 
     def test_a_send_leaves_exactly_one_row(self):
@@ -74,6 +85,31 @@ class RecordingASendTests(TestCase):
         self.assertEqual(EmailDispatch.SendStatus.SENT, dispatch.send_status)
         self.assertIsNotNone(dispatch.sent_at)
         self.assertEqual('', dispatch.send_error)
+        # One hand-over, counted. Zero here would mean the row was settled by
+        # something other than a send.
+        self.assertEqual(1, dispatch.attempts)
+
+    def test_a_row_nobody_has_collected_is_pending_rather_than_failed(self):
+        """``pending()`` is the query that shows a mail worker that is down.
+
+        The distinction matters because it is the only signal there is: with
+        the send off the request path, the API answers normally whether or not
+        anything is consuming the queue. A row here must not read as
+        ``failed`` -- an operator watching failures would see nothing while no
+        member could sign in.
+        """
+        with self.captureOnCommitCallbacks(execute=False):
+            send_storefront_email(
+                storefront=Storefront.CLUB,
+                kind=EmailDispatch.Kind.LOGIN_CODE,
+                recipient=self.member,
+                subject='Subject',
+                body='Body',
+            )
+
+        self.assertEqual(1, EmailDispatch.objects.pending().count())
+        self.assertEqual(0, EmailDispatch.objects.failed().count())
+        self.assertEqual(0, EmailDispatch.objects.get().attempts)
 
     def test_delivery_is_not_claimed_by_a_successful_send(self):
         """**The assertion this module exists for.** A mail server accepting a
@@ -99,11 +135,19 @@ class RecordingASendTests(TestCase):
         """SMTP issues none, and a made-up one would match a stranger's webhook."""
         self.assertEqual('', self.send().provider_message_id)
 
-    def test_the_body_is_not_stored(self):
-        """A sign-in code lives in the body. Nothing here should be able to read
-        it back out of the database."""
+    def test_the_body_does_not_survive_the_send(self):
+        """A sign-in code lives in the body, and the row carries it as far as the
+        worker and no further.
+
+        The column exists so that the text does not have to travel through
+        Redis as a task argument -- ``EmailDispatch.body`` carries that
+        argument. What makes that acceptable is this: the settling write
+        erases it, so a row anybody ever reads in the admin holds nothing.
+        """
         dispatch = self.send(body='Your code is 123456')
 
+        self.assertEqual(EmailDispatch.SendStatus.SENT, dispatch.send_status)
+        self.assertEqual('', dispatch.body)
         self.assertNotIn('123456', dispatch.subject)
         self.assertFalse(
             any(
@@ -111,6 +155,43 @@ class RecordingASendTests(TestCase):
                 for value in dispatch.__dict__.values()
             )
         )
+
+    def test_the_body_is_there_for_the_worker_to_read(self):
+        """The other half of the one above, and the reason it is not simply a
+        column that is never written.
+
+        Between the request that composes an email and the worker that sends
+        it, the text has to be somewhere. This asserts it is here -- because a
+        change that stopped writing it would leave every send going out with an
+        empty body and every assertion about the *settled* row still passing.
+        """
+        with self.captureOnCommitCallbacks(execute=False):
+            send_storefront_email(
+                storefront=Storefront.CLUB,
+                kind=EmailDispatch.Kind.LOGIN_CODE,
+                recipient=self.member,
+                subject='Your sign-in code',
+                body='Your code is 123456',
+            )
+
+        dispatch = EmailDispatch.objects.get()
+        self.assertEqual(EmailDispatch.SendStatus.QUEUED, dispatch.send_status)
+        self.assertEqual('Your code is 123456', dispatch.body)
+        self.assertEqual(0, len(mail.outbox))
+
+    def test_a_settled_row_cannot_keep_its_body(self):
+        """The database says so too, not merely the two ``mark_`` methods.
+
+        The constraint is what makes the transience of the column a property
+        of the schema rather than of two functions that a later change might
+        route around.
+        """
+        dispatch = self.send()
+
+        dispatch.body = 'Your code is 123456'
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                dispatch.save(update_fields=['body'])
 
     def test_the_recipients_address_is_not_stored_on_the_row(self):
         """The account is the address -- see ``EmailDispatch``. This is what
@@ -152,7 +233,8 @@ class ProvenanceTests(TestCase):
             'body': 'Body',
         }
         options.update(overrides)
-        send_storefront_email(**options)
+        with self.captureOnCommitCallbacks(execute=True):
+            send_storefront_email(**options)
         return EmailDispatch.objects.get()
 
     def test_a_send_with_nothing_said_about_it_is_the_platforms_own(self):
@@ -202,36 +284,71 @@ class FailureTests(TestCase):
         mail.outbox.clear()
 
     def send(self):
-        send_storefront_email(
-            storefront=Storefront.CLUB,
-            kind=EmailDispatch.Kind.LOGIN_CODE,
-            recipient=self.member,
-            subject='Subject',
-            body='Body',
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            send_storefront_email(
+                storefront=Storefront.CLUB,
+                kind=EmailDispatch.Kind.LOGIN_CODE,
+                recipient=self.member,
+                subject='Subject',
+                body='Body',
+            )
 
     def test_a_refused_send_is_recorded_as_failed_with_the_reason(self):
-        """The row outlives the exception, which is the point: a 503 tells the
-        member to try again and tells an operator nothing."""
+        """The row is where a failure is recorded, and now the only place.
+
+        Retries are off under the test runner, so this first attempt is also
+        the last one and the row settles on ``failed`` immediately. See
+        ``f2c.test_runner``; the retrying is tested in ``test_tasks``.
+        """
         with patch(
             'django.core.mail.EmailMessage.send',
             side_effect=OSError('mail server is not answering'),
         ):
-            with self.assertRaises(OSError):
-                self.send()
+            self.send()
 
         dispatch = EmailDispatch.objects.get()
         self.assertEqual(EmailDispatch.SendStatus.FAILED, dispatch.send_status)
         self.assertIn('not answering', dispatch.send_error)
         self.assertIsNone(dispatch.sent_at)
+        self.assertEqual(1, dispatch.attempts)
 
-    def test_the_exception_still_reaches_the_caller(self):
-        """Logging a failure is not handling it. ``otp`` answers 503 off this."""
+    def test_a_refused_send_does_not_reach_the_caller(self):
+        """**The behaviour the queue changed, asserted rather than implied.**
+
+        This used to raise, and two callers were built on that: registration
+        answered 503 and a sign-in request 500ed. Neither can now, because
+        the mail server is not on the request path -- so a caller getting no
+        exception means the message is recorded and queued, and nothing more.
+
+        That is a real loss of information at the call site and it is the
+        trade ``storefronts.mail`` argues for: what the caller could learn
+        was whether one hand-over succeeded, and what it costs to learn it
+        was a ten-second timeout on the only sign-in path an account without
+        a passkey has.
+        """
         with patch(
             'django.core.mail.EmailMessage.send', side_effect=OSError('nope')
         ):
-            with self.assertRaises(OSError):
-                self.send()
+            # No assertRaises. The absence is the assertion.
+            self.send()
+
+        self.assertEqual(
+            EmailDispatch.SendStatus.FAILED,
+            EmailDispatch.objects.get().send_status,
+        )
+
+    def test_a_failed_send_does_not_keep_the_message_text(self):
+        """A code that could not be delivered is still a code.
+
+        The success path clears the body; so must this one, or every mail
+        outage would leave a residue of sign-in codes in the send log.
+        """
+        with patch(
+            'django.core.mail.EmailMessage.send', side_effect=OSError('nope')
+        ):
+            self.send()
+
+        self.assertEqual('', EmailDispatch.objects.get().body)
 
     def test_a_backend_that_sends_nothing_quietly_is_recorded_as_failed(self):
         """``send()`` returning 0 without raising -- ``fail_silently``, or a
@@ -245,8 +362,8 @@ class FailureTests(TestCase):
         self.assertIsNone(dispatch.sent_at)
 
     def test_a_row_that_cannot_be_updated_does_not_undo_a_send(self):
-        """The asymmetry in ``send_storefront_email``. The message is already
-        with the mail server; raising here would invite a second one."""
+        """The asymmetry in ``mail.deliver``. The message is already with the
+        mail server; raising would invite Celery to retry and send a second."""
         with patch.object(
             EmailDispatch, 'mark_sent', side_effect=OSError('database gone')
         ):

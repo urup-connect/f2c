@@ -1,21 +1,42 @@
-"""Withdraw access from memberships that have stopped paying.
+"""Withdraw access from memberships that have stopped paying, by hand.
 
 This is the half of the payment lifecycle Payfast does not tell us about. A
 cancelled mandate and a card that stopped working both end the same way -- the
 paid-up date passes and no money arrives -- and neither sends a notification
-saying "this member should now be switched off".
+saying "this member should now be switched off". So it is computed rather than
+driven by an event, and it has to be *run*.
 
-So it is computed rather than driven by an event, and it has to be *run*. Until
-something schedules it, an unpaid membership keeps its access indefinitely: see
-``design/features/payments.md``, risk table. A daily cron or an Azure App
-Service WebJob is the intended home.
+**What runs it is no longer nothing.** This docstring used to say "a daily cron
+or an Azure App Service WebJob is the intended home", and ``design/todo.md``
+carried a timer-triggered Azure Function App calling a protected endpoint on the
+API. Neither exists and neither will: the home is ``app/core/payments/tasks.py``
+on Celery beat, inside this application, with the schedule in
+``CELERY_BEAT_SCHEDULE`` and a record of every run in
+``scheduling.ScheduledRun``. See ``f2c/queue.py`` for why that beat the two
+external schedulers.
 
-Nothing here erases anything. ``deactivate`` blocks sign-in and cuts live
-sessions, and a payment reverses it.
+**This command is now the same job by hand**, which is what it is for: a run
+brought forward, a run repeated after a failure, and the ``--dry-run`` that
+answers "who would this switch off?" before anybody switches them off. It calls
+the same service the task calls, so the two cannot disagree about who is
+overdue.
+
+A real run is recorded in ``ScheduledRun`` exactly as the nightly one is, and
+deliberately: the table answers "when was this member's access withdrawn, and
+by which run", and that question does not care whether a person or a timer
+started it. What the table cannot currently say is *which* of the two it was --
+noted here rather than fixed, because the column that would carry it is only
+worth adding when somebody asks the question.
+
+Nothing here erases anything, and nothing here signs anybody out of the
+platform. The membership lapses; the account is untouched; a payment reverses
+it.
 """
 from django.core.management.base import BaseCommand
 
 from app.core.payments import services
+from app.core.scheduling.models import ScheduledTask
+from app.core.scheduling.runs import record
 
 
 class Command(BaseCommand):
@@ -50,9 +71,14 @@ class Command(BaseCommand):
                     'Nothing changed.'
                 )
             )
+            # No `ScheduledRun` row. A dry run changed nothing, and a table of
+            # runs that includes runs that did not happen is a table that has to
+            # be filtered before it can be read.
             return
 
-        lapsed = services.lapse_overdue(today=today)
+        with record(ScheduledTask.LAPSE_MEMBERSHIPS) as run:
+            run.affected = services.lapse_overdue(today=today)
+
         self.stdout.write(
-            self.style.SUCCESS(f'{lapsed} membership(s) lapsed as at {today}.')
+            self.style.SUCCESS(f'{run.affected} membership(s) lapsed as at {today}.')
         )

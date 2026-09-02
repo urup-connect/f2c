@@ -134,8 +134,9 @@ in on a deployed environment today.**
 - [x] Choose a hosting target and provision the database. **Decided, and not as written**: the
       database is MySQL 8.4 and was already built that way — `f2c/database.py`, `app/core/common/checks.py`
       and the CI job — while this line still said PostgreSQL. `uuid7` needed neither. The target is
-      Azure in West Europe: three Container Apps, a managed MySQL, a Function App for the timer —
-      **C31**
+      Azure in West Europe: three Container Apps, a managed MySQL, and — since the scheduler moved
+      into Django — **two more Container Apps off the API image for the Celery worker and beat**
+      rather than a Function App for the timer. `design/deploy.md` 5.2 — **C31**
 - [ ] Provision the Azure resources for the above: two Container Apps for `frontend/market` and
       `frontend/club`, one for the API, an Azure Database for MySQL Flexible Server 8.4, an **Azure
       Managed Redis**, a Container Registry, a storage account for media, and a Log Analytics
@@ -171,10 +172,30 @@ in on a deployed environment today.**
 - [ ] Pin `min-replicas 1` on the API container. Scale-to-zero plus the four DNS lookups in
       `payfast_addresses` risks timing out an inbound notification, and a dropped notification is a
       member who paid and was not switched on — C31
-- [ ] Replace `lapse_memberships`' intended home. Its docstring still says "a daily cron or an Azure
-      App Service WebJob"; the decision is a timer-triggered Function App. That needs a protected
-      endpoint on the API for the Function to call — packaging Django into the Function App instead
-      would mean a second deployment artefact on a preview Python runtime — C31
+- [x] Replace `lapse_memberships`' intended home. **Done, and not as written.** This line asked for
+      a timer-triggered Function App plus a protected endpoint on the API for it to call; an earlier
+      revision of `design/deploy.md` 5.2 replaced that with a Container Apps Job on a cron. The
+      scheduler is now **Celery beat and a Celery worker inside the application**, on the Redis that
+      was already provisioned for the throttle counters, and it covers all three of the jobs nothing
+      was running — `lapse_memberships`, `purge_email_dispatches` and `purge_campaign_touches`.
+      What the two external schedulers shared and Celery does not: the schedule lived in platform
+      configuration rather than in a commit, a failed run was visible only in that platform's own
+      logs, and neither could be exercised locally or in CI. The schedule is now
+      `CELERY_BEAT_SCHEDULE` in `f2c/settings.py`, every run leaves a `scheduling.ScheduledRun` row
+      in the admin, and `compose.yaml` runs the same two processes a deployment runs. No new
+      authenticated endpoint was needed either way. See `f2c/queue.py` and `design/deploy.md` 5.2 —
+      C31
+- [ ] Build the API image in CI. **`ci.yml` runs the suite and never runs `docker build`**, so the
+      only thing that exercises the `collectstatic` line in `Dockerfile` is a person running
+      compose — which is how a build that had been broken since the encryption keys became
+      mandatory was found. Fixed for now by putting throwaway keys on that RUN line
+      (`design/deploy.md` 5.6), but the next settings-time requirement will break it the same way
+      and be found the same way. One `docker build` step closes the class
+- [ ] Provision the worker and beat Container Apps, off the API image, with
+      `deploy/entrypoint.sh worker` and `... beat` as their arguments. **Beat must be capped at one
+      replica** — it publishes on a timer with no coordination, so two of it means every scheduled
+      job published twice and a `ScheduledRun` history that cannot be read. Neither app serves
+      traffic and neither needs ingress — C31
 - [ ] Disclose the transborder flow. West Europe puts members' identity numbers outside South
       Africa; lawful under POPIA s72(1)(a), but it has to appear in the privacy notice and the PAIA
       manual — C31
