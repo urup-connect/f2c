@@ -23,14 +23,19 @@
 # to trunk. `promote.yml` moves a release on to UAT and production behind the
 # GitHub environment approvals. Nothing here writes to those environments.
 #
-# **The registry holds two kinds of artefact and they are tagged differently.**
-# `f2c/api:<sha>` is environment-agnostic -- design/deploy.md section 3, Block 0
-# P6 -- so the same image is promoted unchanged and its tag names only the
-# commit. The two frontends bake `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
-# `SUPPORT_EMAIL` at build time (risk R-D4), so a QA frontend image is not a
-# production frontend image and never can be; those are tagged
-# `f2c/club:qa-<sha>` so the two cannot be confused by anyone reading the
-# repository listing.
+# **All three artefacts are environment-agnostic, and they are tagged the same
+# way.** `f2c/api:<sha>`, `f2c/club:<sha>` and `f2c/market:<sha>` each read every
+# environment-specific value from the container app at runtime -- design/deploy.md
+# section 3 -- so the tag names the commit and nothing else, and the same image
+# is promoted unchanged to UAT and production.
+#
+# The frontends used to be the exception. They baked `SITE_URL`, `APP_ENV`,
+# `CDN_BASE_URL` and `SUPPORT_EMAIL`, which made a QA image something that could
+# never be a production image, and they carried a `qa-` prefix so that nobody
+# read one as promotable. That was risk R-D4 and it is closed; the prefix went
+# with it. **A `qa-`, `uat-` or `production-` prefixed frontend tag in the
+# registry is therefore an artefact from before this change**, not something
+# this workflow can still produce.
 #
 # The one-time Azure and GitHub setup is `.github/scripts/azure-oidc-setup.sh`.
 
@@ -288,28 +293,20 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Check the deployment variables
-        # The build arguments as well as the login. `SITE_URL` and
-        # `SUPPORT_EMAIL` are checked again inside the club Dockerfile, but only
-        # after `npm ci` has run; `CDN_BASE_URL` and `APP_ENV` are checked
-        # nowhere until `next build` throws from inside a layer. The market
-        # takes two of the four, which is why they are split by application here
-        # exactly as they are in `Assemble the build arguments` below.
+        # The login and the registry, and nothing else. This job used to check
+        # `APP_ENV`, `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL`
+        # and `MARKET_SITE_URL` as well, because they were build arguments and
+        # an unset one produced an image whose canonical tag pointed at nowhere.
+        # They are container app settings now -- R-D4 -- so this build has no
+        # opinion about them, and the container refuses to start without them
+        # instead. See `frontend/deploy/entrypoint.sh`.
         env:
           VARS: ${{ toJSON(vars) }}
           ENVIRONMENT: qa
-          APP: ${{ matrix.app }}
-        run: |
-          set -euo pipefail
-          case "$APP" in
-            club)   per_app='CLUB_SITE_URL CLUB_CDN_BASE_URL CLUB_SUPPORT_EMAIL' ;;
-            market) per_app='MARKET_SITE_URL' ;;
-            *)      echo "Unknown application: $APP" >&2; exit 1 ;;
-          esac
-          # Unquoted on purpose: each name is its own argument.
-          # shellcheck disable=SC2086
-          python3 .github/scripts/require_vars.py \
-            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
-            ACR_NAME APP_ENV $per_app
+        run: >-
+          python3 .github/scripts/require_vars.py
+          AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+          ACR_NAME
 
       - uses: azure/login@v2
         with:
@@ -322,43 +319,6 @@ jobs:
         env:
           ACR_NAME: ${{ vars.ACR_NAME }}
 
-      - name: Assemble the build arguments
-        id: args
-        # **The club takes four and the market takes two.** The market
-        # Dockerfile declares neither `CDN_BASE_URL` nor `SUPPORT_EMAIL` --
-        # design/deploy.md 4.3, because the club film and the blocked-membership
-        # screen are both the club's -- so passing them would be a build
-        # argument nothing reads.
-        #
-        # `SITE_URL` and `SUPPORT_EMAIL` are both checked hard inside the club
-        # Dockerfile, so an unset variable fails the build naming the argument
-        # the operator actually has to set, rather than producing an image whose
-        # canonical tag points at nowhere.
-        env:
-          APP: ${{ matrix.app }}
-          APP_ENV: ${{ vars.APP_ENV }}
-          CLUB_SITE_URL: ${{ vars.CLUB_SITE_URL }}
-          CLUB_CDN_BASE_URL: ${{ vars.CLUB_CDN_BASE_URL }}
-          CLUB_SUPPORT_EMAIL: ${{ vars.CLUB_SUPPORT_EMAIL }}
-          MARKET_SITE_URL: ${{ vars.MARKET_SITE_URL }}
-        run: |
-          set -euo pipefail
-          {
-            echo 'build_args<<BUILD_ARGS_EOF'
-            echo "APP_ENV=${APP_ENV}"
-            case "$APP" in
-              club)
-                echo "SITE_URL=${CLUB_SITE_URL}"
-                echo "CDN_BASE_URL=${CLUB_CDN_BASE_URL}"
-                echo "SUPPORT_EMAIL=${CLUB_SUPPORT_EMAIL}"
-                ;;
-              market)
-                echo "SITE_URL=${MARKET_SITE_URL}"
-                ;;
-            esac
-            echo 'BUILD_ARGS_EOF'
-          } >> "$GITHUB_OUTPUT"
-
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -370,17 +330,16 @@ jobs:
           context: frontend
           file: frontend/${{ matrix.app }}/Dockerfile
           push: true
-          # **`qa-` prefixed, and that prefix is load-bearing.** The build
-          # arguments above are baked into the image, so this artefact is only
-          # ever valid for QA -- risk R-D4. An unprefixed tag would look
-          # promotable and would eventually ship a production storefront
-          # rendering QA canonical tags.
-          tags: ${{ env.REGISTRY }}/f2c/${{ matrix.app }}:qa-${{ github.sha }}
-          build-args: ${{ steps.args.outputs.build_args }}
+          # No environment prefix, and no build arguments to justify one. This
+          # image reads `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL`
+          # from the container app at runtime, exactly as the API reads its
+          # settings, which is what makes the promotion in `promote.yml` a retag
+          # rather than a rebuild. R-D4.
+          tags: ${{ env.REGISTRY }}/f2c/${{ matrix.app }}:${{ github.sha }}
+          # No `za.co.f2c.environment` either: there is no environment to name.
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            za.co.f2c.environment=qa
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
           provenance: false
@@ -487,6 +446,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy
+        id: deploy
         # The tag was pushed moments ago, and the deployment names the digest
         # anyway. On Basic tier a tag is mutable, so a revision pinned to a tag
         # is a revision that can change what it runs without a deployment.
@@ -494,7 +454,7 @@ jobs:
           ACR_NAME: ${{ vars.ACR_NAME }}
           REGISTRY: ${{ env.REGISTRY }}
           APP: ${{ matrix.app }}
-          TAG: qa-${{ github.sha }}
+          TAG: ${{ github.sha }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           APP_CLUB: ${{ vars.CONTAINERAPP_CLUB }}
           APP_MARKET: ${{ vars.CONTAINERAPP_MARKET }}
@@ -516,3 +476,26 @@ jobs:
             --output none
 
           echo "$container_app is on f2c/${APP}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Move the environment tag
+        # The same moving tag the API gets, and newly possible: until R-D4
+        # closed, a frontend image was specific to one environment and `:qa` on
+        # a repository whose every tag was already `qa-` prefixed would have
+        # said nothing. Now `f2c/club:qa` and `f2c/club:uat` can differ, so the
+        # registry listing answers "what is running where" for all three
+        # artefacts rather than one -- which is what design/deploy.md 6.4's
+        # ladder check reads.
+        #
+        # Server-side: no pull, no push, no layer transfer. The deployment above
+        # pinned the digest, so this tag is a label rather than something a
+        # running revision depends on.
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          REGISTRY: ${{ env.REGISTRY }}
+          APP: ${{ matrix.app }}
+          DIGEST: ${{ steps.deploy.outputs.digest }}
+        run: |
+          az acr import --name "$ACR_NAME" \
+            --source "${REGISTRY}/f2c/${APP}@${DIGEST}" \
+            --image "f2c/${APP}:qa" --force

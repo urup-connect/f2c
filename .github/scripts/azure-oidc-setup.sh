@@ -154,9 +154,10 @@ cat <<REMAINING
 
 ==> Done for $ENVIRONMENT.
 
-Still to set for this environment, because only you know the values. The
-container app names are what \`az containerapp create\` was given; the four
-build arguments are design/deploy.md sections 4.2 and 4.3.
+Still to set for this environment, because only you know the values. These are
+the container app names \`az containerapp create\` was given, and nothing else:
+the workflows use them to address the apps, and every setting the apps
+themselves read lives on the apps.
 
   gh variable set --env $ENVIRONMENT \\
       CONTAINERAPP_API          # f2c-api
@@ -165,12 +166,16 @@ build arguments are design/deploy.md sections 4.2 and 4.3.
       CONTAINERAPP_BEAT         # f2c-beat
       CONTAINERAPP_CLUB         # f2c-club
       CONTAINERAPP_MARKET       # f2c-market
-      APP_ENV                   # qa | uat | production
-      CLUB_SITE_URL             # https://qa.f2c-cannabis.co.za
-      CLUB_CDN_BASE_URL
-      CLUB_SUPPORT_EMAIL        # members@f2c-cannabis.co.za
-      MARKET_SITE_URL           # https://qa.f2c.co.za
-      DEPLOY_MARKET             # 'true' to build and deploy the market storefront
+      DEPLOY_MARKET             # 'true' to deploy the market storefront
+
+APP_ENV, CLUB_SITE_URL, CLUB_CDN_BASE_URL, CLUB_SUPPORT_EMAIL and
+MARKET_SITE_URL used to be on that list. They were build arguments, so the
+workflow had to carry them from a GitHub variable into \`docker build\`. They are
+container app environment variables now -- set on f2c-club and f2c-market as
+SITE_URL, APP_ENV, CDN_BASE_URL and SUPPORT_EMAIL, per design/deploy-quickstart.md
+tables D and E -- which is what makes one frontend image serve all three
+environments (design/deploy.md R-D4). A frontend container missing any of them
+refuses to start.
 
 DEPLOY_MARKET gates the market storefront everywhere, which is decision D2 --
 QA can skip it while the store is on the back burner. It saves a container app,

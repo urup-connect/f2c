@@ -11,10 +11,13 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     /*
-     * lib/site.ts validates the deployment configuration when it is first loaded, so the unit
-     * suite supplies it here rather than depending on a developer's .env.local.
+     * `siteConfig()` validates the deployment configuration on each call, so the unit suite
+     * supplies it here rather than depending on a developer's .env.local. Deployed, these come
+     * from the container app and the container refuses to start without them -- see
+     * frontend/deploy/entrypoint.sh.
      *
-     * Two variables, not three: the market reads no CDN_BASE_URL. See lib/site.ts.
+     * Two variables, not four: the market reads no CDN_BASE_URL and no SUPPORT_EMAIL. See
+     * lib/site.ts.
      */
     env: {
       APP_ENV: 'local',

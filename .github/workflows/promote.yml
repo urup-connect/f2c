@@ -1,22 +1,25 @@
 # Promote a release from QA to UAT, and from UAT to production.
 #
-# **The unit of promotion is a commit, not an image, and that is forced on us
-# rather than chosen.** design/deploy.md section 3 splits the artefacts in two:
+# **Nothing is rebuilt here. All three artefacts are promoted by digest.** Each
+# of `f2c/api`, `f2c/club` and `f2c/market` reads every environment-specific
+# value from the container app at runtime -- design/deploy.md section 3 -- so a
+# promotion moves the image the target environment will run: the revision is
+# pinned to the digest and `az acr import` retags it server-side, no pull, no
+# push, no rebuild. What ran in QA is bit-for-bit what runs in production.
 #
-#   * `f2c/api` reads every environment-specific value from the container app at
-#     runtime -- that is what Block 0 P6 bought when `NEXT_PUBLIC_DJANGO_API_URL`
-#     became `DJANGO_API_PUBLIC_URL`. So the API is promoted by *moving the
-#     digest*: `az acr import` retags it server-side, no pull, no push, no
-#     rebuild. What ran in QA is bit-for-bit what runs in production.
-#   * The two frontends bake `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
-#     `SUPPORT_EMAIL` at build time, because `lib/site.ts` reads them when the
-#     module is first loaded, which is during prerendering. A QA frontend image
-#     therefore *cannot* be promoted -- risk R-D4 -- and promoting one means
-#     rebuilding the same commit with the target environment's build arguments.
+# **This used to be true of the API alone.** The frontends baked `SITE_URL`,
+# `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL`, because `lib/site.ts` read them
+# when the module was first loaded and `next build` loads every module. A QA
+# frontend image therefore could not be promoted -- risk R-D4 -- and this job
+# rebuilt the commit with the target environment's build arguments instead. That
+# is closed: `lib/site.ts` reads them during render, and the container app
+# supplies them.
 #
-# One of the two can be promoted and the other has to be rebuilt, so the input
-# below is a commit SHA. An image tag would work for the API and would be
-# meaningless for the frontends.
+# **The input is still a commit SHA, but it is now a choice rather than a
+# constraint.** An image tag would do -- there is one image per artefact per
+# commit and no environment prefix left to get wrong. A SHA is kept because it
+# names all three artefacts at once and reads the same in the run log as it does
+# in `git log`.
 #
 # **What stands in for re-running the tests.** `ci.yml` is not called from here,
 # and deliberately: a called workflow runs at the *caller's* ref, so it would
@@ -50,11 +53,11 @@ on:
         type: boolean
         default: true
       club:
-        description: 'Rebuild and deploy the club frontend'
+        description: 'Promote and deploy the club frontend'
         type: boolean
         default: true
       market:
-        description: 'Rebuild and deploy the market frontend'
+        description: 'Promote and deploy the market frontend'
         type: boolean
         default: false
       skip_ladder_check:
@@ -215,7 +218,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Commit | \`${SHA}\` |"
             echo "| API | ${digest:-not promoted} |"
-            echo "| Frontends rebuilt | ${frontends} |"
+            echo "| Frontends promoted | ${frontends} |"
             echo "| Ladder check skipped | ${SKIP_LADDER} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -279,9 +282,9 @@ jobs:
           az acr import --name "$ACR_NAME" \
             --source "$SOURCE" --image "$TARGET" --force
 
-  # ------------------------------------------------- the frontends, rebuilt
+  # --------------------------------------------- the frontends, by digest
   promote-frontend:
-    name: Rebuild the ${{ matrix.app }} frontend for ${{ inputs.to_env }}
+    name: Promote the ${{ matrix.app }} frontend to ${{ inputs.to_env }}
     needs: verify
     if: needs.verify.outputs.frontends != '[]'
     runs-on: ubuntu-latest
@@ -294,30 +297,28 @@ jobs:
       matrix:
         app: ${{ fromJSON(needs.verify.outputs.frontends) }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # **The promoted commit, and this is the whole reason the input is a
-          # SHA.** The four build arguments below differ per environment, so the
-          # artefact cannot be moved -- what is carried forward is the source.
-          ref: ${{ inputs.sha }}
-
-      - uses: docker/setup-buildx-action@v3
-
       - name: Fetch the deployment scripts from trunk
         # Trunk, not `inputs.sha`, and only `.github/scripts`. `promote-api`
         # takes the same line on `deploy-api.sh`: deployment tooling comes from
         # trunk so that a fix to it reaches the promotion of an older commit.
-        # Beside the workspace rather than into it -- the checkout above cleans
-        # what it lands in.
+        #
+        # **The promoted commit is no longer checked out at all.** It used to be
+        # -- this job rebuilt the image from source, which was the whole reason
+        # the input is a SHA. With R-D4 closed there is nothing here to build,
+        # and the SHA is a registry lookup key.
         uses: actions/checkout@v4
         with:
           sparse-checkout: .github/scripts
           fetch-depth: 1
-          path: trunk
 
       - name: Check the deployment variables
-        # This job builds and deploys, so it needs both halves: the target
-        # environment's build arguments and its container app name.
+        # The container app name and the registry. `APP_ENV`, `CLUB_SITE_URL`,
+        # `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` and `MARKET_SITE_URL` were
+        # checked here while they were build arguments. They are container app
+        # settings now, set on the app itself rather than passed through a
+        # workflow run -- see design/deploy-quickstart.md tables D and E -- and
+        # `frontend/deploy/entrypoint.sh` refuses to start a container that is
+        # missing one.
         env:
           VARS: ${{ toJSON(vars) }}
           ENVIRONMENT: ${{ inputs.to_env }}
@@ -325,14 +326,14 @@ jobs:
         run: |
           set -euo pipefail
           case "$APP" in
-            club)   per_app='CLUB_SITE_URL CLUB_CDN_BASE_URL CLUB_SUPPORT_EMAIL CONTAINERAPP_CLUB' ;;
-            market) per_app='MARKET_SITE_URL CONTAINERAPP_MARKET' ;;
+            club)   per_app='CONTAINERAPP_CLUB' ;;
+            market) per_app='CONTAINERAPP_MARKET' ;;
             *)      echo "Unknown application: $APP" >&2; exit 1 ;;
           esac
           # shellcheck disable=SC2086
-          python3 trunk/.github/scripts/require_vars.py \
+          python3 .github/scripts/require_vars.py \
             AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
-            ACR_NAME AZURE_RESOURCE_GROUP APP_ENV $per_app
+            ACR_NAME AZURE_RESOURCE_GROUP $per_app
 
       - uses: azure/login@v2
         with:
@@ -340,66 +341,66 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Sign in to the registry
-        run: az acr login --name "$ACR_NAME"
+      - name: Resolve the digest and check the ladder
+        id: resolve
+        # The same two gates `verify` applies to the API, applied per frontend.
+        # Both are newly possible: while a frontend image was specific to one
+        # environment there was no single digest to follow up the ladder, so
+        # production could receive a storefront no one had seen in UAT and
+        # nothing would say so.
         env:
           ACR_NAME: ${{ vars.ACR_NAME }}
-
-      - name: Assemble the build arguments
-        id: args
-        # The target environment's values, read from that GitHub environment.
-        # The market Dockerfile declares neither `CDN_BASE_URL` nor
-        # `SUPPORT_EMAIL` -- design/deploy.md 4.3.
-        env:
           APP: ${{ matrix.app }}
-          APP_ENV: ${{ vars.APP_ENV }}
-          CLUB_SITE_URL: ${{ vars.CLUB_SITE_URL }}
-          CLUB_CDN_BASE_URL: ${{ vars.CLUB_CDN_BASE_URL }}
-          CLUB_SUPPORT_EMAIL: ${{ vars.CLUB_SUPPORT_EMAIL }}
-          MARKET_SITE_URL: ${{ vars.MARKET_SITE_URL }}
+          SHA: ${{ inputs.sha }}
+          TO_ENV: ${{ inputs.to_env }}
+          SKIP_LADDER: ${{ inputs.skip_ladder_check }}
         run: |
           set -euo pipefail
-          {
-            echo 'build_args<<BUILD_ARGS_EOF'
-            echo "APP_ENV=${APP_ENV}"
-            case "$APP" in
-              club)
-                echo "SITE_URL=${CLUB_SITE_URL}"
-                echo "CDN_BASE_URL=${CLUB_CDN_BASE_URL}"
-                echo "SUPPORT_EMAIL=${CLUB_SUPPORT_EMAIL}"
-                ;;
-              market)
-                echo "SITE_URL=${MARKET_SITE_URL}"
-                ;;
-            esac
-            echo 'BUILD_ARGS_EOF'
-          } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: frontend
-          file: frontend/${{ matrix.app }}/Dockerfile
-          push: true
-          # Prefixed with the environment, because that is what the image is
-          # specific to. `f2c/club:production-<sha>` and `f2c/club:qa-<sha>` are
-          # the same source and different artefacts, and the tag is the only
-          # place that shows.
-          tags: ${{ env.REGISTRY }}/f2c/${{ matrix.app }}:${{ inputs.to_env }}-${{ inputs.sha }}
-          build-args: ${{ steps.args.outputs.build_args }}
-          labels: |
-            org.opencontainers.image.revision=${{ inputs.sha }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            za.co.f2c.environment=${{ inputs.to_env }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          provenance: false
+          # The registry is the gate: no image means no `release.yml` run, and
+          # no `release.yml` run means the commit was never proved by the tests.
+          if ! digest=$(bash .github/scripts/acr-digest.sh \
+                          "$ACR_NAME" "f2c/${APP}:${SHA}"); then
+            echo "::error::No f2c/${APP}:${SHA} in the registry. Only a commit" \
+                 "that has been through release.yml -- and therefore through the" \
+                 "tests -- can be promoted. Run release.yml first."
+            exit 1
+          fi
+          echo "$APP digest: $digest"
+
+          # Production takes what UAT is running. The `:uat` tag is moved by
+          # this job as its last step, so it records what was signed off.
+          if [ "$TO_ENV" = 'production' ] && [ "$SKIP_LADDER" != 'true' ]; then
+            uat_digest=$(bash .github/scripts/acr-digest.sh \
+                           "$ACR_NAME" "f2c/${APP}:uat" || echo '')
+
+            if [ -z "$uat_digest" ]; then
+              echo "::error::f2c/${APP}:uat does not exist, so there is nothing" \
+                   "signed off to promote. Promote to UAT first, or tick" \
+                   "skip_ladder_check and say why in the run."
+              exit 1
+            fi
+
+            if [ "$uat_digest" != "$digest" ]; then
+              echo "::error::UAT is running $uat_digest for $APP and this" \
+                   "promotion carries $digest. Production would receive a" \
+                   "storefront UAT never saw. Promote this commit to UAT first," \
+                   "or tick skip_ladder_check."
+              exit 1
+            fi
+            echo "Ladder check passed for $APP: this is the digest UAT is running."
+          elif [ "$SKIP_LADDER" = 'true' ]; then
+            echo "::warning::skip_ladder_check is set. $TO_ENV is receiving a" \
+                 "$APP image that was not verified in the environment below it."
+          fi
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Deploy
         env:
           REGISTRY: ${{ env.REGISTRY }}
           APP: ${{ matrix.app }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           APP_CLUB: ${{ vars.CONTAINERAPP_CLUB }}
           APP_MARKET: ${{ vars.CONTAINERAPP_MARKET }}
@@ -419,3 +420,19 @@ jobs:
             --output none
 
           echo "$container_app is on f2c/${APP}@${DIGEST}"
+
+      - name: Move the environment tag
+        # Last, and only on success -- `promote-api`'s rule, for its reason:
+        # this tag is what the next promotion's ladder check reads, so it must
+        # mean "this is running here" rather than "somebody tried to put this
+        # here".
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          REGISTRY: ${{ env.REGISTRY }}
+          APP: ${{ matrix.app }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          TO_ENV: ${{ inputs.to_env }}
+        run: |
+          az acr import --name "$ACR_NAME" \
+            --source "${REGISTRY}/f2c/${APP}@${DIGEST}" \
+            --image "f2c/${APP}:${TO_ENV}" --force

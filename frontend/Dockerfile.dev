@@ -1,11 +1,15 @@
 # The development image for both Next.js applications, used only by compose.yaml.
 #
 # **One image, two services.** `club/Dockerfile` and `market/Dockerfile` are the
-# deployed artefacts: they build a standalone server, bake SITE_URL, and run a
-# read-only tree as an unprivileged user. None of that survives a code change
-# without a rebuild, which is the wrong trade for a stack you are editing. This
-# one installs the workspace's dependencies and then runs `next dev` over a bind
-# mount, so the source on disk is the source being served.
+# deployed artefacts: they build a standalone server and run a read-only tree as
+# an unprivileged user. Neither survives a code change without a rebuild, which
+# is the wrong trade for a stack you are editing. This one installs the
+# workspace's dependencies and then runs `next dev` over a bind mount, so the
+# source on disk is the source being served.
+#
+# The deployed images used to bake `SITE_URL` too, and no longer do -- all four
+# site variables are read from the container's environment (design/deploy.md
+# R-D4). compose.yaml sets them for these services in exactly the same way.
 #
 # The context is `frontend/` for the same reason the deployed ones use it: one
 # lockfile resolves the whole workspace, and `npm ci` fails on a member it

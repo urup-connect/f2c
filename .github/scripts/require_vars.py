@@ -19,14 +19,15 @@ Azure variables unset, ``azure/login`` answers::
 while the actual fault is a GitHub environment with nothing set on it. Every
 variable further down a job fails worse rather than better: an empty
 ``ACR_NAME`` becomes ``az acr login --name ''``, an empty ``CONTAINERAPP_API``
-becomes a container app that does not exist, and an empty ``CLUB_SITE_URL``
-reaches ``next build`` inside a Docker layer as ``SITE_URL is not set``. Four
-different messages about the same class of fault, none of them naming which
-variable or where it is set.
+becomes a container app that does not exist, and an empty ``AZURE_RESOURCE_GROUP``
+becomes an ``az containerapp update`` against a group nobody named. Different
+messages about the same class of fault, none of them naming which variable or
+where it is set.
 
 So each job states the variables it reads and they are checked once, before the
-first of them is used. Same argument as the ``test -n "$SITE_URL"`` guards in
-``frontend/club/Dockerfile``: fail on the argument the operator has to set.
+first of them is used. Same argument as ``frontend/deploy/entrypoint.sh``, which
+does this for the frontend containers' own settings: fail on the name the
+operator has to set, before anything that needs it runs.
 
 **``vars`` and not ``secrets``, which is the mistake to expect.** Azure's own
 documentation uses ``secrets.AZURE_CLIENT_ID``; every workflow here reads

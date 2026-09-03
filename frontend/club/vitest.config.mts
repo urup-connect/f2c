@@ -11,8 +11,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     /*
-     * lib/site.ts validates the deployment configuration when it is first loaded, so the
-     * unit suite supplies it here rather than depending on a developer's .env.local.
+     * `siteConfig()` validates the deployment configuration on each call, so the unit suite
+     * supplies it here rather than depending on a developer's .env.local. Deployed, these come
+     * from the container app and the container refuses to start without them -- see
+     * frontend/deploy/entrypoint.sh.
      */
     env: {
       APP_ENV: 'local',

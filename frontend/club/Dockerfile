@@ -2,44 +2,51 @@
 #
 # **Build this from `frontend/`, not from this directory:**
 #
-#     docker build -f club/Dockerfile -t f2c-club \
-#       --build-arg SITE_URL=https://f2c-cannabis.co.za \
-#       --build-arg APP_ENV=production \
-#       --build-arg CDN_BASE_URL=https://static.example.com/cc \
-#       --build-arg SUPPORT_EMAIL=members@f2c-cannabis.co.za \
-#       .
+#     docker build -f club/Dockerfile -t f2c-club .
 #
 # The context is the workspace because that is where the lockfile and the
 # hoisted `node_modules` live. `next.config.ts` pins `outputFileTracingRoot` to
 # the same place, and the two have to agree or the traced output describes a
 # tree the build cannot see.
 #
-# **The API address is no longer among these, and that was the point.** It used
-# to be a `NEXT_PUBLIC_` build argument, inlined into the browser bundle, which
-# tied every image to one environment: a build could not be promoted from QA to
-# Production, it had to be rebuilt. It is now `DJANGO_API_PUBLIC_URL`, read at
-# request time and written into the document by the root layout -- see
-# `lib/api-address.ts`. That is Block 0 P6 in design/todo.md, and it is closed.
+# **There are no build arguments, and that is the point of this image.** Nothing
+# about a deployment is baked in, so one image serves QA, UAT and Production and
+# a promotion is a retag rather than a rebuild. That is design/deploy.md R-D4,
+# closed.
 #
-# What remains build-time is `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and
-# `SUPPORT_EMAIL`, which `lib/site.ts` evaluates when the module is first loaded.
-# Those are still baked, so the image is still environment-specific until they
-# move too -- but the address a member browser talks to is no longer one of them,
-# and it was the one that mattered:
-# SITE_URL is wrong in a way that shows up in a canonical tag, and the API
-# address was wrong in a way that broke every request after sign-in.
+# It closed in two steps, and the second one is why this file has shrunk.
+# `NEXT_PUBLIC_DJANGO_API_URL` went first: `next build` inlined it into the
+# browser bundle, which tied every image to one environment. It is now
+# `DJANGO_API_PUBLIC_URL`, read at request time and written into the document by
+# the root layout -- `lib/api-address.ts`, Block 0 P6 in design/todo.md. Then
+# `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` followed the same
+# route: `lib/site.ts` used to read them when the module was first loaded, which
+# happens during `next build` because the build imports every module to analyse
+# the route tree. It reads them during render now.
+#
+# **What the build no longer catches, the entrypoint does.** A missing build
+# argument failed the build, named itself, and never reached a registry. A
+# missing container setting would otherwise surface as a 500 on whichever page
+# first needed the value -- for `SUPPORT_EMAIL` that is the blocked-membership
+# screen, which only a member the club has already shut out ever reaches, so the
+# container could look healthy for weeks. `deploy/entrypoint.sh` checks all four
+# before starting the server instead, and the revision fails to come up. See
+# `REQUIRED_ENV` in the runtime stage below.
 
 # **The base image is pinned by digest, and the tag beside it is there to be
 # read rather than resolved.** design/deploy.md R-D7.
 #
-# A promotion to UAT or production does not move this image, it **rebuilds**
-# it -- the build arguments below are baked in, so there is no other choice
-# (R-D4). `npm ci` makes the dependency tree reproducible from the committed
-# lockfile, but `node:24-slim` is a floating tag: republished between the QA
-# build and the production build, it changes the operating system packages
-# underneath an application whose own code and dependencies are identical.
-# The digest is what closes the gap between "the same commit" and "the same
-# image".
+# **The reason is weaker than it was, and worth restating rather than leaving to
+# be misread.** This pin used to carry a promotion: under R-D4 a move to UAT or
+# Production *rebuilt* the image, so the digest was what closed the gap between
+# "the same commit" and "the same image" across three environments. With R-D4
+# closed a promotion moves this exact image and rebuilds nothing, and that
+# argument is gone with it. What remains is narrower and still real: `npm ci`
+# makes the dependency tree reproducible from the committed lockfile, but
+# `node:24-slim` is a floating tag, so an image rebuilt from an older commit
+# would otherwise land on whatever operating system packages that tag points at
+# on the day. The pin makes a rebuild reproducible over time rather than across
+# environments.
 #
 # **One ARG rather than a digest on each of the three FROM lines below.** A
 # digest copied three times is a digest that can be bumped twice, and a build
@@ -80,25 +87,11 @@ COPY club/package.json ./club/
 COPY market/package.json ./market/
 COPY club ./club
 
-# Inlined into the bundle, or read during prerendering. See the note above.
-ARG SITE_URL
-ARG APP_ENV=production
-ARG CDN_BASE_URL
-# The mailbox on the blocked-membership screen. Required, and deliberately not
-# defaulted: that screen exists so somebody the club has shut out can ask about
-# it, and "contact support" with no address on it is the dead end it replaced.
-ARG SUPPORT_EMAIL
-ENV SITE_URL=$SITE_URL \
-    APP_ENV=$APP_ENV \
-    CDN_BASE_URL=$CDN_BASE_URL \
-    SUPPORT_EMAIL=$SUPPORT_EMAIL \
-    NEXT_TELEMETRY_DISABLED=1
-
-# `lib/site.ts` throws on a missing SITE_URL during prerendering anyway; checking
-# it here names the build argument rather than the variable, which is what the
-# person running the build actually set.
-RUN test -n "$SITE_URL" || { echo "SITE_URL build-arg is required" >&2; exit 1; }
-RUN test -n "$SUPPORT_EMAIL" || { echo "SUPPORT_EMAIL build-arg is required" >&2; exit 1; }
+# **Nothing environment-specific reaches this stage, and that is the property
+# the whole change is for.** It is checkable rather than asserted: `next build`
+# completes with `SITE_URL`, `APP_ENV`, `CDN_BASE_URL`, `SUPPORT_EMAIL` and both
+# API addresses unset.
+ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build --workspace @f2c/club-web
 
@@ -114,6 +107,12 @@ ENV NODE_ENV=production \
 RUN useradd --create-home --uid 10001 next
 WORKDIR /app
 
+# The startup gate, copied above the build output so that a change to the
+# application does not invalidate this layer. Shared with the other frontend
+# image, which is why the variable names are in `REQUIRED_ENV` below rather
+# than in the script.
+COPY --chmod=0755 deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+
 # **Three copies, and standalone needs all three.** The traced output carries
 # the server and its dependencies but neither the static assets nor `public/`,
 # so an image built from `standalone` alone starts, serves HTML, and renders
@@ -126,10 +125,22 @@ COPY --from=build --chown=next:next /workspace/club/public ./club/public
 USER next
 EXPOSE 3000
 
-# Two addresses, both read here at runtime and neither baked into the image:
+# **Every setting this image reads, and all of them at runtime.** Nothing below
+# is baked in; the container app supplies the lot.
+#   SITE_URL, APP_ENV, CDN_BASE_URL, SUPPORT_EMAIL -- read by `lib/site.ts`
 #   DJANGO_API_URL         -- how the Next.js server reaches Django (container network)
 #   DJANGO_API_PUBLIC_URL  -- how the browser reaches Django (publicly resolvable)
-# The second is rendered into the document by the root layout. It must sit inside
+# The last is rendered into the document by the root layout. It must sit inside
 # the same registrable domain the browser uses for this app, or the request is
 # cross-site and the SameSite=Lax session cookie is not sent -- conflict.md C30.
+
+# What the entrypoint refuses to start without. **The two API addresses are
+# deliberately absent from this list**, and the difference is how loudly each
+# one fails. The root layout reads `DJANGO_API_PUBLIC_URL` on every page, so an
+# unset one is a 500 on the first request anybody makes and a gate would tell
+# nobody anything they were not about to learn. The names below are read by
+# pages a deployment can serve for a long time without reaching.
+ENV REQUIRED_ENV="SITE_URL APP_ENV CDN_BASE_URL SUPPORT_EMAIL"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["node", "club/server.js"]
