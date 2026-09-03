@@ -1,0 +1,49 @@
+name: Trigger auto deployment for qa-f2c-api
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ master ]
+    paths:
+    - '**'
+    - '.github/workflows/qa-f2c-api-AutoDeployTrigger-c214b7a4-b652-4fc5-b896-952304d41043.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:      
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.QAF2CAPI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.QAF2CAPI_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.QAF2CAPI_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}
+          _dockerfilePathKey_: _dockerfilePath_
+          _targetLabelKey_: _targetLabel_
+          registryUrl: crf2cweu.azurecr.io
+          registryUsername: ${{ secrets.QAF2CAPI_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.QAF2CAPI_REGISTRY_PASSWORD }}
+          containerAppName: qa-f2c-api
+          resourceGroup: rg-f2c-qa-weu
+          imageToBuild: crf2cweu.azurecr.io/qa-f2c-api:${{ github.sha }}
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
+
+
