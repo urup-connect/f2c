@@ -134,26 +134,28 @@ in on a deployed environment today.**
       defaulting to localhost as the old code did. Cost: both root layouts are `force-dynamic`,
       which moved `/_not-found` and the club's two static sign-up confirmations off the static path
       and nothing else — every other route already read cookies — **C31**
-- [ ] **Finish what P6 started: `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` are
-      still baked at image build time.** P6 above moved the API address to runtime and proved one
-      bundle can serve two addresses. These four did not move, and they are the reason
-      `release.yml` tags every frontend image `qa-` — the prefix is load-bearing, it says the
-      artefact is valid for QA only, and R-D4 is the risk it guards. So a frontend image still
-      cannot be promoted from QA to Production; it has to be rebuilt, which is the coupling P6
-      was written to remove, surviving in the variables P6 did not reach.
-      **The mechanism is one line per application.** `lib/site.ts` ends with
-      `export const SITE_CONFIG = readSiteConfig(process.env)`, evaluated on import, and the root
-      layout, `sitemap.ts`, `robots.ts` and `lib/api-address.ts` all import it. `lib/api-address.ts`
-      is the shape to copy — its docstring says *nothing here runs at module load*, and that is
-      precisely why `DJANGO_API_PUBLIC_URL` could be promoted while these cannot.
-      **Found because CI could not build the frontend at all.** With no `.env.local` and no build
-      arguments, `next build` threw on every route while collecting segment config and reported it
-      as `Failed to collect page data for /_not-found` — a missing variable named nowhere. The CI
-      job now sets four throwaway values, which turns the build green and is not this task: it
-      proves the build compiles, not that the artefact is promotable. Doing this properly means a
-      lazy reader in both applications, both layouts taking `generateMetadata`, and both
-      Dockerfiles dropping the arguments — then the `qa-` prefix and R-D4 go with them.
-      `deploy.md` 4.3
+- [x] **Finish what P6 started: `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` were
+      baked at image build time — done.** P6 above moved the API address to runtime and proved one
+      bundle can serve two addresses; these four did not move with it, which is why `release.yml`
+      tagged every frontend image `qa-`. A frontend image could not be promoted from QA to
+      Production, and R-D4 was the risk that named it.
+      **It was one line per application.** `lib/site.ts` ended with
+      `export const SITE_CONFIG = readSiteConfig(process.env)`, evaluated on import — and
+      `next build` imports every module to analyse the route tree, so the read was a build
+      requirement. It exports `siteConfig()` now, called during render, which is the shape
+      `lib/api-address.ts` established: *nothing here runs at module load*.
+      **Four pieces.** Both root layouts build their metadata in `generateMetadata`, because
+      `export const metadata` is an object evaluated at import and `metadataBase` read `SITE_URL`.
+      Both proxies call `siteConfig()` per request — which works because Next 16 defaults proxy to
+      the Node.js runtime, where `process.env` is the container's; the edge runtime would have
+      inlined it at build and returned a stale value without erroring. Both Dockerfiles dropped
+      their `ARG`s, and `frontend/deploy/entrypoint.sh` took over the fail-fast the build used to
+      give. And the `qa-` prefix went with R-D4: the registry now holds `f2c/club:<sha>` plus the
+      moving `:qa`, `:uat` and `:production` tags, exactly like the API, so `promote.yml` moves the
+      frontends by digest instead of rebuilding them.
+      **CI is now the regression test.** The frontend job used to set four throwaway values
+      because the build could not import a route without them; it sets none, so a read put back at
+      module load fails the build in the same run. `deploy.md` 3, 4.2 and R-D4
 - [ ] Grant the founding administrators their authority by hand — `is_staff` for the UC tier, and a
       club `StorefrontStaff` row for each club administrator. **No migration can guess which
       accounts belong in which tier**, and until somebody does it a deployed environment has nobody

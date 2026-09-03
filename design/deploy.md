@@ -4,6 +4,8 @@ What has to exist on Azure before anybody outside the team can see this platform
 configuration entry carries which fact, where each one is stored, and how a release moves from
 one environment to the next.
 
+**For the steps and the configuration entries alone, see [`deploy-quickstart.md`](deploy-quickstart.md).** This document is the reasoning behind them, and is the place to look when a value seems arbitrary or a step seems skippable.
+
 This document describes a deployment that **does not exist yet**. Every other document in this set
 describes the system as it stands; this one is the exception, and it is written as a runbook rather
 than as a description. It is the expansion of Block 0 in [`todo.md`](todo.md), which counts the
@@ -127,19 +129,37 @@ remains the documentation and needs no change for this.
 | **Azure Key Vault** | `DJANGO_FIELD_ENCRYPTION_KEY`, `DJANGO_BLIND_INDEX_PEPPER` | These two are Block 0 P4. Key Vault gives versioning, soft delete and purge protection, which is most of the backup and rotation procedure P4 asks for. Referenced from the container app through the same managed identity that reaches blob storage |
 | **Container App secrets** | Every other secret: database password, Redis URL, mail passwords, Payfast key and passphrase, `DJANGO_SECRET_KEY` | Referenced from environment variables as `secretref:`. A second Key Vault hop for these buys little — they are all rotatable without touching stored data, which is exactly what the two above are not |
 | **Container App environment variables** | Everything else: hosts, origins, flags, amounts, addresses | Non-secret, and visible in the portal is the right property for them. A wrong `DJANGO_ALLOWED_HOSTS` should be readable by whoever is debugging it |
-| **GitHub Actions environments `qa`, `uat` and `production`** | The frontend **build arguments**, the container app names, and the three Azure identifiers the federated credential is minted against | `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL` are evaluated by `lib/site.ts` when the module is first loaded, which happens during prerendering. They belong to the build, not to the container app. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
+| **GitHub Actions environments `qa`, `uat` and `production`** | The container app names, the resource group, and the three Azure identifiers the federated credential is minted against | Everything here names something a *workflow* has to address; nothing here is read by a running container. It used to hold the frontend build arguments as well — see below. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
 
-**The consequence of that last row is worth stating rather than discovering.** Because those four
-are build arguments, **a QA frontend image cannot be promoted to production** — each environment
-builds its own. The API image is environment-agnostic and can be promoted, which is what Block 0 P6
-bought when `NEXT_PUBLIC_DJANGO_API_URL` became `DJANGO_API_PUBLIC_URL`. The frontends did not get
-the same treatment because `SITE_URL` is wrong in a way that shows up in a canonical tag, and the
-API address was wrong in a way that broke every request after sign-in.
+**Every artefact is environment-agnostic, and the third row is where all three get their
+environment.** `f2c/api`, `f2c/club` and `f2c/market` each read what distinguishes a QA deployment
+from a production one out of their own container app at start-up or at render time, so one image
+serves all three environments and a promotion moves it unchanged.
 
-**That one asymmetry decides the shape of the whole delivery pipeline**, which is section 6: the
-API is promoted by moving a digest between environments, the frontends are rebuilt from the same
-commit for each one, and the unit that moves between environments is therefore a commit rather
-than an image.
+**This is recent, and the previous arrangement is worth recording because the pipeline still carries
+its shape.** The API got there first, under Block 0 P6, when `NEXT_PUBLIC_DJANGO_API_URL` — inlined
+into the browser bundle by `next build` — became `DJANGO_API_PUBLIC_URL`, read on the server per
+request. The frontends did not follow at the time, and kept `SITE_URL`, `APP_ENV`, `CDN_BASE_URL`
+and `SUPPORT_EMAIL` as build arguments, because `lib/site.ts` read them at module load and
+`next build` loads every module to analyse the route tree. So a QA frontend image could not be
+promoted; each environment built its own. That was R-D4, and it is now closed: `lib/site.ts` exports
+`siteConfig()`, called during render, and the four are container app environment variables in 4.2
+and 4.3.
+
+**What the closure cost, and where it was put back.** A build argument that nobody set failed the
+build, named itself, and never reached a registry. A container setting that nobody sets fails at
+whichever request first reads it — and for `SUPPORT_EMAIL` that is the blocked-membership screen,
+reached by a member the club has already shut out and by nobody else, so the container could look
+healthy for weeks. `frontend/deploy/entrypoint.sh` closes that: it checks the names in `REQUIRED_ENV`
+and refuses to start the server without them, which is what `deploy/entrypoint.sh` already does for
+Django. Container Apps then holds the previous revision serving traffic while the new one fails.
+
+**What it did not buy back is a check on a value that is set and wrong.** `APP_ENV` decides
+indexing, so a production container carrying `qa` serves `noindex` and a QA container carrying
+`production` invites the crawlers in — neither of which fails anything. That is the same class of
+exposure as a wrong `DJANGO_ALLOWED_HOSTS`, and it is handled the same way: by checking after a
+promotion rather than by refusing to deploy. `deploy-quickstart.md` step 12 carries the two `curl`
+lines.
 
 ---
 
@@ -162,7 +182,7 @@ DJANGO_CORS_ALLOWED_ORIGINS=https://qa.f2c-cannabis.co.za,https://qa.f2c.co.za
 **`DJANGO_ENV` takes `qa` or `prod`. The frontend's `APP_ENV` takes `local`, `qa` or
 `production`.** Two vocabularies one letter apart, on two containers in the same environment, and
 each fails somewhere different: `database_config` raises on an unrecognised value, `readAppEnv`
-throws during prerendering. There is no good reason for the divergence; it is recorded here because
+throws during render. There is no good reason for the divergence; it is recorded here because
 correcting it now would touch the CI workflow, `compose.yaml` and both frontends for cosmetic gain.
 
 **`DJANGO_BEHIND_PROXY=true` is the single highest-consequence entry in this document.** Container
@@ -328,41 +348,46 @@ by leaving a variable blank.
 
 ### 4.2 The club frontend container
 
-**Build arguments**, set in the pipeline, baked into the image:
+**No build arguments.** The image takes none, which is what makes it the same image in every
+environment. Built from the `frontend/` context, not from `frontend/club/` — that is where the
+lockfile and the hoisted `node_modules` live, and `next.config.ts` pins `outputFileTracingRoot` to
+the same place.
 
-```
-SITE_URL=https://qa.f2c-cannabis.co.za
-APP_ENV=qa
-CDN_BASE_URL=<static host>
-SUPPORT_EMAIL=members@f2c-cannabis.co.za
-```
-
-Built from the `frontend/` context, not from `frontend/club/` — that is where the lockfile and the
-hoisted `node_modules` live, and `next.config.ts` pins `outputFileTracingRoot` to the same place.
-`SITE_URL` and `SUPPORT_EMAIL` are both hard-checked in the Dockerfile so the failure names the
-build argument the operator actually set.
-
-**Runtime**, on the container app:
+**Runtime**, on the container app — all of it:
 
 ```
 DJANGO_API_URL=https://f2c-api.internal.<env-name>.westeurope.azurecontainerapps.io
 DJANGO_API_PUBLIC_URL=https://qa-api.f2c-cannabis.co.za
+SITE_URL=https://qa.f2c-cannabis.co.za
+APP_ENV=qa
+CDN_BASE_URL=<static host>
+SUPPORT_EMAIL=members@f2c-cannabis.co.za
 PORT=3000
 ```
+
+The last four were build arguments until R-D4 closed; `lib/site.ts` reads them during render now.
+**The container refuses to start without any of them**, naming the one it is missing —
+`frontend/deploy/entrypoint.sh`, and `REQUIRED_ENV` in the Dockerfile is the list. The gate checks
+presence only: whether `SITE_URL` is an origin rather than a path, whether `CDN_BASE_URL` is `https`
+outside local development and whether `SUPPORT_EMAIL` could be an address are all judged by
+`lib/site.ts`, and a second copy of those rules in shell would be a second thing to keep in step.
 
 `DJANGO_API_URL` is how the Next.js server reaches Django over the container network.
 `DJANGO_API_PUBLIC_URL` is what the root layout renders into the document for the browser, and it
 must sit inside the same registrable domain as `SITE_URL` — section 2's hostname rule, C30.
 
 Omitting `DJANGO_API_PUBLIC_URL` answers 500 on the first request that names it, rather than
-defaulting to localhost as the pre-P6 code did.
+defaulting to localhost as the pre-P6 code did. **Neither API address is in `REQUIRED_ENV`**, and
+the difference is how loudly each fails: the root layout reads `DJANGO_API_PUBLIC_URL` on every
+page, so an unset one is a 500 on the first request anybody makes and a start-up gate would announce
+nothing that was not about to announce itself.
 
 ### 4.3 The market frontend container
 
 The same shape, with two differences. `SITE_URL=https://qa.f2c.co.za`,
-`DJANGO_API_PUBLIC_URL=https://qa-api.f2c.co.za`, and **no `CDN_BASE_URL` or `SUPPORT_EMAIL` build
-arguments** — the market Dockerfile takes neither, because the club film and the
-blocked-membership screen are both the club's.
+`DJANGO_API_PUBLIC_URL=https://qa-api.f2c.co.za`, and **no `CDN_BASE_URL` or `SUPPORT_EMAIL`** —
+`market/lib/site.ts` reads neither, because the club film and the blocked-membership screen are both
+the club's. Its `REQUIRED_ENV` is `SITE_URL APP_ENV`.
 
 ---
 
@@ -610,15 +635,21 @@ would close that too and is not written.
 
 ## 6. The pipeline
 
-Three workflows and three shell scripts, and one fact shapes all of them: **the API image can be
-promoted between environments and the frontend images cannot.** Section 3 has why — the frontends
-bake four values at build time — and everything below is a consequence.
+Three workflows and three shell scripts, and one fact shapes all of them: **every image can be
+promoted between environments, so a release is built once and moved.** Section 3 has why — nothing
+environment-specific is baked into any of the three — and everything below is a consequence.
+
+This was not always true, and the shape of what follows is partly the shape of what it replaced.
+Until R-D4 closed, the frontends baked four values and had to be rebuilt per environment, so
+`promote.yml` took a commit rather than an image and the frontend tags named an environment. The
+commit input stayed; the environment prefix did not. Where a paragraph below explains why something
+is the way it is, the reason may be the old constraint rather than a current one, and it says so.
 
 | File | Trigger | What it does |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | Pull requests, pushes to trunk, and a call from the two below | The whole suite against MySQL 8.4. Unchanged except for the `workflow_call` trigger that lets the other two reuse it |
 | `.github/workflows/release.yml` | Push to trunk, or dispatch | Works out which of the three images the commit changed, builds and pushes those, deploys them to QA |
-| `.github/workflows/promote.yml` | Dispatch only, taking a commit SHA and a target environment | Moves the API digest to UAT or production, and rebuilds the frontends for it |
+| `.github/workflows/promote.yml` | Dispatch only, taking a commit SHA and a target environment | Moves all three digests to UAT or production. Nothing is rebuilt |
 | `.github/scripts/deploy-api.sh` | Called by both | Rolls one API digest across the four container apps that run it, in the one order that works |
 | `.github/scripts/acr-digest.sh` | Called by both | Resolves a tag to the digest it points at |
 | `.github/scripts/azure-oidc-setup.sh` | By hand, once per environment | The application registration, the federated credential, the two role assignments and the GitHub variables |
@@ -659,16 +690,19 @@ reason and no other.
 One registry for every environment, as section 2 sets out. Three repositories:
 
 ```
-f2c/api      :<sha>                   plus the moving tags :qa :uat :production
-f2c/club     :qa-<sha> :uat-<sha> :production-<sha>
-f2c/market   :qa-<sha> :uat-<sha> :production-<sha>
+f2c/api      :<sha>   plus the moving tags :qa :uat :production
+f2c/club     :<sha>   plus the moving tags :qa :uat :production
+f2c/market   :<sha>   plus the moving tags :qa :uat :production
 ```
 
-**The API tag names only the commit; the frontend tags name the environment as well. That asymmetry
-is the whole design in one line.** An `f2c/club` image built for QA is not a production artefact and
-never can be — R-D4 — so an unprefixed frontend tag would look promotable and would eventually ship
-a production storefront rendering QA canonical tags. The prefix is load-bearing rather than
-decorative.
+**Every tag names only the commit, and the three repositories are now the same shape.** They were
+not: an `f2c/club` image built for QA was not a production artefact and never could be — R-D4 — so
+the frontend tags carried a `qa-`, `uat-` or `production-` prefix, because an unprefixed one would
+have looked promotable and would eventually have shipped a production storefront rendering QA
+canonical tags. With R-D4 closed the prefix would be a claim about an image that is not true of it,
+so it is gone. **A prefixed frontend tag still in the listing is from before that change**; nothing
+builds one now, none of them is promotable, and each can be deleted once no revision references its
+digest.
 
 **Every deployment pins a digest, and the moving tags are labels for people.** The registry is Basic
 tier and tag immutability is a Premium feature, so a tag here *can* be moved — which makes a
@@ -676,18 +710,23 @@ container app revision pinned to `:qa` a revision whose contents can change with
 no record of one. `deploy-api.sh` refuses a tag reference outright rather than trusting its caller to
 pass a digest. What `:qa`, `:uat` and `:production` buy is that "what is running in UAT" is
 answerable from the registry listing instead of from the portal, and the ladder check in 6.4 depends
-on that.
+on that. **The frontends carry them now too, and could not before:** while every `f2c/club` tag was
+already environment-prefixed there was no single digest to follow up the ladder, so production could
+receive a storefront nobody had seen in UAT and nothing in the registry would have said so.
 
 **Every image carries `org.opencontainers.image.revision`.** Without it, "which commit is running in
-production" becomes archaeology the first time somebody needs the answer during an incident. It is
-also what makes a frontend rebuild at promotion time possible: the label on the API image being
-promoted names the commit the frontends have to be rebuilt from.
+production" becomes archaeology the first time somebody needs the answer during an incident. It used
+to do a second job — the label on the API image being promoted named the commit the frontends had to
+be rebuilt from — which nothing needs now that there is one image per artefact per commit.
+
+The `za.co.f2c.environment` label went with the prefix. There is no environment to name.
 
 Two build settings worth knowing about. `provenance: false`, because a provenance attestation turns
 the push into an OCI index with a second, platform-less manifest inside it and nothing here consumes
 the attestation — a single manifest is one less thing between a digest and a running revision. And
-the GitHub Actions layer cache, scoped per image, which is what keeps a frontend rebuild at
-promotion time from being a cold `npm ci`.
+the GitHub Actions layer cache, scoped per image, which keeps a frontend build on trunk from being
+a cold `npm ci`. It used to matter at promotion time as well, and no longer does: a promotion builds
+nothing.
 
 ### 6.3 Deploying one service, or two, or all three
 
@@ -734,42 +773,46 @@ every deployment. That matters: two beats publish every job twice, and while all
 tasks are idempotent, each duplicate writes its own `ScheduledRun` row and the history stops being
 readable — which is the one thing that table exists for.
 
-### 6.4 Promotion is a commit, not an image
+### 6.4 Promotion moves images, and the input names them by commit
 
-**The input to `promote.yml` is a commit SHA, and that is forced rather than chosen.** One of the two
-kinds of artefact can be moved and the other has to be rebuilt:
+**Nothing is rebuilt at promotion.** All three artefacts are moved the same way: `az acr import`
+retags the image inside the registry — server-side, no pull, no push — and the container apps are
+updated to that same digest. What ran in QA is bit-for-bit what runs in production, for the
+storefronts as well as for the API.
 
-- **The API is promoted by moving the digest.** `az acr import` retags it inside the registry —
-  server-side, no pull, no push, no rebuild — and the container apps are updated to that same digest.
-  What ran in QA is bit-for-bit what runs in production. That is what Block 0 P6 bought when
-  `NEXT_PUBLIC_DJANGO_API_URL` became `DJANGO_API_PUBLIC_URL`.
-- **The frontends are rebuilt from the commit**, with the target environment's build arguments, and
-  tagged for that environment. R-D4 again: `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL`
-  are read by `lib/site.ts` when the module is first loaded, which happens during prerendering, so
-  they are in the image rather than in front of it. **That rebuild is reproducible because the
-  base image is pinned by digest and the lockfile is committed** — R-D7. It would not be otherwise,
-  and "the same commit rebuilt" would have been a weaker claim than it sounds.
+**This section used to be called "Promotion is a commit, not an image", and the input is still a
+commit — but it is now a choice rather than a constraint.** The old reason was that one kind of
+artefact could be moved and the other had to be rebuilt: the API had been made environment-agnostic
+by Block 0 P6, while the frontends baked `SITE_URL`, `APP_ENV`, `CDN_BASE_URL` and `SUPPORT_EMAIL`,
+so an image tag as the input would have worked for the API and been meaningless for the frontends.
+A commit worked for both. With R-D4 closed a tag would work for all three.
 
-An image tag as the input would have worked for the API and would have been meaningless for the
-frontends. A commit works for both.
+The SHA is kept anyway, on two smaller arguments. It names all three artefacts at once, where a tag
+names one. And it reads the same in a promotion run as it does in `git log`, which is where anyone
+asking "what is going to production" starts.
 
 **What stands in for re-running the tests, and why they are not re-run.** A called workflow runs at
 the *caller's* ref, so calling `ci.yml` from here would test trunk rather than the commit being
 promoted, and report green for the wrong code. The gate is the registry instead: `f2c/api:<sha>`
 exists only because `release.yml` built it, and that job is `needs: test`. **An image in the registry
 is therefore a commit that passed against MySQL 8.4.** A SHA with no image is refused with that
-explanation rather than built here.
+explanation rather than built here. The frontends are gated the same way, against
+`f2c/club:<sha>` and `f2c/market:<sha>`.
 
 **The ladder is enforced, not assumed.** A promotion to production checks that the digest being
-promoted is the one `f2c/api:uat` points at, and refuses when it is not — the alternative being
-production receiving a release UAT never saw. The tag is written as the *last* step of a successful
+promoted is the one that environment's `:uat` tag points at, and refuses when it is not — the
+alternative being production receiving a release UAT never saw. **Each artefact is checked against
+its own `:uat` tag**, which is newly possible: a frontend had no promotable digest to follow up the
+ladder until R-D4 closed, so a rebuilt production storefront was accepted on the strength of the
+API's check alone. The tag is written as the *last* step of a successful
 UAT promotion, so it means "this is running there" rather than "somebody tried to put this there".
 `skip_ladder_check` overrides it for the case that will eventually arise; it takes a deliberate tick,
 emits a warning annotation, and is recorded in the run.
 
-**Rollback is the same mechanism run backwards, and for the API it needs no rebuild:** dispatch the
-previous SHA, or pin the previous Container Apps revision. A frontend rollback is a rebuild of the
-previous commit, which is minutes rather than seconds, and is one more thing R-D4 costs.
+**Rollback is the same mechanism run backwards, and nothing about it needs a rebuild:** dispatch the
+previous SHA, or pin the previous Container Apps revision. That is now true of the frontends as well
+— a frontend rollback used to be a rebuild of the previous commit, minutes rather than seconds, and
+was one of the things R-D4 cost.
 
 ### 6.5 The credential is federated, and there is one per environment
 
@@ -790,7 +833,7 @@ an enforced gate rather than a convention:** a job that does not declare `enviro
 cannot mint a production token at all, however much repository access its author has.
 
 Two role assignments per environment. `AcrPush` on the shared registry — push and not merely pull,
-because a promotion rebuilds the frontends. And `Contributor` scoped to that environment's resource
+because `az acr import` writes the moving environment tag at the end of a promotion. And `Contributor` scoped to that environment's resource
 group and nothing wider. **The second is broader than this pipeline needs**, which only ever calls
 `containerapp update`; narrowing it to a custom role carrying `Microsoft.App/containerApps/read` and
 `/write` is the obvious hardening step, recorded here rather than done because a custom role
@@ -822,10 +865,13 @@ Worth having before R-D1 and R-D2 are written up rather than after.
 | `ACR_NAME` | Repository | One registry for all three environments — section 2 |
 | `CONTAINERAPP_API`, `CONTAINERAPP_WORKER`, `CONTAINERAPP_MAIL_WORKER`, `CONTAINERAPP_BEAT` | Environment | The four names from 5.2 |
 | `CONTAINERAPP_CLUB`, `CONTAINERAPP_MARKET` | Environment | The two storefronts |
-| `APP_ENV` | Environment | A frontend build argument — see the note below |
-| `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` | Environment | Section 4.2 |
-| `MARKET_SITE_URL` | Environment | Section 4.3 |
-| `DEPLOY_MARKET` | Environment | `true` to build and deploy the market storefront — D2 |
+| `DEPLOY_MARKET` | Environment | `true` to deploy the market storefront — D2 |
+
+**`APP_ENV`, `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` and `MARKET_SITE_URL` were
+on this table and are not any more.** They were frontend build arguments, so a workflow had to carry
+each one from a GitHub variable into `docker build`. They are container app environment variables
+now, under their unprefixed names — 4.2 and 4.3 — and can be deleted from the three GitHub
+environments. Nothing on this table is read by a running container.
 
 **Variables rather than secrets, the three Azure identifiers included.** None of them is usable on
 its own: without the federated trust, and without a job running in this repository under that
@@ -874,7 +920,7 @@ that is deliberate.
     resource group, its own hostnames and certificates, its own encryption keys (R-D5), its own
     application registration (6.5) and its own GitHub environment. The registry is shared and is
     not repeated, and neither is step 2. From then on a release reaches those two environments
-    through `promote.yml` and 6.4, and never through a rebuild off trunk.
+    through `promote.yml` and 6.4, and never through a build off trunk.
 
 Steps 1 to 8 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
 work. The provider used to be on that list and no longer is.
@@ -909,12 +955,26 @@ work. The provider used to be on that list and no longer is.
   still serving traffic. This is a real constraint on what may go in a migration and it is taken
   knowingly: a separate migration job is a second deployment artefact and a second thing to forget.
   Revisit when there is more than one replica starting at once. **Accepted.**
-- **R-D4. A QA frontend image cannot be promoted to production**, because `SITE_URL`, `APP_ENV`,
-  `CDN_BASE_URL` and `SUPPORT_EMAIL` are build arguments — section 3. What is deployed to production
-  is therefore not the artefact that was tested, only the same commit rebuilt. **Accepted**, and the
-  mitigation is that the three values which differ are all addresses rather than behaviour. This is
-  the reason `promote.yml` takes a commit rather than an image tag — 6.4 — and R-D7 below is what
-  makes that rebuild reproducible.
+- **R-D4. A QA frontend image could not be promoted to production**, because `SITE_URL`, `APP_ENV`,
+  `CDN_BASE_URL` and `SUPPORT_EMAIL` were build arguments — `lib/site.ts` read them at module load,
+  and `next build` loads every module to analyse the route tree. What reached production was
+  therefore not the artefact that had been tested, only the same commit rebuilt. **Closed.**
+  `lib/site.ts` exports `siteConfig()`, called during render; both root layouts build their metadata
+  in `generateMetadata` rather than in an object evaluated at import; and both proxies read it per
+  request, which works because Next 16 runs proxy on the Node.js runtime where `process.env` is the
+  container's. Verified rather than assumed: both applications build with all four variables, and
+  both API addresses, unset. Section 3 and 4.2.
+
+  Two things moved rather than disappeared. **The build's fail-fast is now the container's** —
+  `frontend/deploy/entrypoint.sh` refuses to start without the names in `REQUIRED_ENV`, so a
+  misconfigured revision never serves traffic. And **`APP_ENV` set to the wrong valid value is a
+  new exposure**: it decides indexing, so a typo in a container setting can make production
+  `noindex` or QA indexable without failing anything. **Accepted**, as the same class as a wrong
+  `DJANGO_ALLOWED_HOSTS`, and mitigated by the `/robots.txt` and `X-Robots-Tag` check written into
+  `deploy-quickstart.md` step 12 rather than by keeping the value in the build. Keeping `APP_ENV` as
+  the one remaining build argument was considered and rejected: it would have left the images
+  environment-specific — the whole cost of R-D4 — to remove one of the four ways this can be set
+  wrong.
 - **R-D5. The QA environment has its own encryption keys, so a production backup cannot be restored
   into it to reproduce a fault.** That is the point of separate keys and the trade is deliberate:
   reproducing a production data fault in QA would mean QA holding production identity numbers.
@@ -925,11 +985,12 @@ work. The provider used to be on that list and no longer is.
   against a mistake and not against intent. **Accepted:** the population that can move the tag is
   the population that can approve the promotion, and the GitHub environment approval is the control
   that matters.
-- **R-D7. A frontend promotion rebuilds, and the rebuild has to be byte-identical to what was
-  tested.** `npm ci` installs exactly what the committed lockfile says, so the dependency tree was
-  never the exposure — but both frontend Dockerfiles named `node:24-slim`, a floating tag, and a
-  base image republished between the QA build and the production build changes the operating
-  system packages underneath an application whose own code and dependencies are identical.
+- **R-D7. A rebuild has to be byte-identical to what was tested.** `npm ci` installs exactly what
+  the committed lockfile says, so the dependency tree was never the exposure — but both frontend
+  Dockerfiles named `node:24-slim`, a floating tag, and a base image republished between two builds
+  of the same commit changes the operating system packages underneath an application whose own code
+  and dependencies are identical.
+
   **Closed.** All four Dockerfiles pin by digest through a single `ARG` each — `node:24-slim` at
   Node 24.20.0 and `python:3.14-slim` at Python 3.14.7, both resolved 2 September 2026 — so what a
   commit describes is a fixed image rather than whatever the tag pointed at on the day it was
@@ -938,6 +999,15 @@ work. The provider used to be on that list and no longer is.
   stage on another surfaces as something else entirely. `Dockerfile.dev` is pinned too, not for
   reproducibility — nothing is promoted from it — but so that a developer and a deployment are on
   the same Node.
+
+  **This risk is narrower than it was, and the narrowing is worth stating.** It was written when a
+  frontend promotion *rebuilt*, so the two builds being compared were the QA one and the production
+  one, minutes or days apart, and the pin was what made "the same commit" mean "the same image"
+  across environments. R-D4 closed and a promotion now moves the image it was given, so no two
+  builds of one commit are compared across environments any more. What remains is reproducibility
+  over *time*: rebuilding an older commit — to bisect a fault, or to ship a fix from a release
+  branch — should land on the operating system packages that commit was tested against rather than
+  on whatever the tag points at that day.
 
   Two consequences worth stating rather than discovering. **A pinned base is a base that stops
   receiving operating system security updates**, so bumping it is now a task somebody owns rather
