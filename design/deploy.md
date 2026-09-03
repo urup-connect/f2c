@@ -12,8 +12,14 @@ than as a description. It is the expansion of Block 0 in [`todo.md`](todo.md), w
 outstanding items but does not say how to discharge them.
 
 The target is decided and recorded in [`conflict.md`](conflict.md) **C31**: Azure in West Europe,
-three Container Apps, an Azure Database for MySQL Flexible Server 8.4, an Azure Managed Redis. The
-hostname split is **C30**. Neither is reopened here.
+three Container Apps and an Azure Database for MySQL Flexible Server 8.4. The hostname split is
+**C30**. Neither is reopened here.
+
+**C31 also decided Azure Managed Redis, and that half is superseded by C36**: Redis is a container
+app in every environment. Managed Redis exposes one logical database per cluster where
+`f2c/queue.py` needs two, kombu has no Redis Cluster transport, and the available instance has its
+access keys disabled while nothing here can present an Entra token. C36 carries it, including what
+was given up.
 
 ---
 
@@ -54,15 +60,29 @@ knowing before it is diagnosed as a container fault.
 
 ## 2. The resources
 
-One resource group per environment, `rg-f2c-qa-weu`, West Europe throughout.
+One resource group per environment for what this project owns — `rg-f2c-qa-weu`, West Europe
+throughout.
+
+**The database does not live in it, and nothing in the application knows that.** QA's MySQL is
+`qa-urupconnect` in the `qa-urupconnect` resource group, UAT's is `uat-urupconnect` in `uc-uat`, and
+production's is `prod-urupconnect` in `prod-urupconnect-rg` — shared servers, each carrying an `f2c`
+database. The API reaches MySQL by the hostname in `DJANGO_DB_HOST` and blob storage by the account
+name in `DJANGO_*_STORAGE_ACCOUNT`; a resource group is a billing and access boundary, not something
+a connection string contains. Only `deploy/provision-container-apps.sh`'s preflight needs to be told
+where they are, and it takes `MYSQL_RESOURCE_GROUP` and `STORAGE_RESOURCE_GROUP` for it.
+
+**Production reports MySQL 8.0.21**, not 8.4. It clears the 8.0.16 floor
+`app/core/common/checks.py` enforces, so it starts — but it is not the version CI proves the schema
+against, which is the gap `backend.md` risk 14 is about. Worth closing before production carries a
+member.
 
 | Resource | Sizing and notes |
 | --- | --- |
-| Container Registry | One registry shared by QA and production. Basic tier. Geo-replication is a Premium feature and there is one region |
+| Container Registry | One registry shared by all three environments, `crf2cweu`. **Standard tier** — Basic was specified and the provisioned registry is Standard; neither offers tag immutability or repository-scoped tokens, which are Premium, so every deployment pins a digest either way. Geo-replication is Premium too and there is one region. **The admin user stays off**: it is a username and password that works from anywhere, for every repository, and outlives whoever last used it. The Portal's container app "Continuous deployment" wizard turns it back on without asking |
 | Azure Database for MySQL Flexible Server 8.4 | Burstable B2s for QA. Database `f2c`. `require_secure_transport` stays **ON** — `f2c/database.py` refuses a deployment that names neither a CA bundle nor an explicit disable |
-| Azure Managed Redis | **Not** Azure Cache for Redis. The Basic, Standard and Premium tiers retire on 30 September 2028, and provisioning onto a retiring product to save a week is a migration bought on credit. TLS only, port 10000 |
 | Storage account | Two blob containers, `cc-documents-qa` and `cc-avatars-qa` |
 | Container Apps environment | With a Log Analytics workspace |
+| Container App — Redis | `redis:7.4-alpine`, internal TCP ingress on 6379, **exactly one replica**, no persistence, `maxmemory-policy noeviction`. Not a managed service — **C36**. Two replicas behind one address would be two separate empty Redis processes, so a throttle counter incremented on one is invisible to the other and a task published to one is consumed by nobody; nothing would report it |
 | Container App — API | `min-replicas 1`, pinned |
 | Container App — club frontend | Port 3000 |
 | Container App — market frontend | Optional in QA. See section 8 |
@@ -216,12 +236,29 @@ state the connection was in before this was fixed — encrypted, unverified, and
 **Cache**
 
 ```
-DJANGO_REDIS_URL=rediss://:<access-key>@<name>.westeurope.redis.azure.net:10000/0    secret
+DJANGO_REDIS_URL=redis://f2c-redis.internal.<env-domain>:6379/0
+DJANGO_CACHE_ALLOW_PLAINTEXT=true
 ```
 
-`rediss://`, not `redis://`. `f2c/cache.py` refuses the plaintext scheme in a deployed environment
-because the Azure access key is in the URL and would travel in clear. Leave
-`DJANGO_CACHE_ALLOW_PLAINTEXT` unset — it exists for the local compose stack.
+**Neither is entered by hand.** `deploy/provision-container-apps.sh` sets both from the Redis app
+and the managed environment it created, and refuses a value for either in the values file rather
+than overriding it silently — the URL names an app at the environment's internal domain, which does
+not exist until the environment does.
+
+`redis://` and not `rediss://`, which is the one place C36 costs something. Container Apps
+terminates TLS for HTTP ingress and not for the TCP ingress a Redis connection needs, so
+`DJANGO_CACHE_ALLOW_PLAINTEXT` — written as a permission precisely so it reads as a downgrade
+wherever it appears — is now load-bearing in every deployed environment rather than only in CI.
+
+**The justification is narrow and worth stating exactly.** Internal ingress publishes no public
+address, so the only callers are apps in the same managed environment; and there is no access key in
+the URL for a plaintext connection to disclose, which is the loss `f2c/cache.py` refuses `redis://`
+to prevent. It does **not** claim the hop crosses no network — it crosses a private one. Giving
+Redis its own certificate and keeping `rediss://` is the stricter option, at the cost of a
+certificate to rotate in three environments.
+
+`f2c/queue.py` reads the same switch rather than one of its own, deliberately: a second switch could
+only fail by disagreeing with the first.
 
 **Storefronts and passkeys**
 
@@ -494,6 +531,9 @@ so a task can be written, triggered and watched on a developer's machine.
 from `DJANGO_REDIS_URL` rather than a separate managed service: the Redis is already there for the
 throttle counters, so the queue costs nothing new to provision.
 
+**That second database is why Redis is a container and not Azure Managed Redis.** Managed Redis
+exposes one logical database per cluster; a plain Redis has sixteen. C36.
+
 **And then email joined the queue, which is the second reason this section exists.** Sends used
 to happen in the request that asked for them: a ten-second SMTP timeout inside the sign-in path,
 against a provider nobody here operates, on the one route into an account that has no passkey
@@ -652,7 +692,8 @@ is the way it is, the reason may be the old constraint rather than a current one
 | `.github/workflows/promote.yml` | Dispatch only, taking a commit SHA and a target environment | Moves all three digests to UAT or production. Nothing is rebuilt |
 | `.github/scripts/deploy-api.sh` | Called by both | Rolls one API digest across the four container apps that run it, in the one order that works |
 | `.github/scripts/acr-digest.sh` | Called by both | Resolves a tag to the digest it points at |
-| `.github/scripts/azure-oidc-setup.sh` | By hand, once per environment | The application registration, the federated credential, the two role assignments and the GitHub variables |
+| `.github/scripts/azure-oidc-setup (win).sh` | By hand, once per environment | The application registration, the federated credential, the two role assignments and the GitHub variables |
+| `deploy/provision-container-apps.sh` | By hand, once per environment | The managed environment and its Log Analytics workspace, then the seven container apps with their settings, identities and `AcrPull` grants. **Nothing else creates them, and `az containerapp update` fails on an app that does not exist** — which is what stopped the first QA release after all three images had built and pushed |
 
 **Trunk-based, with the environments as the gates rather than the branches.** A merge to `master`
 builds and deploys QA on its own; UAT and production are `promote.yml` dispatches behind GitHub
@@ -834,7 +875,7 @@ reviewer requirement into an enforced gate rather than a convention:** a job tha
 author has.
 
 The numeric IDs alongside the names are the immutable identifiers of the owner and the repository,
-and they are the reason `azure-oidc-setup.sh` reads the subject out of the GitHub API rather than
+and they are the reason `azure-oidc-setup (win).sh` reads the subject out of the GitHub API rather than
 composing it from the name it was given. A credential carrying the names alone is refused with
 `AADSTS700213` — the same failure a repository transfer produces, since the names in an existing
 credential are then stale and nothing in Azure notices.
@@ -863,7 +904,7 @@ Three environments — `qa`, `uat`, `production` — with **required reviewers o
 the approval, and it is also the audit trail: who released what, to which environment, and when.
 Worth having before R-D1 and R-D2 are written up rather than after.
 
-`azure-oidc-setup.sh` writes the first three rows; the rest are values only the operator knows.
+`azure-oidc-setup (win).sh` writes the first three rows; the rest are values only the operator knows.
 
 | Variable | Scope | What it is |
 | --- | --- | --- |
@@ -872,13 +913,27 @@ Worth having before R-D1 and R-D2 are written up rather than after.
 | `ACR_NAME` | Repository | One registry for all three environments — section 2 |
 | `CONTAINERAPP_API`, `CONTAINERAPP_WORKER`, `CONTAINERAPP_MAIL_WORKER`, `CONTAINERAPP_BEAT` | Environment | The four names from 5.2 |
 | `CONTAINERAPP_CLUB`, `CONTAINERAPP_MARKET` | Environment | The two storefronts |
-| `DEPLOY_MARKET` | Environment | `true` to deploy the market storefront — D2 |
+| `DEPLOY_MARKET` | **Repository** | `true` to deploy the market storefront — D2. See below: on the environment alone it does nothing |
 
 **`APP_ENV`, `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` and `MARKET_SITE_URL` were
 on this table and are not any more.** They were frontend build arguments, so a workflow had to carry
 each one from a GitHub variable into `docker build`. They are container app environment variables
 now, under their unprefixed names — 4.2 and 4.3 — and can be deleted from the three GitHub
 environments. Nothing on this table is read by a running container.
+
+**`DEPLOY_MARKET` is the one row on this table that has to be a repository variable, and setting it
+on the environment instead fails silently.** The `changes` job in `release.yml` declares no
+`environment:` — it takes no Azure action and has no business behind an approval gate — and `vars` in
+a job without one resolves against repository and organisation variables only. Set on `qa` alone,
+the test reads the empty string, every run skips the market image, and the step log says
+`vars.DEPLOY_MARKET is not 'true': skipping the market image`, which reads like a decision somebody
+made rather than a variable in the wrong place. `ACR_NAME` is repository-scoped for the same reason:
+the workflow-level `env:` block that builds `REGISTRY` is evaluated outside any job.
+
+`promote.yml` is unaffected — its `verify` job does declare an environment, so the environment value
+wins there. That is why `uat` and `prod` set `DEPLOY_MARKET` explicitly rather than inheriting the
+repository's `true`: without that, a repository-wide default would quietly undo D2's per-environment
+gate.
 
 **Variables rather than secrets, the three Azure identifiers included.** None of them is usable on
 its own: without the federated trust, and without a job running in this repository under that
@@ -887,50 +942,74 @@ deployment can see which subscription it was aimed at — the same argument sect
 container app's non-secret environment variables.
 
 **`APP_ENV` and the GitHub environment name are two different strings and are allowed to disagree.**
-The environment is `production` because that is the GitHub convention and it is what the frontend
-image tag is prefixed with; `APP_ENV` is whatever the frontends expect, which D5 declined to change.
-The tag prefix is the environment name and never `APP_ENV`, so the two never have to be reconciled —
-but somebody reading `f2c/club:production-<sha>` on an image whose `APP_ENV` is `prod` should know
-that is deliberate.
+The environment is `production` because that is the GitHub convention; `APP_ENV` is whatever the
+frontends expect, which D5 declined to change. They never have to be reconciled because nothing
+joins them any more.
+
+**This used to be about the frontend image tag, and R-D4 removed that.** The environment name was
+the tag prefix — `f2c/club:production-<sha>` — which is exactly what made a QA image something that
+could never be a production one. Frontend tags are now the commit SHA and nothing else, so a `qa-`,
+`uat-` or `production-` prefixed frontend tag in the registry is an artefact from before that change
+rather than something the pipeline can still produce. Section 3.
 
 ---
 
 ## 7. The order
 
-1. Provision the resource group, registry, MySQL, Managed Redis, storage account and Log Analytics.
-   No containers yet. **This is now the first step.** It used to be raising the
-   `noreply@f2c.co.za` mailbox with the provider, which authenticates as of 2 September 2026 —
-   section 1.
+1. Provision the resource group, registry, storage account, and the `f2c` database and application
+   user on the environment's MySQL server. **No Redis** — it is a container app now, created in step
+   5 — and no Log Analytics workspace, which step 5 creates with the managed environment. **This is
+   now the first step.** It used to be raising the `noreply@f2c.co.za` mailbox with the provider,
+   which authenticates as of 2 September 2026 — section 1.
 2. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
    (5.1) are done.
 3. Create the Key Vault, generate the QA encryption keys, load the secrets.
-4. Run `.github/scripts/azure-oidc-setup.sh` for `qa`, create the three GitHub environments with
-   reviewers on `uat` and `production`, and set the variables in 6.6. The registry from step 1 has
-   to exist first; nothing else here does.
-5. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
+4. Run `.github/scripts/azure-oidc-setup (win).sh` for `qa`, create the three GitHub environments
+   with reviewers on `uat` and `production`, and set the variables in 6.6. The registry from step 1
+   has to exist first; nothing else here does.
+
+   **`DEPLOY_MARKET` goes on the repository, not the environment.** 6.6 has why; it is the one
+   variable on that table read by a job with no `environment:` declared, and set on the environment
+   alone it reads as the empty string and skips every market build with a log line that looks like a
+   decision.
+5. **Create the managed environment and the container apps** —
+   `deploy/provision-container-apps.sh`, with `deploy/values.env.template` filled in. It creates
+   Redis first, then the four API apps, then the storefronts, and refuses to start if the MySQL
+   server or storage account it was pointed at cannot be found: the entrypoint gate waits for the
+   database before it serves anything, so creating the apps without one gives four crashlooping
+   containers rather than an error somebody reads.
+
+   The apps are created against the digests of images already in the registry, so **step 6 needs
+   `release.yml` to have run at least once** — a build with no deploy is enough, and is what
+   `inputs.deploy` unticked is for.
+6. **Deploy the API container app alone**, with `min-replicas 1`. The entrypoint gate reports each
    misconfiguration by name — that is what it is for, and it is cheaper to meet it with one
    container running than with three.
 
    That first deployment is a `release.yml` dispatch with only `api` ticked, not a hand-run
    `az containerapp update` — the first thing worth proving about the pipeline is that it can
    reach one container app.
-6. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
-7. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
+7. DNS and TLS for the two club hostnames. Build and deploy the club frontend.
+8. Grant the founding administrators (5.3). Then walk the whole journey: emailed sign-in code,
    passkey enrolment, sign-up, Payfast sandbox checkout, membership activation, profile edit,
    `/admin/members` and `/admin/strains`.
-8. Add the worker, mail worker and beat container apps (5.2). Redeploy through the pipeline, which
-   is where `deploy-api.sh` first rolls all four in order rather than one.
-9. Market hostnames and container, if QA is to carry the market at all — section 8.
-10. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
+9. Bring the worker, mail worker and beat into the rollout (5.2) — step 5 created them, so this is
+   a deployment rather than a creation. Redeploy through the pipeline, which is where
+   `deploy-api.sh` first rolls all four in order rather than one.
+10. Market hostnames and the market storefront, if QA is to carry it at all — section 8. The
+    container app already exists unless step 5 was run with `SKIP_MARKET=1`, and `DEPLOY_MARKET`
+    has to be `true` on the repository for the image to be built at all.
+11. Write up the key procedure (R-D2) and the transborder disclosure (R-D1) before any environment
     holds a real member.
-11. Repeat steps 1 and 3 to 6 for UAT, and then for production, in that order. Each needs its own
+12. Repeat steps 1 and 3 to 7 for UAT, and then for production, in that order. Each needs its own
     resource group, its own hostnames and certificates, its own encryption keys (R-D5), its own
     application registration (6.5) and its own GitHub environment. The registry is shared and is
     not repeated, and neither is step 2. From then on a release reaches those two environments
     through `promote.yml` and 6.4, and never through a build off trunk.
 
-Steps 1 to 8 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
-work. The provider used to be on that list and no longer is.
+Steps 1 to 9 are about a week of elapsed time, most of it waiting on DNS and TLS rather than on
+work. The provider used to be on that list and no longer is, and neither is Redis: step 5 creates it
+with everything else rather than provisioning a managed service and waiting for it.
 
 ---
 

@@ -164,7 +164,7 @@ def payfast_notify(request):
         # A private source address is named as the misconfiguration it almost
         # certainly is. Payfast is on the internet, so a notification arriving
         # from 10.x or 172.16.x came from the ingress proxy in front of Django
-        # and DJANGO_PAYFAST_BEHIND_PROXY is unset -- which fails every
+        # and DJANGO_BEHIND_PROXY is unset -- which fails every
         # notification identically and activates no membership. Without this
         # line the log says only that the source is not Payfast, which is also
         # exactly what a genuine attempt looks like.
@@ -178,7 +178,7 @@ def payfast_notify(request):
             rejected.reason,
             (
                 ' -- that is a private address, so this is the proxy and not '
-                'Payfast. DJANGO_PAYFAST_BEHIND_PROXY is unset.'
+                'Payfast. DJANGO_BEHIND_PROXY is unset.'
                 if misconfigured else ''
             ),
         )

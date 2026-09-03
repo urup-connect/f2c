@@ -4,7 +4,15 @@ The steps, in order, and every configuration entry that has to exist. No rationa
 looks arbitrary or a step looks skippable, the reason is in [`deploy.md`](deploy.md), and the
 section numbers below point at it.
 
-Target: Azure, West Europe, one resource group per environment. QA is `rg-f2c-qa-weu`.
+Target: Azure, West Europe, one resource group per environment for what this project owns. QA is
+`rg-f2c-qa-weu`.
+
+**The MySQL server is not in it.** QA's is `qa-urupconnect` in `qa-urupconnect`, UAT's is
+`uat-urupconnect` in `uc-uat`, production's is `prod-urupconnect` in `prod-urupconnect-rg` — shared
+servers, each carrying an `f2c` database. Nothing in a running container knows this: MySQL is
+reached by hostname and blob storage by account name. Only
+`deploy/provision-container-apps.sh`'s preflight is told, through `MYSQL_RESOURCE_GROUP` and
+`STORAGE_RESOURCE_GROUP`.
 
 ---
 
@@ -16,14 +24,23 @@ One resource group, `rg-f2c-qa-weu`. Inside it:
 
 | Resource | Sizing |
 | --- | --- |
-| Container Registry | Basic. **Shared by all three environments** — created once, never repeated |
-| MySQL Flexible Server 8.4 | Burstable B2s. Database `f2c`. `require_secure_transport` ON |
-| Azure Managed Redis | Not Azure Cache for Redis. TLS only, port 10000 |
+| Container Registry | `crf2cweu`, Standard. **Shared by all three environments** — created once, never repeated. Admin user **off** |
 | Storage account | Two blob containers: `cc-documents-qa` and `cc-avatars-qa` |
-| Log Analytics workspace | For the Container Apps environment |
-| Container Apps environment | — |
+
+Elsewhere, and only the `f2c` database and its application user are yours to create:
+
+| Resource | Where |
+| --- | --- |
+| MySQL Flexible Server 8.4 | `qa-urupconnect` in resource group `qa-urupconnect`. Database `f2c`, `require_secure_transport` ON. **Production is 8.0.21** — above the 8.0.16 floor `common/checks.py` enforces, below the 8.4 CI tests against |
+
+**No Redis and no Log Analytics workspace here.** Redis is a container app — conflict.md **C36** — and the
+workspace is created with the Container Apps environment. Both happen in step 5.
 
 No container apps yet.
+
+**The registry's admin user stays off.** The Portal's container app "Continuous deployment" wizard
+turns it back on and writes a username and password into GitHub secrets; if that has happened,
+`az acr update --name crf2cweu --admin-enabled false` and delete the secrets.
 
 ### 2. Fix the flaky nickname test
 
@@ -40,12 +57,13 @@ python design/tools/generate_keys.py
 ```
 
 Load `DJANGO_FIELD_ENCRYPTION_KEY` and `DJANGO_BLIND_INDEX_PEPPER` into Key Vault. Everything else
-secret goes into Container App secrets in step 5. (Tables A and B)
+secret goes into Container App secrets in step 5, which the provisioning script sets from the values
+file. (Tables A and B)
 
 ### 4. GitHub and Azure OIDC
 
 ```
-.github/scripts/azure-oidc-setup.sh          # once per environment
+'.github/scripts/azure-oidc-setup (win).sh'   # once per environment
 ```
 
 Requires the registry from step 1. It creates the application registration, the federated
@@ -63,7 +81,7 @@ double-clicking it closes the window on the first missing variable:
 
 ```powershell
 $env:ENVIRONMENT="qa"; $env:ACR_NAME="<acr>"; $env:RESOURCE_GROUP="<qa rg>"
-& "C:\Program Files\Git\bin\bash.exe" .github/scripts/azure-oidc-setup.sh
+& "C:\Program Files\Git\bin\bash.exe" ".github/scripts/azure-oidc-setup (win).sh"
 ```
 
 It is safe to re-run: it reuses an existing registration, and corrects a federated credential whose
@@ -75,16 +93,51 @@ Then, by hand:
   `production`**.
 - Set the variables in Table F.
 
-### 5. Create the API container app and deploy it alone
+### 5. Create the environment and the seven container apps
 
-Create the container app with `min-replicas 1`, a system-assigned managed identity, and:
+One script. It creates the Container Apps environment and its Log Analytics workspace if they are
+absent, then Redis, the four API-image apps, and the storefronts — each with a system-assigned
+identity, `AcrPull` on the registry, and the settings from Tables B to E.
 
-- **Storage Blob Data Contributor** on the storage account
-- **AcrPull** on the registry, plus `az containerapp registry set --identity system`
-- Key Vault references for the two keys in Table A
-- Secrets from Table B, environment variables from Table C
+```powershell
+Copy-Item deploy/values.env.template deploy/qa.values.env   # then fill it in
+$env:ENVIRONMENT="qa"; $env:RESOURCE_GROUP="rg-f2c-qa-weu"
+$env:CONTAINERAPP_ENV="cae-f2c-qa-weu"; $env:ACR_NAME="crf2cweu"
+$env:IMAGE_TAG="<a commit release.yml has built>"
+$env:MYSQL_RESOURCE_GROUP="qa-urupconnect"; $env:STORAGE_RESOURCE_GROUP="rg-f2c-qa-weu"
+$env:VALUES_FILE="deploy/qa.values.env"; $env:DRY_RUN="1"
+& "C:\Program Files\Git\bin\bash.exe" deploy/provision-container-apps.sh
+```
 
-Deploy it through the pipeline, not by hand:
+`DRY_RUN=1` prints every command and changes nothing — read it once, then drop it. Re-running is
+safe: an app that exists is reported and left alone.
+
+**`IMAGE_TAG` means `release.yml` has to have run first.** The apps are created against image
+digests, so dispatch a build with `deploy` unticked to get images into the registry without
+attempting a deployment that has nowhere to land.
+
+**`deploy/qa.values.env` is gitignored and must stay that way.** It holds the MySQL password, both
+Payfast credentials, two mailbox passwords, and the two encryption keys whose loss is unrecoverable.
+Delete it once the apps exist; from then on Azure is where those values are read back from. Quote
+any value containing a space or a bracket — the file is sourced.
+
+The script sets `DJANGO_REDIS_URL` and `DJANGO_CACHE_ALLOW_PLAINTEXT` itself and **refuses a value
+for either in the file** rather than overriding it: the URL names the Redis app at the environment's
+internal domain, which does not exist until the environment does.
+
+It refuses to run at all if the MySQL server or storage account cannot be found. That is deliberate
+— the API entrypoint waits for the database before it serves anything, so creating the apps without
+one gives four crashlooping containers rather than an error anybody reads. `FORCE=1` overrides;
+`SKIP_MARKET=1` creates six apps instead of seven.
+
+Still by hand afterwards, because the script does not grant it:
+
+- **Storage Blob Data Contributor** on the storage account, for the four API-image identities
+- Key Vault references for the two keys in Table A, if they are not to stay container app secrets
+
+### 6. Deploy the API alone
+
+Through the pipeline, not by hand:
 
 ```
 Actions -> release.yml -> Run workflow -> api [x]  club [ ]  market [ ]  deploy [x]
@@ -93,7 +146,7 @@ Actions -> release.yml -> Run workflow -> api [x]  club [ ]  market [ ]  deploy 
 The entrypoint runs `check --deploy --fail-level WARNING`, so a misconfigured revision refuses to
 start and names what is wrong. Meet that with one container running rather than four.
 
-### 6. DNS, TLS and the club frontend
+### 7. DNS, TLS and the club frontend
 
 Custom domains and managed certificates on the Container Apps environment:
 
@@ -102,10 +155,11 @@ qa.f2c-cannabis.co.za        club frontend container app
 qa-api.f2c-cannabis.co.za    API container app
 ```
 
-Create the club frontend container app (port 3000, Table D), then dispatch `release.yml` with
+The club frontend container app already exists (port 3000, Table D — step 5 created it). Dispatch
+`release.yml` with
 `club` ticked.
 
-### 7. Grant the founding administrators
+### 8. Grant the founding administrators
 
 After the first migration, by hand: `is_staff` for the UC tier, and a club `StorefrontStaff` row per
 club administrator. No migration can do this. (5.3)
@@ -113,7 +167,7 @@ club administrator. No migration can do this. (5.3)
 Then walk the journey end to end: emailed sign-in code, passkey enrolment, sign-up, Payfast sandbox
 checkout, membership activation, profile edit, `/admin/members`, `/admin/strains`.
 
-### 8. Add the three worker container apps
+### 9. Bring the three workers into the rollout
 
 Same image as the API, same **full** environment (Tables B and C verbatim, not a subset), no
 ingress:
@@ -124,29 +178,32 @@ ingress:
 | mail-worker | `deploy/entrypoint.sh mail-worker` | 1..n |
 | beat | `deploy/entrypoint.sh beat` | **exactly 1** |
 
-Set the four `CONTAINERAPP_*` variables in Table F, then redeploy through `release.yml`.
-`deploy-api.sh` now rolls all four in order: API first, because it migrates; workers after.
+The three apps already exist — the provisioning script created all seven — so this step is setting
+the four `CONTAINERAPP_*` variables in Table F and redeploying through `release.yml`.
+`deploy-api.sh` then rolls all four in order: API first, because it migrates; workers after.
 
-### 9. Market storefront — optional in QA
+### 10. Market storefront — optional in QA
 
-Two more DNS records, a certificate, one container app (Table E), and `DEPLOY_MARKET=true`. Skipping
-it saves none of the `EMAIL_F2C_*` entries — the API will not boot without them either way.
+Two more DNS records, a certificate, the container app (Table E — already created unless step 5 ran
+with `SKIP_MARKET=1`), and **`DEPLOY_MARKET=true` as a repository variable**. On the environment
+alone it does nothing: see Table F. Skipping the market saves none of the `EMAIL_F2C_*` entries —
+the API will not boot without them either way.
 
-### 10. Write up the two POPIA items
+### 11. Write up the two POPIA items
 
 Transborder disclosure (R-D1) and the key-handling procedure (R-D2), before any environment holds a
 real member.
 
-### 11. Repeat for UAT, then production
+### 12. Repeat for UAT, then production
 
-Repeat steps 1, 3, 4, 5, 6 — and 8, 9 — per environment. Each gets its own resource group,
+Repeat steps 1, 3, 4, 5, 6, 7 — and 9, 10 — per environment. Each gets its own resource group,
 hostnames and certificates, encryption keys, application registration and GitHub environment.
 **The registry is shared and is not repeated.** Step 2 is not repeated.
 
 Production hostnames drop the prefix: `f2c-cannabis.co.za`, `api.f2c-cannabis.co.za`, `f2c.co.za`,
 `api.f2c.co.za`.
 
-### 12. From then on: releases and promotions
+### 13. From then on: releases and promotions
 
 | Action | How |
 | --- | --- |
@@ -197,11 +254,15 @@ Referenced from the API container apps through their managed identities.
 
 On all four API-image apps — api, worker, mail-worker, beat — referenced as `secretref:`.
 
+**`DJANGO_REDIS_URL` is not on this table any more.** It was, because on Azure Managed Redis the
+access key travels inside the URL. Redis is a container app reached over the environment's internal
+network with no credential in the URL at all, so there is nothing in it to protect — and the
+provisioning script sets it rather than asking for it. conflict.md **C36**.
+
 | Entry | Value |
 | --- | --- |
 | `DJANGO_SECRET_KEY` | From `generate_keys.py` |
 | `DJANGO_DB_PASSWORD` | Application user's MySQL password |
-| `DJANGO_REDIS_URL` | `rediss://:<access-key>@<name>.westeurope.redis.azure.net:10000/0` — `rediss`, not `redis` |
 | `EMAIL_CC_PASSWORD` | Club mailbox password |
 | `EMAIL_F2C_PASSWORD` | Market mailbox password |
 | `DJANGO_PAYFAST_MERCHANT_ID` | Sandbox in QA and UAT, live in production |
@@ -209,6 +270,12 @@ On all four API-image apps — api, worker, mail-worker, beat — referenced as 
 | `DJANGO_PAYFAST_PASSPHRASE` | Required, not optional — Payfast refuses subscriptions from a merchant without one |
 
 ### Table C — Container App environment variables (api, worker, mail-worker, beat)
+
+Two entries are set by `provision-container-apps.sh` and appear on the apps rather than in the
+values file: `DJANGO_REDIS_URL`, which names the Redis app at the environment's internal domain, and
+`DJANGO_CACHE_ALLOW_PLAINTEXT=true`, which `f2c/cache.py` requires because Container Apps terminates
+TLS for HTTP ingress and not for the TCP ingress a Redis connection needs. deploy.md 3 has the
+argument and its limits.
 
 All four apps take this block identically. A trimmed environment fails `check --deploy` at start-up.
 
@@ -303,9 +370,9 @@ usable outside a job running in this repository under that environment.
 | Variable | Scope | QA value |
 | --- | --- | --- |
 | `ACR_NAME` | Repository | Registry name, without `.azurecr.io` |
-| `AZURE_CLIENT_ID` | Environment | Written by `azure-oidc-setup.sh` |
-| `AZURE_TENANT_ID` | Environment | Written by `azure-oidc-setup.sh` |
-| `AZURE_SUBSCRIPTION_ID` | Environment | Written by `azure-oidc-setup.sh` |
+| `AZURE_CLIENT_ID` | Environment | Written by `azure-oidc-setup (win).sh` |
+| `AZURE_TENANT_ID` | Environment | Written by `azure-oidc-setup (win).sh` |
+| `AZURE_SUBSCRIPTION_ID` | Environment | Written by `azure-oidc-setup (win).sh` |
 | `AZURE_RESOURCE_GROUP` | Environment | `rg-f2c-qa-weu` |
 | `CONTAINERAPP_API` | Environment | API container app name |
 | `CONTAINERAPP_WORKER` | Environment | Worker container app name |
@@ -313,10 +380,21 @@ usable outside a job running in this repository under that environment.
 | `CONTAINERAPP_BEAT` | Environment | Beat container app name |
 | `CONTAINERAPP_CLUB` | Environment | Club frontend container app name |
 | `CONTAINERAPP_MARKET` | Environment | Market frontend container app name |
-| `DEPLOY_MARKET` | Environment | `true` to deploy the market storefront |
+| `DEPLOY_MARKET` | **Repository** | `true` to deploy the market storefront. **Environment scope does not work** — see below |
 
 Twelve entries, and every one of them names something GitHub Actions has to address: a credential,
 the registry, a resource group, a container app. **Nothing here is read by a running container.**
+
+**`DEPLOY_MARKET` must be a repository variable.** `release.yml`'s `changes` job declares no
+`environment:`, and `vars` in a job without one sees repository and organisation variables only. Set
+on `qa` alone it reads as empty, every run skips the market image, and the log says
+`vars.DEPLOY_MARKET is not 'true': skipping the market image` — which looks like a decision rather
+than a misconfiguration. `ACR_NAME` is repository-scoped for the same reason: the workflow-level
+`env:` block that builds `REGISTRY` is evaluated outside any job.
+
+Set it to `false` explicitly on `uat` and `prod`. `promote.yml`'s `verify` job *does* declare an
+environment, so the environment value wins there — and without an explicit `false` those two would
+inherit the repository's `true` and lose the per-environment gate D2 asks for.
 
 `APP_ENV`, `CLUB_SITE_URL`, `CLUB_CDN_BASE_URL`, `CLUB_SUPPORT_EMAIL` and `MARKET_SITE_URL` used to
 be on this table as frontend build arguments, which is what stopped a frontend image being

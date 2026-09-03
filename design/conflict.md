@@ -2189,6 +2189,12 @@ codebase, provided whichever is canonical is the one in `SITE_URL`.
 
 **Status: Decided, with one thing reopened by the code — see the cache section below.**
 
+**The cache decision below is superseded by C36.** Managed Redis exposes one logical database per
+cluster where `f2c/queue.py` needs two, kombu has no Redis Cluster transport, and the available
+instance has its access keys disabled. Redis runs as a container app in every environment now. The
+rest of this entry stands, including the finding that a cache *server* is required at all — C36
+changes where the socket goes, not why there is one.
+
 **C1** left two things open: no production database, and no hosting target. Both are now fixed, and
 the database half was already built before it was written down — `f2c/database.py`,
 `app/core/common/checks.py`, `.env.example` and the CI job all target MySQL, while `plan.md` and
@@ -2245,8 +2251,11 @@ than ORM I/O, and socket I/O is not decorated `@async_unsafe`, so it is permitte
 context where the database is not.
 
 So the async architecture — decided long before anyone thought about hosting — forces a cache
-server. **Decided: Azure Managed Redis in QA and production, a `redis:7-alpine` container in
-development.** Managed Redis rather than Azure Cache for Redis, whose Basic, Standard and Premium
+server. ~~**Decided: Azure Managed Redis in QA and production, a `redis:7-alpine` container in
+development.**~~ **Superseded by C36: a `redis:7.4-alpine` container app in every environment.** The
+reasoning below was sound and the facts were not checked against a real instance — one database per
+cluster, `OSSCluster` against a client with no cluster transport, and access keys disabled. Managed
+Redis rather than Azure Cache for Redis, whose Basic, Standard and Premium
 tiers retire on 30 September 2028; roughly $25/month at the smallest SKU. The local container is in
 `compose.yaml` and is not decoration — it is how the deployed backend gets exercised before QA,
 because `LocMemCache` is correct in one process and wrong in any other, and that difference does not
@@ -2258,6 +2267,10 @@ show up as a failure anywhere.
 quietly does not hold. And `redis://` is refused where `rediss://` belongs, because the Azure access
 key travels inside that URL, with `DJANGO_CACHE_ALLOW_PLAINTEXT` as the deliberate way out for CI
 against a container on the runner's own loopback.
+
+**Under C36 that escape hatch is load-bearing in every deployed environment**, not just CI: Container
+Apps terminates TLS for HTTP ingress and not for the TCP ingress Redis needs, and there is no access
+key in the URL for a plaintext connection to disclose. C36 carries the argument and its limits.
 
 **Verified rather than reasoned.** The claim that a network cache is permitted where the database
 one is not was tested against a real Redis over TCP: the 635 tests in `authn`, `payments` and
@@ -2275,7 +2288,7 @@ single-replica Redis with no persistence, which is a much worse trade than the o
 
 #### What has to be true in the deployment, and is not yet
 
-- **`DJANGO_PAYFAST_BEHIND_PROXY=true`.** Container Apps ingress is a reverse proxy, so `REMOTE_ADDR`
+- **`DJANGO_BEHIND_PROXY=true`.** Container Apps ingress is a reverse proxy, so `REMOTE_ADDR`
   is Envoy and not Payfast. `gateway.py:375` defaults `behind_proxy` to `False` and
   `verify_notification` rejects on a source-address mismatch, so without this variable **every
   Payfast notification is rejected** and no membership ever activates. Highest-consequence single
@@ -2484,3 +2497,97 @@ rebuild: model the finalisation as a transaction with a zero total rather than a
 two fields, and give the plant a finalisation record with a status the payment can later attach to.
 The cost of doing that in Block 6 is small. The cost of not doing it is that the first priced product
 type reopens ownership finality, the swap-window rule and the notification flow at the same time.
+
+---
+
+### C36 — Redis is a container app, not Azure Managed Redis
+
+**Status: Decided. Supersedes the cache decision in C31, which is otherwise unchanged.**
+
+C31 decided **Azure Managed Redis in QA and production, a `redis:7-alpine` container in
+development**. That was right on the reasoning it gave and wrong on facts nobody had yet checked
+against a real instance. This entry records what those facts are, because two of them are properties
+of Managed Redis rather than of the instance that happened to exist, and neither is going away.
+
+| | Decision |
+| --- | --- |
+| QA, UAT, production | **One `redis:7.4-alpine` container app per environment**, internal TCP ingress on 6379, exactly one replica, no persistence, `maxmemory-policy noeviction` |
+| Development | Unchanged — the `redis:7-alpine` service in `compose.yaml` |
+| Provisioned by | `deploy/provision-container-apps.sh`, which also derives `DJANGO_REDIS_URL` |
+| `f2c/cache.py`, `f2c/queue.py` | **Unchanged.** No code was written for this |
+
+#### Why Managed Redis could not serve it
+
+**It exposes one logical database per cluster, and this application needs two.** `f2c/queue.py` sets
+`BROKER_DB = 1` and derives the broker from `DJANGO_REDIS_URL` with the path rewritten, so one Redis
+carries the throttle counters on database 0 and the queue on database 1 — which is what makes "one
+Redis, two jobs" true rather than aspirational. A plain Redis has sixteen databases. The `databases`
+collection on a Managed Redis cluster holds exactly one entry, named `default`.
+
+**Celery cannot use a clustered Redis as a broker at all.** The instance available here is
+`OSSCluster`, and kombu's transport aliases are `redis`, `rediss` and `sentinel` — there is no Redis
+Cluster transport. That is a limit of the client, so it holds whatever Azure does.
+
+**And its access keys are disabled.** `accessKeysAuthentication` is `Disabled` on the instance, so
+the `rediss://:<access-key>@host` URL C31 and `deploy.md` both describe **cannot be formed**, and
+neither `f2c/cache.py` nor `f2c/queue.py` can present a Microsoft Entra token. That third one is
+solvable — redis-py takes a `credential_provider` connection argument which Django's `RedisCache`
+forwards through `OPTIONS`, kombu's redis transport accepts one as a `?credential_provider=` query
+parameter, and `_from_cache_url` preserves the query string on purpose — but it is code to write and
+test, and the first two problems would still be there afterwards.
+
+#### The objection C31 already raised, answered
+
+C31 says, of moving sessions into the cache: *"Moving sessions into the cache would make sign-in
+depend on a single-replica Redis with no persistence, which is a much worse trade than the one it
+looks like."* That is exactly what this entry provisions, so it has to be met rather than skirted.
+
+**It is met because `SESSION_ENGINE` stays unset.** Sessions — and the WebAuthn challenges parked in
+`authn/webauthn.py` — remain in MySQL, which is the whole reason C31 left that setting alone. Sign-in
+does not read Redis.
+
+What does pass through Redis is the **delivery** of an emailed sign-in code, on the `mail` queue. So
+the exposure of a restart is not "nobody can sign in" but "a code requested in the seconds around a
+restart is not sent", and that failure is already accepted deliberately elsewhere:
+`storefronts/tasks.py` sets `acks_late=False` on `deliver_email` against the global default, so a
+worker killed mid-hand-over loses the send rather than delivering a second code to a member's inbox.
+`EmailDispatch.objects.pending()` is the query that shows it, the row stays in MySQL, and the member
+can ask for another code. **The durable record was never in Redis.**
+
+#### No volume, and that is the part most likely to be revisited
+
+Container Apps offers ephemeral storage or Azure Files. Azure Files is SMB, and Redis AOF
+correctness depends on `fsync` semantics a network filesystem does not reliably provide; ephemeral
+storage does not survive the replica replacement that platform maintenance performs. So a volume
+buys fragility rather than durability, and `--save "" --appendonly no` matches `compose.yaml`.
+
+If the lost-code window ever proves to matter, the answer is a **second** Redis container for the
+broker alone, with AOF, tested — not a volume bolted onto this one.
+
+#### What was given up
+
+- **Managed HA, patching and backup.** This is one replica with no failover. A restart is a gap, and
+  platform maintenance causes restarts nobody scheduled.
+- **One eviction policy for two workloads.** A cache wants `allkeys-lru`; a broker must never evict
+  or queued tasks vanish under memory pressure with nothing to say so. The broker's requirement is
+  the one that cannot be relaxed, so `noeviction` it is — and the throttle counters now compete for
+  the same memory. `maxmemory` is set below the container's limit so Redis refuses a write, which is
+  a visible failed enqueue, before the platform OOM-kills the process and loses the queue silently.
+- **`rediss://`.** Container Apps terminates TLS for HTTP ingress, not for the TCP ingress a Redis
+  connection needs, so the URL is `redis://` and `DJANGO_CACHE_ALLOW_PLAINTEXT=true` in every
+  deployed environment. `f2c/cache.py` spells that as a permission precisely so it reads as a
+  downgrade wherever it appears, and the justification is narrow: internal ingress publishes no
+  public address, and there is no access key in the URL for a plaintext connection to disclose —
+  which is the loss `cache.py` refuses `redis://` to prevent. **It does not claim the hop crosses no
+  network.** It crosses a private one. Giving Redis its own certificate and keeping `rediss://` is
+  the stricter option, and it costs a certificate to rotate in three environments.
+- **About $25/month per environment**, which is the one line in this list that argues for the change
+  rather than against it.
+
+#### What did not change
+
+The cache is still a cache server rather than `DatabaseCache`, for the reason C31 verified against a
+real Redis: django-ninja checks throttles synchronously from an async operation, and `DatabaseCache`
+reaches the database through `connection.cursor()`, which Django decorates `@async_unsafe`. Socket
+I/O is permitted where ORM I/O is not. **That finding is untouched** — this entry changes where the
+socket goes, not why there is one.
