@@ -156,6 +156,21 @@ jobs:
           # The market storefront is optional in QA -- design/deploy.md decision
           # D2 -- so an environment that does not carry it says so once, here,
           # rather than in every job below.
+          #
+          # **`DEPLOY_MARKET` has to exist as a repository variable, not only as
+          # an environment one.** This job declares no `environment:` -- it takes
+          # no Azure action and should not sit behind an approval gate -- and
+          # `vars` in a job without one resolves against repository and
+          # organisation variables only. With the value set on the `qa`
+          # environment alone this test read the empty string, the market image
+          # was skipped on every run, and the step log said so in a line that
+          # reads like a deliberate decision. `ACR_NAME` in the workflow `env:`
+          # block above is repository-scoped for the same reason.
+          #
+          # `uat` and `prod` set it explicitly rather than inheriting, so the
+          # per-environment gate D2 asks for still holds where `promote.yml`
+          # reads it -- that workflow's `verify` job *does* declare an
+          # environment, so the environment value wins there.
           if [ "$DEPLOY_MARKET" != 'true' ] && [ "$market" = 'true' ]; then
             echo "vars.DEPLOY_MARKET is not 'true': skipping the market image."
             market=false
