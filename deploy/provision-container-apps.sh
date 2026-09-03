@@ -9,16 +9,57 @@
 # It is idempotent: an app that already exists is reported and left alone, so a
 # re-run after adding one app is safe.
 #
-# **The six apps, and why it is six.** design/deploy.md 5.2. Four of them run
-# the same API image and choose between behaviours with the first argument to
+# **The seven apps.** design/deploy.md 5.2 describes six; the seventh is Redis,
+# and the reason it is here rather than in Azure is below. Four of them run the
+# same API image and choose between behaviours with the first argument to
 # `deploy/entrypoint.sh`; two are the storefronts.
 #
+#   f2c-redis               redis:7-alpine           internal TCP, port 6379, EXACTLY ONE REPLICA
 #   f2c-api                 entrypoint serve         external ingress, port 8000
 #   f2c-celery-worker       entrypoint worker        no ingress
 #   f2c-celery-mail-worker  entrypoint mail-worker   no ingress
-#   f2c-celery-beat         entrypoint beat          no ingress, MAX ONE REPLICA
+#   f2c-celery-beat         entrypoint beat          no ingress, EXACTLY ONE REPLICA
 #   f2c-club                image default            external ingress, port 3000
 #   f2c-market              image default            external ingress, port 3000
+#
+# **Why Redis is a container here and not Azure Managed Redis.** Two properties
+# of Managed Redis that this application needs and cannot get:
+#
+#   * **A second logical database.** `f2c/queue.py` sets `BROKER_DB = 1` and
+#     derives the broker from `DJANGO_REDIS_URL` with the path rewritten, so one
+#     Redis serves the throttle counters on db 0 and the queue on db 1. Managed
+#     Redis exposes one database per cluster. A plain Redis has sixteen.
+#   * **A non-clustered endpoint.** The instance available here is
+#     `OSSCluster`, and kombu's transport list is `redis`, `rediss` and
+#     `sentinel` -- there is no Redis Cluster transport, so Celery cannot use a
+#     clustered Redis as a broker at all.
+#
+# It also removes a third problem rather than solving it: Managed Redis here has
+# `accessKeysAuthentication` disabled, and neither `f2c/cache.py` nor
+# `f2c/queue.py` can present a Microsoft Entra token today.
+#
+# **No persistence, and that is a decision rather than an omission.**
+# `--save "" --appendonly no`, matching `compose.yaml`. Container Apps offers
+# ephemeral storage or Azure Files, and Azure Files is SMB: Redis AOF
+# correctness depends on `fsync` semantics a network filesystem does not
+# reliably provide, while ephemeral storage does not survive the replica
+# replacement that platform maintenance performs. So a volume here buys
+# fragility rather than durability.
+#
+# What is actually lost on a restart is bounded and already visible. The
+# throttle counters are disposable -- losing them resets a rate limit window.
+# The queue holds in-flight `deliver_email` messages, and that loss is a failure
+# the application already accepts on purpose: `storefronts/tasks.py` sets
+# `acks_late=False` so a worker killed mid-hand-over loses the send rather than
+# delivering a second sign-in code, and `EmailDispatch.objects.pending()` is the
+# query that surfaces it. The durable record is in MySQL.
+#
+# **`maxmemory-policy noeviction`, because one instance serves both.** A cache
+# would want `allkeys-lru`; a broker must never evict, or queued tasks disappear
+# under memory pressure with nothing to say so. One instance forces one policy
+# and the broker's requirement is the one that cannot be relaxed -- so the
+# throttle counters compete for the same memory, and `maxmemory` is a thing to
+# watch rather than a thing to set and forget.
 #
 # The names are unprefixed. The resource group already carries the environment
 # -- `rg-f2c-qa-weu` -- so `qa-f2c-api` in `rg-f2c-qa-weu` says it twice, and
@@ -60,11 +101,18 @@
 #                  DEPLOY_MARKET is not 'true'
 #
 #   MYSQL_RESOURCE_GROUP    where the data tier actually lives, when it is not
-#   REDIS_RESOURCE_GROUP    this environment's own resource group. Each defaults
-#   STORAGE_RESOURCE_GROUP  to RESOURCE_GROUP; `-` skips that one check.
-#                           These affect the preflight only -- the running
-#                           application reaches all three by hostname, account
-#                           name and URL, and never by resource group.
+#   STORAGE_RESOURCE_GROUP  this environment's own resource group. Each defaults
+#                           to RESOURCE_GROUP; `-` skips that one check. These
+#                           affect the preflight only -- the running application
+#                           reaches MySQL by hostname and blob storage by
+#                           account name, never by resource group. There is no
+#                           REDIS_RESOURCE_GROUP: Redis is one of the apps this
+#                           script creates.
+#
+# **The managed environment and its Log Analytics workspace are created if they
+# are absent**, so a whole environment comes up from one command and UAT and
+# production are the same command with different values. An environment that
+# already exists is used as it stands.
 #
 # The values file holds Tables B, C, D and E from design/deploy-quickstart.md.
 # It carries passwords and keys, so it is never committed --
@@ -104,8 +152,21 @@ APP_MAIL_WORKER="${APP_MAIL_WORKER:-f2c-celery-mail-worker}"
 APP_BEAT="${APP_BEAT:-f2c-celery-beat}"
 APP_CLUB="${APP_CLUB:-f2c-club}"
 APP_MARKET="${APP_MARKET:-f2c-market}"
+APP_REDIS="${APP_REDIS:-f2c-redis}"
 
 REGISTRY="${ACR_NAME}.azurecr.io"
+
+# Pinned to the minor version, not `7` or `latest`. This process holds the queue
+# every email passes through; the version it runs is not a thing to let a tag
+# move underneath a restart. Same image `compose.yaml` uses, so local and
+# deployed behaviour match. Pulled from Docker Hub -- it is the one app here that
+# is not this project's own image, so it needs no registry identity.
+REDIS_IMAGE="${REDIS_IMAGE:-redis:7.4-alpine}"
+REDIS_PORT=6379
+
+# The Log Analytics workspace the managed environment logs to, created with it.
+LOG_WORKSPACE="${LOG_WORKSPACE:-log-${RESOURCE_GROUP}}"
+LOCATION="${LOCATION:-westeurope}"
 
 # Sizing. **Not specified in design/deploy.md**, so these are this script's
 # defaults rather than a decision the documents made: the API carries uvicorn
@@ -117,6 +178,15 @@ WORKER_CPU="${WORKER_CPU:-0.5}"
 WORKER_MEMORY="${WORKER_MEMORY:-1.0Gi}"
 FRONTEND_CPU="${FRONTEND_CPU:-0.5}"
 FRONTEND_MEMORY="${FRONTEND_MEMORY:-1.0Gi}"
+
+# Redis, and `maxmemory` is the setting to think about rather than the container
+# size. It is set below the container's memory so that Redis refuses a write
+# before the platform kills the process: with `noeviction`, hitting `maxmemory`
+# returns an error to the writer, which surfaces as a failed enqueue somebody
+# can see, where an OOM kill loses the whole queue silently.
+REDIS_CPU="${REDIS_CPU:-0.5}"
+REDIS_MEMORY="${REDIS_MEMORY:-1.0Gi}"
+REDIS_MAXMEMORY="${REDIS_MAXMEMORY:-700mb}"
 
 run() {
     if [ -n "${DRY_RUN:-}" ]; then
@@ -168,9 +238,15 @@ API_PLAIN_VARS=(
 # Block 0 P4 asks for. Container app secrets are the interim; moving them is a
 # `--secret-volume` or a Key Vault reference on the same identity that already
 # reaches blob storage, and it changes nothing else here.
+# **`DJANGO_REDIS_URL` is not here, and no longer a secret.** It was, because on
+# Azure Managed Redis the access key travels inside the URL. The Redis this
+# script creates is reached over the managed environment's internal network with
+# no credential in the URL at all, so there is nothing in it to protect -- and
+# the script derives it below rather than asking for it, because it cannot be
+# written down until the environment's domain is known.
 API_SECRET_VARS=(
     DJANGO_SECRET_KEY DJANGO_FIELD_ENCRYPTION_KEY DJANGO_BLIND_INDEX_PEPPER
-    DJANGO_DB_PASSWORD DJANGO_REDIS_URL
+    DJANGO_DB_PASSWORD
     EMAIL_CC_PASSWORD EMAIL_F2C_PASSWORD
     DJANGO_PAYFAST_MERCHANT_ID DJANGO_PAYFAST_MERCHANT_KEY
     DJANGO_PAYFAST_PASSPHRASE
@@ -194,8 +270,41 @@ MARKET_VARS=(DJANGO_API_URL DJANGO_API_PUBLIC_URL SITE_URL APP_ENV PORT)
 # to the names the image reads at creation time.
 MARKET_PREFIXED=(MARKET_DJANGO_API_PUBLIC_URL MARKET_SITE_URL)
 
+# **The two the script sets itself, and they are not read from the values file.**
+#
+# `DJANGO_REDIS_URL` names the Redis app created below, at the managed
+# environment's internal domain -- a value that does not exist until the
+# environment does.
+#
+# `DJANGO_CACHE_ALLOW_PLAINTEXT` is the deliberate downgrade `f2c/cache.py`
+# demands, and it is spelled as a permission precisely so that it reads as one
+# wherever it appears. **The justification is that this Redis is reached only
+# from inside the managed environment**: internal ingress publishes no public
+# address, the hop never leaves Azure's network for the environment, and there
+# is no access key in the URL that a plaintext connection could disclose --
+# which is the loss `cache.py` refuses `redis://` to prevent. What it does not
+# claim is that the hop crosses no network at all; it crosses a private one.
+# Giving Redis its own certificate and keeping `rediss://` is the stricter
+# option, and it costs a certificate to rotate in three environments.
+#
+# `f2c/queue.py` reads the same switch rather than one of its own, deliberately:
+# a second switch could only fail by disagreeing with the first.
+DERIVED_VARS=(DJANGO_REDIS_URL DJANGO_CACHE_ALLOW_PLAINTEXT)
+
 required=("${API_PLAIN_VARS[@]}" "${API_SECRET_VARS[@]}" "${CLUB_VARS[@]}")
 [ -n "${SKIP_MARKET:-}" ] || required+=("${MARKET_PREFIXED[@]}")
+
+# A value in the file for either of these is a value that would be silently
+# overridden, which is worse than being told.
+for name in "${DERIVED_VARS[@]}"; do
+    if [ -n "${!name:-}" ]; then
+        echo "$name is set in $VALUES_FILE, and this script sets it." >&2
+        echo "Remove it: the Redis URL names the app created below at the" >&2
+        echo "managed environment's internal domain, which is not known until" >&2
+        echo "the environment exists." >&2
+        exit 1
+    fi
+done
 
 missing=()
 for name in "${required[@]}"; do
@@ -220,12 +329,78 @@ echo "Preflight for $ENVIRONMENT in $RESOURCE_GROUP"
 az group show --name "$RESOURCE_GROUP" --output none
 echo "  resource group        ok"
 
-az containerapp env show --name "$CONTAINERAPP_ENV" \
-    --resource-group "$RESOURCE_GROUP" --output none
-echo "  managed environment   ok"
-
 acr_id=$(az acr show --name "$ACR_NAME" --query id -o tsv)
 echo "  registry              ok"
+
+# The managed environment, created if absent along with the workspace it logs
+# to. `az containerapp env create` provisions a workspace on its own when none
+# is named, but naming it puts the workspace in this environment's resource
+# group with a predictable name rather than wherever the command decides.
+if az containerapp env show --name "$CONTAINERAPP_ENV" \
+        --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+    echo "  managed environment   ok"
+else
+    echo "  managed environment   absent -- creating"
+
+    if ! az monitor log-analytics workspace show \
+            --workspace-name "$LOG_WORKSPACE" \
+            --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+        echo "    workspace $LOG_WORKSPACE"
+        run az monitor log-analytics workspace create \
+            --workspace-name "$LOG_WORKSPACE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --output none
+    fi
+
+    if [ -z "${DRY_RUN:-}" ]; then
+        workspace_id=$(az monitor log-analytics workspace show \
+            --workspace-name "$LOG_WORKSPACE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query customerId -o tsv)
+        workspace_key=$(az monitor log-analytics workspace get-shared-keys \
+            --workspace-name "$LOG_WORKSPACE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query primarySharedKey -o tsv)
+    else
+        workspace_id='<workspace-id>'
+        workspace_key='<workspace-key>'
+    fi
+
+    echo "    environment $CONTAINERAPP_ENV"
+    run az containerapp env create \
+        --name "$CONTAINERAPP_ENV" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --logs-workspace-id "$workspace_id" \
+        --logs-workspace-key "$workspace_key" \
+        --output none
+fi
+
+# The internal domain every app in this environment is addressed at. This is
+# what `DJANGO_REDIS_URL` is built from, and it does not exist until the
+# environment does -- which is why the values file cannot carry it.
+if [ -z "${DRY_RUN:-}" ]; then
+    environment_domain=$(az containerapp env show \
+        --name "$CONTAINERAPP_ENV" --resource-group "$RESOURCE_GROUP" \
+        --query properties.defaultDomain -o tsv)
+else
+    environment_domain="${environment_domain:-<default-domain>}"
+fi
+
+# **Internal, so the host carries `.internal.`.** An app with internal ingress
+# is reachable from inside the managed environment and has no public address at
+# all, which is the whole basis for the plaintext decision above.
+#
+# `redis://` and not `rediss://`: Container Apps terminates TLS for HTTP
+# ingress, not for the TCP ingress a Redis connection needs.
+#
+# Database 0. `f2c/queue.py` rewrites the path to `BROKER_DB` for the broker, so
+# the queue lands on database 1 of the same instance -- which is the property a
+# managed Redis could not provide.
+DJANGO_REDIS_URL="redis://${APP_REDIS}.internal.${environment_domain}:${REDIS_PORT}/0"
+DJANGO_CACHE_ALLOW_PLAINTEXT=true
+echo "  redis url             $DJANGO_REDIS_URL"
 
 # **The data tier, and this is the check worth having.** The API entrypoint runs
 # `wait_for_database` and then `check --deploy --fail-level WARNING` before it
@@ -241,7 +416,6 @@ echo "  registry              ok"
 # below are how this check is pointed at wherever they actually are, and `-`
 # skips an individual check for a resource this script should not look for.
 MYSQL_RESOURCE_GROUP="${MYSQL_RESOURCE_GROUP:-$RESOURCE_GROUP}"
-REDIS_RESOURCE_GROUP="${REDIS_RESOURCE_GROUP:-$RESOURCE_GROUP}"
 STORAGE_RESOURCE_GROUP="${STORAGE_RESOURCE_GROUP:-$RESOURCE_GROUP}"
 
 data_tier_missing=()
@@ -252,21 +426,9 @@ if [ "$MYSQL_RESOURCE_GROUP" != '-' ]; then
         || data_tier_missing+=("Azure Database for MySQL Flexible Server 8.4 in $MYSQL_RESOURCE_GROUP")
 fi
 
-# Azure Managed Redis, **not** Azure Cache for Redis -- design/deploy.md 2. The
-# Cache Basic, Standard and Premium tiers retire on 30 September 2028, and
-# provisioning onto a retiring product to save a week is a migration bought on
-# credit. The two are different resource providers, so both are checked and
-# either satisfies this: an existing Cache is a finding for the documents to
-# record, not a reason for this script to refuse.
-if [ "$REDIS_RESOURCE_GROUP" != '-' ]; then
-    {
-        az redisenterprise list --resource-group "$REDIS_RESOURCE_GROUP" \
-            --query '[].name' -o tsv 2>/dev/null
-        az redis list --resource-group "$REDIS_RESOURCE_GROUP" \
-            --query '[].name' -o tsv 2>/dev/null
-    } | grep -q . \
-        || data_tier_missing+=("Azure Managed Redis in $REDIS_RESOURCE_GROUP")
-fi
+# **No Redis check.** It is one of the apps below, which is the point of the
+# header: nothing outside this environment has to exist for the cache and the
+# queue to work.
 
 if [ "$STORAGE_RESOURCE_GROUP" != '-' ]; then
     az storage account list --resource-group "$STORAGE_RESOURCE_GROUP" \
@@ -317,7 +479,7 @@ fi
 # Container Apps secret names are lowercase, alphanumeric and dashes, so the
 # variable name is transposed rather than reused.
 api_env_arguments=()
-for name in "${API_PLAIN_VARS[@]}"; do
+for name in "${API_PLAIN_VARS[@]}" "${DERIVED_VARS[@]}"; do
     api_env_arguments+=("${name}=${!name}")
 done
 
@@ -452,6 +614,63 @@ create_frontend_app() {
     attach_registry "$container_app"
 }
 
+create_redis_app() {
+    if exists "$APP_REDIS"; then
+        echo "  $APP_REDIS already exists -- left alone"
+        return 0
+    fi
+
+    echo "  creating $APP_REDIS ($REDIS_IMAGE)"
+
+    # **Exactly one replica, and this is a correctness constraint of the same
+    # kind as beat's.** Two replicas behind one ingress address are two separate
+    # empty Redis processes: connections would be balanced between them, so a
+    # throttle counter incremented on one would be invisible to the other, and a
+    # task published to one would be consumed by nobody if the worker connected
+    # to the other. Nothing would report it. `--min-replicas 1 --max-replicas 1`
+    # and no scale rule.
+    #
+    # **Internal TCP ingress.** `--transport tcp` because Redis is not HTTP, and
+    # `--ingress internal` because nothing outside the environment has any
+    # business reaching it -- there is no public address to reach. Internal TCP
+    # ingress needs `--exposed-port`, and it is the same port so that the URL
+    # derived above reads plainly.
+    #
+    # No registry arguments: this is a public image, not one of ours, so it
+    # needs neither an identity nor an AcrPull grant.
+    #
+    # **`--save ''` is the documented way to remove every snapshot point, and
+    # the empty element between two commas is the part to check on the first
+    # run** -- `az` splits `--args` on commas and an empty value is the kind of
+    # thing a CLI drops. If it does, the fallback is a bare `--save` with no
+    # value, which redis-server also reads as empty.
+    #
+    # **Nothing breaks if it is dropped.** No volume is mounted, so a snapshot
+    # would be written to the replica's own writable layer and vanish with it.
+    # Getting this wrong costs a periodic fork and some CPU for a file nobody
+    # will ever read; it does not make the data any more or less durable.
+    run az containerapp create \
+        --name "$APP_REDIS" \
+        --resource-group "$RESOURCE_GROUP" \
+        --environment "$CONTAINERAPP_ENV" \
+        --image "$REDIS_IMAGE" \
+        --ingress internal \
+        --transport tcp \
+        --target-port "$REDIS_PORT" \
+        --exposed-port "$REDIS_PORT" \
+        --min-replicas 1 \
+        --max-replicas 1 \
+        --cpu "$REDIS_CPU" \
+        --memory "$REDIS_MEMORY" \
+        --command redis-server \
+        --args --save,'',--appendonly,no,--maxmemory,"$REDIS_MAXMEMORY",--maxmemory-policy,noeviction \
+        --output none
+}
+
+echo
+echo "Redis -- the cache on database 0, the queue on database 1"
+create_redis_app
+
 echo
 echo "The API family -- four apps, one image"
 
@@ -494,7 +713,10 @@ Next, and none of it is optional:
   * Set the six CONTAINERAPP_* GitHub variables for this environment to the
     names above. The deployments read those, and an unset one makes
     `az containerapp update --name ''` fail on a resource that does not exist
-    rather than on a name nobody set.
+    rather than on a name nobody set. **There is no CONTAINERAPP_REDIS**, and
+    that is deliberate: `release.yml` and `promote.yml` deploy this project's
+    own images, and Redis is a pinned public one. It is created once here and
+    updated only when somebody chooses to move the version.
 
   * Grant the API family's identities Storage Blob Data Contributor on the
     storage account -- design/deploy.md 4 uses managed identity for blob
