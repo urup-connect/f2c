@@ -25,9 +25,17 @@ export const APP_ENVS = ['local', 'qa', 'production'] as const satisfies readonl
  */
 export type EnvRecord = Readonly<Record<string, string | undefined>>
 
-/** Where a deployment variable is set. Most of them are set in both places. */
+/**
+ * Where a deployment variable is set. Most of them are set in both places.
+ *
+ * **The container app, not App Service, and not the image.** This platform deploys to Azure
+ * Container Apps -- design/deploy.md section 2 -- and since R-D4 closed these are read from the
+ * running container rather than baked in by `next build`, so a wrong value is fixed by editing the
+ * container app and deploying a new revision. No rebuild. See design/deploy-quickstart.md tables
+ * D and E for the list.
+ */
 const DEFAULT_REMEDY =
-  'Set it in .env.local for local development, or in the App Service application settings for QA and Production.'
+  'Set it in .env.local for local development, or on the container app for QA, UAT and Production.'
 
 /**
  * The one wording for a configuration failure, so every variable fails the same way and the
