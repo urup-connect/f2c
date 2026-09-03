@@ -200,3 +200,15 @@ cython_debug/
 # IDE
 .idea/
 /notingit/
+
+# The filled-in copies of `deploy/values.env.template`, one per environment.
+# Each carries a MySQL password, a Redis URL with the access key inside it, two
+# Payfast credentials, two mailbox passwords and -- the two whose loss is
+# unrecoverable -- `DJANGO_FIELD_ENCRYPTION_KEY` and
+# `DJANGO_BLIND_INDEX_PEPPER`. The template itself is committed and holds no
+# values.
+#
+# They exist only for the run of `deploy/provision-container-apps.sh`. After it
+# the values live on the container apps, which is where they should be read back
+# from.
+/deploy/*.values.env
