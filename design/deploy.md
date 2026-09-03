@@ -828,9 +828,16 @@ itself would not be limited — and a credential is worth what it can reach rath
 usually used for.
 
 Each registration gets a federated credential whose subject is
-`repo:<owner>/<repo>:environment:<name>`. **That subject is what turns the reviewer requirement into
-an enforced gate rather than a convention:** a job that does not declare `environment: production`
-cannot mint a production token at all, however much repository access its author has.
+`repo:<owner>@<owner id>/<repo>@<repo id>:environment:<name>`. **That subject is what turns the
+reviewer requirement into an enforced gate rather than a convention:** a job that does not declare
+`environment: production` cannot mint a production token at all, however much repository access its
+author has.
+
+The numeric IDs alongside the names are the immutable identifiers of the owner and the repository,
+and they are the reason `azure-oidc-setup.sh` reads the subject out of the GitHub API rather than
+composing it from the name it was given. A credential carrying the names alone is refused with
+`AADSTS700213` — the same failure a repository transfer produces, since the names in an existing
+credential are then stale and nothing in Azure notices.
 
 Two role assignments per environment. `AcrPush` on the shared registry — push and not merely pull,
 because `az acr import` writes the moving environment tag at the end of a promotion. And `Contributor` scoped to that environment's resource

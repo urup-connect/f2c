@@ -33,9 +33,33 @@
 
 set -euo pipefail
 
+# Git Bash rewrites any argument that looks like a Unix path into a Windows one,
+# which turns an ARM scope such as `/subscriptions/<id>/resourceGroups/<rg>` into
+# `C:/Program Files/Git/subscriptions/...`. The role assignment then fails on a
+# scope nobody typed, and the message reads like a permissions problem. Both
+# variables are inert anywhere other than MSYS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 : "${ENVIRONMENT:?ENVIRONMENT is required -- qa, uat or production}"
 : "${ACR_NAME:?ACR_NAME is required -- the shared container registry}"
 : "${RESOURCE_GROUP:?RESOURCE_GROUP is required -- the resource group for this environment}"
+
+# Checked together and up front. Both are needed well before anything is
+# created, and `gh` in particular is not installed by default on Windows -- a
+# missing one used to surface as a `command not found` after the application
+# registration already existed, leaving half a setup behind.
+missing=
+for tool in az gh; do
+    command -v "$tool" >/dev/null 2>&1 || missing="${missing} ${tool}"
+done
+
+if [ -n "$missing" ]; then
+    echo "Not on PATH:${missing}" >&2
+    echo "  az -- https://aka.ms/installazurecli" >&2
+    echo "  gh -- winget install --id GitHub.cli, then gh auth login" >&2
+    exit 1
+fi
 
 REPOSITORY="${REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 APP_NAME="${APP_NAME:-f2c-gha-${ENVIRONMENT}}"
@@ -72,28 +96,61 @@ sp_object_id=$(az ad sp show --id "$app_id" --query id -o tsv)
 # The subject ties the credential to jobs that declare this environment. A job
 # without `environment: <name>` cannot mint a token with it, however much
 # repository access its author has.
+#
+# `<owner>@<owner id>/<repo>@<repo id>` rather than plain `<owner>/<repo>`: the
+# subject GitHub presents carries the immutable numeric IDs alongside the names,
+# so a credential holding the names alone is refused as AADSTS700213. The IDs
+# are read from the API rather than typed, because they are the one part of the
+# subject nobody can check by eye.
 credential_name="github-${ENVIRONMENT}"
 
-if ! az ad app federated-credential show \
-        --id "$app_id" \
-        --federated-credential-id "$credential_name" >/dev/null 2>&1; then
-    echo "==> Adding the federated credential $credential_name"
-    az ad app federated-credential create \
-        --id "$app_id" \
-        --parameters "$(
-            cat <<JSON
+read -r owner_id repo_id <<<"$(gh api "repos/${REPOSITORY}" --jq '[.owner.id, .id] | @tsv')"
+: "${owner_id:?could not read the owner ID of $REPOSITORY}"
+: "${repo_id:?could not read the repository ID of $REPOSITORY}"
+
+subject="repo:${REPOSITORY%%/*}@${owner_id}/${REPOSITORY##*/}@${repo_id}:environment:${ENVIRONMENT}"
+
+credential_parameters=$(
+    cat <<JSON
 {
   "name": "${credential_name}",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:${REPOSITORY}:environment:${ENVIRONMENT}",
+  "subject": "${subject}",
   "description": "GitHub Actions, ${ENVIRONMENT} environment",
   "audiences": ["api://AzureADTokenExchange"]
 }
 JSON
-        )" \
+)
+
+# The subject on record is compared, not merely the credential's existence. A
+# repository transfer or a rename leaves a credential that is present and wrong,
+# and a script skipping on presence alone reports success while every job that
+# needs the credential keeps failing at `azure/login`. Correcting it in place is
+# what makes this script worth re-running.
+existing_subject=$(az ad app federated-credential show \
+    --id "$app_id" \
+    --federated-credential-id "$credential_name" \
+    --query subject -o tsv 2>/dev/null || true)
+
+if [ -z "$existing_subject" ]; then
+    echo "==> Adding the federated credential $credential_name"
+    echo "    subject: $subject"
+    az ad app federated-credential create \
+        --id "$app_id" \
+        --parameters "$credential_parameters" \
+        --output none
+elif [ "$existing_subject" != "$subject" ]; then
+    echo "==> Correcting the subject of $credential_name"
+    echo "    was: $existing_subject"
+    echo "    now: $subject"
+    az ad app federated-credential update \
+        --id "$app_id" \
+        --federated-credential-id "$credential_name" \
+        --parameters "$credential_parameters" \
         --output none
 else
-    echo "==> The federated credential $credential_name already exists"
+    echo "==> The federated credential $credential_name is already correct"
+    echo "    subject: $subject"
 fi
 
 # --------------------------------------------------------------------- the roles
@@ -102,13 +159,33 @@ fi
 # frontend images -- a promotion rebuilds them (risk R-D4). It includes pull.
 registry_id=$(az acr show --name "$ACR_NAME" --query id -o tsv)
 
+# Existence is checked before creating, rather than letting a failed create fall
+# through to `|| echo "already assigned"`. That idiom cannot tell an assignment
+# that is already there from one Azure refused, so an account without
+# `User Access Administrator` reports a clean setup and the pipeline then fails
+# much later at a `docker push`, with nothing pointing at a missing role.
+assign_role() {
+    local role="$1" scope="$2"
+
+    if [ -n "$(az role assignment list \
+            --assignee "$sp_object_id" \
+            --role "$role" \
+            --scope "$scope" \
+            --query '[0].id' -o tsv)" ]; then
+        echo "    already assigned"
+        return
+    fi
+
+    az role assignment create \
+        --assignee-object-id "$sp_object_id" \
+        --assignee-principal-type ServicePrincipal \
+        --role "$role" \
+        --scope "$scope" \
+        --output none
+}
+
 echo "==> AcrPush on $ACR_NAME"
-az role assignment create \
-    --assignee-object-id "$sp_object_id" \
-    --assignee-principal-type ServicePrincipal \
-    --role AcrPush \
-    --scope "$registry_id" \
-    --output none 2>/dev/null || echo "    already assigned"
+assign_role AcrPush "$registry_id"
 
 # `Contributor` scoped to this environment's resource group and nothing wider.
 #
@@ -118,12 +195,7 @@ az role assignment create \
 # Recorded here rather than done, because a custom role definition is a fourth
 # thing to keep in step across three environments.
 echo "==> Contributor on $RESOURCE_GROUP"
-az role assignment create \
-    --assignee-object-id "$sp_object_id" \
-    --assignee-principal-type ServicePrincipal \
-    --role Contributor \
-    --scope "/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}" \
-    --output none 2>/dev/null || echo "    already assigned"
+assign_role Contributor "/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}"
 
 # ---------------------------------------------------------- the GitHub variables
 #

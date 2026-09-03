@@ -49,8 +49,25 @@ secret goes into Container App secrets in step 5. (Tables A and B)
 ```
 
 Requires the registry from step 1. It creates the application registration, the federated
-credential (`repo:<owner>/<repo>:environment:qa`), the two role assignments (`AcrPush` on the
+credential (`repo:<owner>@<owner id>/<repo>@<repo id>:environment:qa`), the two role assignments (`AcrPush` on the
 registry, `Contributor` on the resource group), and writes the three `AZURE_*` variables.
+
+Needs the Azure CLI **and** the GitHub CLI, both signed in — `winget install --id GitHub.cli` then
+`gh auth login`, since `gh` is not on a Windows box by default. Whichever subscription `az` is
+pointed at is the one written into `AZURE_SUBSCRIPTION_ID`, so run `az account set` first. Creating
+the role assignments needs **Owner** or **User Access Administrator** on the registry and the
+resource group, on top of rights to create app registrations.
+
+**On Windows, run it from a shell you can read.** There is no `bash` on PowerShell's path and
+double-clicking it closes the window on the first missing variable:
+
+```powershell
+$env:ENVIRONMENT="qa"; $env:ACR_NAME="<acr>"; $env:RESOURCE_GROUP="<qa rg>"
+& "C:\Program Files\Git\bin\bash.exe" .github/scripts/azure-oidc-setup.sh
+```
+
+It is safe to re-run: it reuses an existing registration, and corrects a federated credential whose
+subject has gone stale — which is what a repository transfer leaves behind.
 
 Then, by hand:
 
