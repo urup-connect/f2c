@@ -8,7 +8,7 @@ import {
   serialiseCampaign,
 } from '@/lib/campaign-cookie'
 import { indexingHeaders } from '@/lib/seo'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /** The request header carrying the path being rendered. See below. */
 export const PATHNAME_HEADER = 'x-pathname'
@@ -20,9 +20,20 @@ export const PATHNAME_HEADER = 'x-pathname'
  * `proxy`, not `middleware`: the middleware convention is deprecated in Next.js 16 and renamed
  * to proxy. See design/features/public-landing-and-auth-routing.md section 6.4.
  *
- * The indexing rule is a response header rather than page metadata because `export const metadata`
- * is evaluated when a static route is built, so a build promoted from QA to Production would carry
- * the wrong value. See section 6.3.
+ * **`siteConfig()` is read here at request time, and that only works because proxy runs on Node.**
+ * `SITE_URL` and `APP_ENV` are container settings now rather than build arguments (design/deploy.md
+ * R-D4), and under the old edge default `process.env` was inlined at build — so a read here would
+ * have quietly returned the build's value instead of erroring. Next 16 defaults proxy to the Node.js
+ * runtime, where `process.env` is the container's. There is deliberately no `export const runtime`
+ * below: the option is not available in a proxy file and setting it throws. See the bundled proxy
+ * reference under `node_modules/next/dist/docs`, section "Runtime".
+ *
+ * The indexing rule is a response header rather than page metadata. That was originally because
+ * `export const metadata` is evaluated when a static route is built, so a build promoted from QA to
+ * Production would have carried the wrong value — no longer true, now that the root layout builds
+ * its metadata in `generateMetadata` and nothing is prerendered. It stays a header because one
+ * place here covers every response the matcher sees, rather than every page having to remember a
+ * `robots` entry of its own. See section 6.3.
  *
  * The pathname is a **request** header, added on the way in. A layout is not told which route it
  * is wrapping — that is by design, since a layout is meant to be reusable — but the club layout has
@@ -47,7 +58,7 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } })
 
-  for (const [header, value] of Object.entries(indexingHeaders(SITE_CONFIG))) {
+  for (const [header, value] of Object.entries(indexingHeaders(siteConfig()))) {
     response.headers.set(header, value)
   }
 
@@ -84,7 +95,7 @@ function recordCampaign(request: NextRequest, response: NextResponse) {
   // whatever is already there beats replacing it with a value that gets dropped.
   if (!value) return
 
-  response.cookies.set(CAMPAIGN_COOKIE, value, campaignCookieOptions(SITE_CONFIG))
+  response.cookies.set(CAMPAIGN_COOKIE, value, campaignCookieOptions(siteConfig()))
 }
 
 export const config = {

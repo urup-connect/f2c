@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { DM_Sans, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { API_BASE_META_NAME, publicApiBaseUrl } from "@/lib/api-address";
-import { SITE_CONFIG } from "@/lib/site";
+import { siteConfig } from "@/lib/site";
 
 /*
  * Brand typefaces. See design/features/brand-design-system.md section 6.2.
@@ -22,26 +22,37 @@ const playfairDisplay = Playfair_Display({
   weight: ["400", "500", "600", "700"],
 });
 
-export const metadata: Metadata = {
-  /*
-   * Absolute origin for canonical and social URLs, so they never resolve against whichever
-   * host served the request.
-   */
-  metadataBase: new URL(SITE_CONFIG.siteUrl),
-  /*
-   * Default deny. Only the landing page overrides this, so a route added later is kept out of
-   * search results without anyone having to remember to exclude it.
-   * See design/features/public-landing-and-auth-routing.md section 6.3.
-   */
-  robots: { index: false, follow: false },
-  title: {
-    default: "Cultivators Collective",
-    template: "%s | Cultivators Collective",
-  },
-  description:
-    "A cannabis club for members, by cultivators. Connecting members with trusted cultivators through a premium club experience built on quality, transparency and community.",
-  applicationName: "Cultivators Collective",
-};
+/**
+ * Site metadata, built per request.
+ *
+ * A function rather than `export const metadata`, because that object is evaluated when this
+ * module is first imported — and `next build` imports it to analyse the route tree. `metadataBase`
+ * reads `SITE_URL`, so reading it on import would bake the origin into the image and undo
+ * design/deploy.md R-D4. `generateMetadata` runs during render, where the container's environment
+ * is the one that answers.
+ */
+export function generateMetadata(): Metadata {
+  return {
+    /*
+     * Absolute origin for canonical and social URLs, so they never resolve against whichever
+     * host served the request.
+     */
+    metadataBase: new URL(siteConfig().siteUrl),
+    /*
+     * Default deny. Only the landing page overrides this, so a route added later is kept out of
+     * search results without anyone having to remember to exclude it.
+     * See design/features/public-landing-and-auth-routing.md section 6.3.
+     */
+    robots: { index: false, follow: false },
+    title: {
+      default: "Cultivators Collective",
+      template: "%s | Cultivators Collective",
+    },
+    description:
+      "A cannabis club for members, by cultivators. Connecting members with trusted cultivators through a premium club experience built on quality, transparency and community.",
+    applicationName: "Cultivators Collective",
+  };
+}
 
 /**
  * Rendered per request, never prerendered.

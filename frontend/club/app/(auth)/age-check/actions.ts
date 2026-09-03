@@ -4,7 +4,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { checkAge } from '@/lib/age-gate'
 import { AGE_PASS_COOKIE, agePassCookieOptions, serialiseAgePass } from '@/lib/age-gate-cookie'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /**
  * A `FormData` entry is a string or a `File`. A file in one of these fields is not something a
@@ -50,7 +50,7 @@ export const submitAgeCheck = async (formData: FormData) => {
   store.set(
     AGE_PASS_COOKIE,
     serialiseAgePass({ dateOfBirth: outcome.dateOfBirth, assertedAt: now.toISOString() }),
-    agePassCookieOptions(SITE_CONFIG),
+    agePassCookieOptions(siteConfig()),
   )
 
   redirect('/signup')

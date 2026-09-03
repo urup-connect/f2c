@@ -6,7 +6,7 @@ import { BLOCKED_COPY, isBlockedReason } from '@/lib/blocked-content'
 import { clubGateFor, FRONT_DOOR } from '@/lib/club-membership'
 import { requireSession } from '@/lib/club-session'
 import { clubHomeFor } from '@/lib/club-roles'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /*
  * Where a member goes when the club is closed to them and money is not the reason.
@@ -42,7 +42,7 @@ export default async function Blocked() {
     <AuthCard>
       <BlockedNotice
         notice={BLOCKED_COPY[gate.reason]}
-        supportEmail={SITE_CONFIG.supportEmail}
+        supportEmail={siteConfig().supportEmail}
       />
     </AuthCard>
   )

@@ -12,7 +12,7 @@ import {
   VALUES,
   WHY_JOIN,
 } from '@/lib/landing-content'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 import Home, { metadata } from './page'
 
 /*
@@ -133,7 +133,7 @@ describe('the landing page', () => {
     const video = container.querySelector('video')
 
     expect(video).not.toBeNull()
-    expect(video?.getAttribute('src')).toBe(brandFilmSource(SITE_CONFIG))
+    expect(video?.getAttribute('src')).toBe(brandFilmSource(siteConfig()))
   })
 
   test('carries no starter-template content', () => {

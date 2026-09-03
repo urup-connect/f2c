@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 import { BRAND_FILM, brandFilmPoster, brandFilmSource } from '@/lib/brand-film'
 import { FILM } from '@/lib/landing-content'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 import { ClubFilm } from './ClubFilm'
 
 /* design/features/landing.md sections 3 and 5. */
@@ -29,7 +29,7 @@ describe('ClubFilm', () => {
   test('serves the film from the deployment CDN, never from a hardcoded host', () => {
     const { container } = render(<ClubFilm />)
 
-    expect(film(container)).toHaveAttribute('src', brandFilmSource(SITE_CONFIG))
+    expect(film(container)).toHaveAttribute('src', brandFilmSource(siteConfig()))
   })
 
   test('plays nothing on its own, and offers controls to a reader who wants it', () => {
@@ -48,7 +48,7 @@ describe('ClubFilm', () => {
   test('shows the still frame from the CDN before anything is played', () => {
     const { container } = render(<ClubFilm />)
 
-    expect(film(container)).toHaveAttribute('poster', brandFilmPoster(SITE_CONFIG))
+    expect(film(container)).toHaveAttribute('poster', brandFilmPoster(siteConfig()))
   })
 
   test('fetches the header rather than seven megabytes nobody asked for', () => {

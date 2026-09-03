@@ -1,6 +1,6 @@
 import { BRAND_FILM, brandFilmPoster, brandFilmSource } from '@/lib/brand-film'
 import { FILM } from '@/lib/landing-content'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /**
  * The club film.
@@ -55,9 +55,9 @@ export const ClubFilm = () => (
           controls
           height={BRAND_FILM.height}
           playsInline
-          poster={brandFilmPoster(SITE_CONFIG)}
+          poster={brandFilmPoster(siteConfig())}
           preload="metadata"
-          src={brandFilmSource(SITE_CONFIG)}
+          src={brandFilmSource(siteConfig())}
           width={BRAND_FILM.width}
         />
       </div>

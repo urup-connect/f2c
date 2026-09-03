@@ -3,7 +3,7 @@ import { Fraunces, Inter } from 'next/font/google'
 import './globals.css'
 import { STORE_BRAND } from '@/lib/brand'
 import { API_BASE_META_NAME, publicApiBaseUrl } from '@/lib/api-address'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /*
  * Store typefaces — still placeholders. The logo settled the palette, not the type; see
@@ -28,24 +28,35 @@ const fraunces = Fraunces({
   weight: ['400', '600'],
 })
 
-export const metadata: Metadata = {
-  /*
-   * Absolute origin for canonical and social URLs, so they never resolve against whichever host
-   * served the request.
-   */
-  metadataBase: new URL(SITE_CONFIG.siteUrl),
-  /*
-   * Default deny. Only the public pages override this, so a route added later is kept out of search
-   * results without anyone having to remember to exclude it — and `lib/seo.ts` is where the short list
-   * of exceptions is written down.
-   */
-  robots: { index: false, follow: false },
-  title: {
-    default: STORE_BRAND.name,
-    template: `%s | ${STORE_BRAND.name}`,
-  },
-  description: STORE_BRAND.standfirst,
-  applicationName: STORE_BRAND.name,
+/**
+ * Store metadata, built per request.
+ *
+ * A function rather than `export const metadata`, because that object is evaluated when this
+ * module is first imported — and `next build` imports it to analyse the route tree. `metadataBase`
+ * reads `SITE_URL`, so reading it on import would bake the origin into the image and undo
+ * design/deploy.md R-D4. `generateMetadata` runs during render, where the container's environment
+ * is the one that answers.
+ */
+export function generateMetadata(): Metadata {
+  return {
+    /*
+     * Absolute origin for canonical and social URLs, so they never resolve against whichever host
+     * served the request.
+     */
+    metadataBase: new URL(siteConfig().siteUrl),
+    /*
+     * Default deny. Only the public pages override this, so a route added later is kept out of search
+     * results without anyone having to remember to exclude it — and `lib/seo.ts` is where the short list
+     * of exceptions is written down.
+     */
+    robots: { index: false, follow: false },
+    title: {
+      default: STORE_BRAND.name,
+      template: `%s | ${STORE_BRAND.name}`,
+    },
+    description: STORE_BRAND.standfirst,
+    applicationName: STORE_BRAND.name,
+  }
 }
 
 /*

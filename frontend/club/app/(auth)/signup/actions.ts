@@ -13,7 +13,7 @@ import {
   validateMemberDetails,
 } from '@/lib/member-details'
 import { registerMember } from '@/lib/registration-api'
-import { SITE_CONFIG } from '@/lib/site'
+import { siteConfig } from '@/lib/site'
 
 /**
  * Decides the member details, and registers the member.
@@ -158,7 +158,7 @@ export const submitMemberDetails = async (formData: FormData) => {
    * not taken. See design/features/payments.md section 4 and risk 1.
    */
   if (registration.checkoutToken) {
-    store.set(CHECKOUT_COOKIE, registration.checkoutToken, checkoutCookieOptions(SITE_CONFIG))
+    store.set(CHECKOUT_COOKIE, registration.checkoutToken, checkoutCookieOptions(siteConfig()))
 
     redirect('/pay')
   }
