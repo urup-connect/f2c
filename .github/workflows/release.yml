@@ -64,7 +64,7 @@ on:
       deploy:
         description: 'Deploy to QA after building. Unticked builds and pushes only'
         type: boolean
-        default: false
+        default: true
 
 # **A literal prefix, not `${{ github.workflow }}`.** `ci.yml` is called from
 # here, and in a called workflow that expression evaluates to *this* workflow's

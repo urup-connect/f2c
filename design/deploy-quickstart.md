@@ -139,7 +139,7 @@ $env:ENVIRONMENT="qa"; $env:RESOURCE_GROUP="rg-f2c-qa-weu"
 $env:CONTAINERAPP_ENV="cae-f2c-qa-weu"; $env:ACR_NAME="crf2cweu"
 $env:USER_IDENTITY="id-f2c-qa"
 $env:IMAGE_TAG="<a commit release.yml has built>"
-$env:MYSQL_RESOURCE_GROUP="qa-urupconnect"; $env:STORAGE_RESOURCE_GROUP="rg-f2c-qa-weu"
+$env:MYSQL_RESOURCE_GROUP="qa-urupconnect"; $env:STORAGE_RESOURCE_GROUP="qa-urupconnect"
 $env:VALUES_FILE="deploy/qa.values.env"; $env:DRY_RUN="1"
 & "C:\Program Files\Git\bin\bash.exe" deploy/provision-container-apps.sh
 ```
