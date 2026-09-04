@@ -887,6 +887,6 @@ it sits in Block A ahead of both checkouts.
 | --- | --- |
 | C13 | **Object-level permissions: the design question is answered by C28 and the rest of C13 is ruled on above.** "Their own" pointed at nothing while a role was a column, which is why `RoleBackend` refused every object-level question rather than answer one wrongly. `ProducerMembership` is a row per person per producer now; the primary's actions, the farm's identity and the ownership trail are all enforced off it or off the ledger. What stays open is **two joins nobody has written yet** — a cultivator's own listings and pricing, and a member's own inventory — both the shape of `plant.stock._authorise`, both work rather than decisions |
 
-C21 through C25 are documentation drift in `conflict.md` section C and need no decision. **C25 is the
-exception worth tracking**: a test that fails about one run in thirty, which is a Block 0 line and a
-CI credibility problem rather than a product question.
+C21 through C25 are documentation drift in `conflict.md` section C and need no decision. C25 was the
+exception worth tracking — a test failing at random, a CI credibility problem rather than a product
+question — and it is **closed**; the Block 0 line is ticked.

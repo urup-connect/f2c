@@ -1934,10 +1934,24 @@ counted among the known drift rather than rediscovered.
 
 ### C25 — A test fails roughly one run in thirty
 
-`frontend/club/app/api/nickname/availability/route.test.ts` asserts an eight-character random hex
-reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex. Known,
-one-line fix, not yet taken — `frontend.md` risk 6. Carried into `todo.md` Block 0 so it stops being
-a note.
+**Status: Closed.** The leak scan blanks the reference before it looks.
+
+`frontend/club/app/api/nickname/availability/route.test.ts` asserted that the answer to a failure
+does not contain `"500"`, `"503"`, `"429"` or `"422"` — and the answer carries an eight-character
+random hex reference, in which all four are valid hex. So is `"bad"`, the fifth string the same
+assertion looked for and the one nobody counted, which put the true rate at **about one run in
+twenty-three**: each run mints six references and any one of them spelling any one of the five
+failed the suite.
+
+**Not fixed by loosening the assertion**, which is why it was never the one-line change it was
+recorded as. What the test exists to prove — that Django's status code and `detail` reach no browser
+— is kept whole: the answer is stringified, the reference is replaced wherever it appears, and every
+remaining byte still goes to the scan, so a field added to that response later is still caught. The
+reference cannot be a leak whatever it happens to spell, because it is minted on the way out of
+`crypto.getRandomValues` and derived from nothing about the request or about Django's reply.
+
+Verified by forcing every reference to spell `500` and `bad` and running the file unchanged: the
+assertion as it stood fails, the one now in place passes. `frontend.md` risk 6 closed with it.
 
 ---
 

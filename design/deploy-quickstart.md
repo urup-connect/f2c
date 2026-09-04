@@ -42,10 +42,11 @@ No container apps yet.
 turns it back on and writes a username and password into GitHub secrets; if that has happened,
 `az acr update --name crf2cweu --admin-enabled false` and delete the secrets.
 
-### 2. Fix the flaky nickname test
+### 2. Fix the flaky nickname test — done
 
-`frontend/club/app/api/nickname/availability/route.test.ts` fails about one run in thirty. Fix it
-before CI gates a deployment. (deploy.md 5.4)
+`frontend/club/app/api/nickname/availability/route.test.ts` failed about one run in twenty-three, on
+a random hex reference that spelled one of the status codes the test scanned for. Fixed; nothing to
+do here before CI gates a deployment. (deploy.md 5.4, conflict.md C25)
 
 ### 3. Key Vault and secrets
 

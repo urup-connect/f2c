@@ -111,11 +111,29 @@ describe('a failure', () => {
     }
   })
 
+  /*
+   * The whole answer, with the reference blanked out wherever it appears.
+   *
+   * The reference is eight random hex characters and `500`, `503`, `429`, `422` and `bad` are all
+   * valid hex, so scanning the answer as it stands failed about one run in twenty-three — on a
+   * reference that happened to spell one of the strings below (deploy.md 5.4). Blanked rather than
+   * excused: whatever it spells it cannot be a leak, because it is minted on the way out of
+   * `crypto.getRandomValues` and derived from nothing about the request or Django's reply. Its own
+   * shape is asserted here, and every other byte of the answer still goes to the scan.
+   */
+  const scannable = async (body: unknown) => {
+    const answer = await (await ask(body)).json()
+
+    expect(answer.reference).toMatch(/^[0-9a-f]{8}$/)
+
+    return JSON.stringify(answer).split(answer.reference).join('<reference>')
+  }
+
   test('never tells the browser what went wrong', async () => {
     for (const [name, arrange] of failures) {
       arrange()
 
-      const answer = JSON.stringify(await (await ask({ nickname: 'GreenThumb' })).json())
+      const answer = await scannable({ nickname: 'GreenThumb' })
 
       for (const leak of ['boom', 'no documents', 'too many', 'bad', '500', '503', '429', '422']) {
         expect(answer, `${name} leaked ${leak}`).not.toContain(leak)

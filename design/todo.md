@@ -241,9 +241,10 @@ in on a deployed environment today.**
 - [x] Run `manage.py check --deploy` and clear it. Cleared, and it is now enforced rather than
       remembered: `deploy/entrypoint.sh` runs it at `--fail-level WARNING` before uvicorn starts, so
       a warning is a failed revision and Container Apps keeps the previous one serving
-- [ ] Fix `frontend/club/app/api/nickname/availability/route.test.ts` — it asserts a random hex string
-      does not contain `500`, `503`, `429` or `422`, all valid hex, so it fails about one run in
-      thirty — C25
+- [x] Fix `frontend/club/app/api/nickname/availability/route.test.ts` — it asserted a random hex
+      string does not contain `500`, `503`, `429` or `422`, all valid hex, and `bad` besides, so it
+      failed about one run in twenty-three. The scan now blanks the reference and scans the rest,
+      keeping the assertion it was written for — C25
 - [x] Clear the stale-document drift: `frontend.md` §9 and `roles-and-permissions.md` §13 both say
       profile editing is unbuilt, and it is built — C21. Close `backend.md` risk 12, which says the
       project is not under version control — C23

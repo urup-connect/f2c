@@ -617,12 +617,15 @@ until somebody does it a deployed environment has nobody who can administer it. 
 *promote the existing administrator accounts*; C29 turned it from a role change into a deployment
 step.
 
-### 5.4 The flaky nickname test — C25
+### 5.4 The flaky nickname test — C25, done
 
-`frontend/club/app/api/nickname/availability/route.test.ts` asserts that a random hex string does
-not contain `500`, `503`, `429` or `422` — all valid hex — so it fails about one run in thirty. Fix
-it before CI starts gating deployments, because a pipeline that goes red at random is a pipeline
-nobody reads.
+`frontend/club/app/api/nickname/availability/route.test.ts` asserted that a random hex string does
+not contain `500`, `503`, `429` or `422` — all valid hex, as is `bad`, the fifth string it looked
+for. Six references a run made it about one run in twenty-three, not thirty.
+
+**Closed.** The scan now blanks the reference and scans everything else, so it still catches a
+status code or a `detail` reaching a browser without depending on what eight random hex characters
+spell. Nothing in the route changed. `conflict.md` C25 has the reasoning and how it was verified.
 
 ### 5.5 The mail-outage 500s — not a QA blocker, but QA will meet them
 
@@ -961,8 +964,8 @@ rather than something the pipeline can still produce. Section 3.
    5 — and no Log Analytics workspace, which step 5 creates with the managed environment. **This is
    now the first step.** It used to be raising the `noreply@f2c.co.za` mailbox with the provider,
    which authenticates as of 2 September 2026 — section 1.
-2. Fix the flaky test (5.4), wanted before the first deploy rather than after it. The static files
-   (5.1) are done.
+2. ~~Fix the flaky test (5.4)~~ — **done**, along with the static files (5.1). CI can gate a
+   deployment without going red at random.
 3. Create the Key Vault, generate the QA encryption keys, load the secrets.
 4. Run `.github/scripts/azure-oidc-setup (win).sh` for `qa`, create the three GitHub environments
    with reviewers on `uat` and `production`, and set the variables in 6.6. The registry from step 1

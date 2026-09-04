@@ -11,7 +11,6 @@ which is the useful way to read it, because the departures are all consequences 
 in `verticals.md` rather than choices made twice.
 
 ## 1. Executive summary
-
 The frontend is organised in three layers, and the layering is the design. Pure logic modules hold
 every rule and know nothing about React. Components render, take props and emit events, and fetch
 nothing. Routes compose components, read configuration and cookies, and are the only layer that
@@ -374,8 +373,8 @@ document, together or not at all. See `features/sign-up.md` section 6 for the re
 | 2 | `NEXT_PUBLIC_DJANGO_API_URL` was baked into the client bundle at build time, so one artefact could not serve two environments. | **Closed** — replaced by `DJANGO_API_PUBLIC_URL`, read per request and rendered into the document. Verified: one build served under two addresses without a rebuild. |
 | 3 | The age pass is unsigned. Accepted, because the rule is re-applied on read and there is nothing to protect. Signing arrives free if an `AUTH_SECRET` is ever introduced. | Accepted |
 | 4 | `.next/types/validator.ts` is generated build output that `tsconfig.json` includes. A stale copy referencing deleted routes breaks `npm run typecheck` with errors that point at no real source file. Cleared once; will recur after routes are renamed. | Open |
-| 5 | The club suite is **1,974 tests in 107 files** and the store's is 353 in 23. Most of the runtime is jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
-| 6 | `app/api/nickname/availability/route.test.ts` asserts an eight-character random hex reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex, so the test fails on roughly one run in thirty. Predates this work. | Open — a one-line fix, not yet taken |
+| 5 | The club suite is ** 2,014 in 108 files** and the store's is 353 in 23. Most of the runtime is jsdom environment setup. Tolerable now, worth watching as the member area is built. | Accepted |
+| 6 | `app/api/nickname/availability/route.test.ts` asserted an eight-character random hex reference does not contain `"500"`, `"503"`, `"429"` or `"422"`. All four are valid hex, and so is `"bad"`, which the same assertion also looked for — roughly one run in twenty-three. Predates this work. | **Closed** — the reference is blanked out of the answer before the leak scan, which still covers every other byte of it. `conflict.md` C25 |
 | 7 | `CDN_BASE_URL` is read while `/` is prerendered, so the club film's address is fixed at build time — as `SITE_URL` already is, through the root layout's `metadataBase`. A promoted artefact serves the film from the wrong host. Same class as risk 2. Making the one indexable page dynamic would cost more than it saves; the remedy is a build per environment. | Open |
 
 ---
