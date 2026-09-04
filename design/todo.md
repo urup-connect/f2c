@@ -151,7 +151,7 @@ in on a deployed environment today.**
       inlined it at build and returned a stale value without erroring. Both Dockerfiles dropped
       their `ARG`s, and `frontend/deploy/entrypoint.sh` took over the fail-fast the build used to
       give. And the `qa-` prefix went with R-D4: the registry now holds `f2c/club:<sha>` plus the
-      moving `:qa`, `:uat` and `:production` tags, exactly like the API, so `promote.yml` moves the
+      moving `:qa`, `:uat` and `:prod` tags, exactly like the API, so `promote.yml` moves the
       frontends by digest instead of rebuilding them.
       **CI is now the regression test.** The frontend job used to set four throwaway values
       because the build could not import a route without them; it sets none, so a read put back at

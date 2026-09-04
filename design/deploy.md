@@ -79,7 +79,7 @@ member.
 | Resource | Sizing and notes |
 | --- | --- |
 | Container Registry | One registry shared by all three environments, `crf2cweu`. **Standard tier** — Basic was specified and the provisioned registry is Standard; neither offers tag immutability or repository-scoped tokens, which are Premium, so every deployment pins a digest either way. Geo-replication is Premium too and there is one region. **The admin user stays off**: it is a username and password that works from anywhere, for every repository, and outlives whoever last used it. The Portal's container app "Continuous deployment" wizard turns it back on without asking |
-| Azure Database for MySQL Flexible Server 8.4 | Burstable B2s for QA. Database `f2c`. `require_secure_transport` stays **ON** — `f2c/database.py` refuses a deployment that names neither a CA bundle nor an explicit disable |
+| Azure Database for MySQL Flexible Server 8.4 | Burstable B2s for QA. Database `f2c`. `require_secure_transport` stays **ON**, so the connection is encrypted — but it is not certificate-verified. The firewall admits only Azure services and a named list of IPs, and the application user authenticates with a password; `DJANGO_DB_SSL_DISABLED=true` states that in the values file, because `f2c/database.py` refuses a deployment that names neither a CA bundle nor an explicit disable |
 | Storage account | Two blob containers, `cc-documents-qa` and `cc-avatars-qa` |
 | Container Apps environment | With a Log Analytics workspace |
 | Container App — Redis | `redis:7.4-alpine`, internal TCP ingress on 6379, **exactly one replica**, no persistence, `maxmemory-policy noeviction`. Not a managed service — **C36**. Two replicas behind one address would be two separate empty Redis processes, so a throttle counter incremented on one is invisible to the other and a task published to one is consumed by nobody; nothing would report it |
@@ -171,7 +171,7 @@ remains the documentation and needs no change for this.
 | **Azure Key Vault** | `DJANGO_FIELD_ENCRYPTION_KEY`, `DJANGO_BLIND_INDEX_PEPPER` | These two are Block 0 P4. Key Vault gives versioning, soft delete, purge protection and an audit record of every read, which is most of the backup and rotation procedure P4 asks for. Referenced from the container app secret as `keyvaultref:`, resolved through the same user-assigned identity that reaches blob storage and the registry. **Azure RBAC authorisation, public endpoint, `AuditEvent` to the environment's Log Analytics workspace** — 3.1 |
 | **Container App secrets** | Every other secret: database password, Redis URL, mail passwords, Payfast key and passphrase, `DJANGO_SECRET_KEY` | Referenced from environment variables as `secretref:`. A second Key Vault hop for these buys little — they are all rotatable without touching stored data, which is exactly what the two above are not |
 | **Container App environment variables** | Everything else: hosts, origins, flags, amounts, addresses | Non-secret, and visible in the portal is the right property for them. A wrong `DJANGO_ALLOWED_HOSTS` should be readable by whoever is debugging it |
-| **GitHub Actions environments `qa`, `uat` and `production`** | The container app names, the resource group, and the three Azure identifiers the federated credential is minted against | Everything here names something a *workflow* has to address; nothing here is read by a running container. It used to hold the frontend build arguments as well — see below. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
+| **GitHub Actions environments `qa`, `uat` and `prod`** | The container app names, the resource group, and the three Azure identifiers the federated credential is minted against | Everything here names something a *workflow* has to address; nothing here is read by a running container. It used to hold the frontend build arguments as well — see below. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
 
 **Every artefact is environment-agnostic, and the third row is where all three get their
 environment.** `f2c/api`, `f2c/club` and `f2c/market` each read what distinguishes a QA deployment
@@ -306,16 +306,32 @@ DJANGO_DB_PORT=3306
 DJANGO_DB_NAME=f2c
 DJANGO_DB_USER=
 DJANGO_DB_PASSWORD=                                             secret
-DJANGO_DB_SSL_CA=/etc/ssl/certs/ca-certificates.crt
+DJANGO_DB_SSL_DISABLED=true
 ```
 
-The runtime image installs `ca-certificates`, which carries the DigiCert roots Flexible Server
-chains to, so that path is correct as written and needs nothing mounted. `tls_options` reads it and
-sets `VERIFY_IDENTITY`.
+**`DJANGO_DB_SSL_DISABLED` is set, and its name overstates what it does.** It turns off certificate
+*verification*, not encryption. `tls_options` returns no options at all, mysqlclient applies its own
+`ssl_mode=PREFERRED`, and the connection still comes up over TLS — which is what
+`require_secure_transport=ON` demands and gets. What is given up is the check on *which* server
+answered: the certificate chain and the hostname are not examined.
 
-**Leave `DJANGO_DB_SSL_DISABLED` unset.** Setting it is how a server with no certificate is
-reached; on Flexible Server it downgrades a verified connection to an unverified one, which is the
-state the connection was in before this was fixed — encrypted, unverified, and saying so nowhere.
+**What carries the trust instead.** The Flexible Server firewall admits Azure services and a named
+list of IPs and nothing else, so there is no route from the open internet for a man in the middle to
+occupy, and the application user authenticates with a password held as a container app secret. That
+is the QA and production arrangement for both servers — conflict.md **C37**, which also records what
+it costs and why the way back is one line.
+
+**It is set rather than omitted, and that distinction is the whole point.** `tls_options` refuses a
+deployed MySQL connection that names neither a CA bundle nor a disable, precisely because
+mysqlclient's silent default is this same unverified connection. Setting the variable makes the
+downgrade a decision someone wrote down in the values file; leaving it blank would produce the
+identical connection with nobody having chosen it. The container will not start in that state, and
+that is the gate working.
+
+**To restore verification**, clear `DJANGO_DB_SSL_DISABLED` and set
+`DJANGO_DB_SSL_CA=/etc/ssl/certs/ca-certificates.crt`. The runtime image installs `ca-certificates`,
+which carries the DigiCert roots Flexible Server chains to, so that path is correct as written and
+needs nothing mounted; `tls_options` reads it and sets `VERIFY_IDENTITY`. One line, no rebuild.
 
 **Cache**
 
@@ -837,9 +853,9 @@ reason and no other.
 One registry for every environment, as section 2 sets out. Three repositories:
 
 ```
-f2c/api      :<sha>   plus the moving tags :qa :uat :production
-f2c/club     :<sha>   plus the moving tags :qa :uat :production
-f2c/market   :<sha>   plus the moving tags :qa :uat :production
+f2c/api      :<sha>   plus the moving tags :qa :uat :prod
+f2c/club     :<sha>   plus the moving tags :qa :uat :prod
+f2c/market   :<sha>   plus the moving tags :qa :uat :prod
 ```
 
 **Every tag names only the commit, and the three repositories are now the same shape.** They were
@@ -855,7 +871,7 @@ digest.
 tier and tag immutability is a Premium feature, so a tag here *can* be moved — which makes a
 container app revision pinned to `:qa` a revision whose contents can change with no deployment and
 no record of one. `deploy-api.sh` refuses a tag reference outright rather than trusting its caller to
-pass a digest. What `:qa`, `:uat` and `:production` buy is that "what is running in UAT" is
+pass a digest. What `:qa`, `:uat` and `:prod` buy is that "what is running in UAT" is
 answerable from the registry listing instead of from the portal, and the ladder check in 6.4 depends
 on that. **The frontends carry them now too, and could not before:** while every `f2c/club` tag was
 already environment-prefixed there was no single digest to follow up the ladder, so production could
@@ -1008,9 +1024,23 @@ in the registry, and outlives whoever last used it.
 
 ### 6.6 The GitHub side
 
-Three environments — `qa`, `uat`, `production` — with **required reviewers on the last two**. That is
+Three environments — `qa`, `uat`, `prod` — with **required reviewers on the last two**. That is
 the approval, and it is also the audit trail: who released what, to which environment, and when.
 Worth having before R-D1 and R-D2 are written up rather than after.
+
+**Those three strings are load-bearing in four places and have to be identical in all of them:** the
+GitHub environment itself, `promote.yml`'s `to_env` choices, the federated credential subject
+`azure-oidc-setup (win).sh` writes (`:environment:<name>`), and the moving registry tag a promotion
+pushes. `prod`, not `production`, which is also the resource-group convention — `rg-f2c-prod-weu`.
+
+**A mismatch here fails open, which is why it is worth stating.** `promote.yml` declared
+`to_env: production` for a while against an environment called `prod`. GitHub does not refuse a
+workflow that names an environment it does not have — it creates one, with no variables and **no
+required reviewers** — so the approval gate on production silently did not apply, and the run went
+on to fail at `require_vars.py` for what looked like an unfinished setup. The reviewer requirement is
+the whole control in this section, and it was absent without anything saying so. The guards now:
+`azure-oidc-setup (win).sh` refuses an `ENVIRONMENT` outside the three, and `deploy/promote.ps1`
+refuses to dispatch at a target with no configured environment.
 
 `azure-oidc-setup (win).sh` writes the first three rows; the rest are values only the operator knows.
 

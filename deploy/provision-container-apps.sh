@@ -264,10 +264,18 @@ set +a
 # Everything Table C says all four API apps take identically. A trimmed
 # environment fails `check --deploy` at start-up rather than running degraded,
 # which is why the list is long and why none of it is optional.
+#
+# `DJANGO_DB_SSL_DISABLED` is in here rather than `DJANGO_DB_SSL_CA` because
+# these servers are reached without certificate verification -- the firewall
+# admits only Azure services and named IPs, and the user authenticates with a
+# password. It stays a *required* variable, not an omitted one: `tls_options`
+# refuses a deployed MySQL connection that names neither, so the choice has to
+# arrive at the app written down. The values file carries the reasoning.
 API_PLAIN_VARS=(
     DJANGO_ENV DJANGO_DEBUG DJANGO_ALLOWED_HOSTS DJANGO_BEHIND_PROXY
     DJANGO_CSRF_TRUSTED_ORIGINS DJANGO_CORS_ALLOWED_ORIGINS
-    DJANGO_DB_HOST DJANGO_DB_PORT DJANGO_DB_NAME DJANGO_DB_USER DJANGO_DB_SSL_CA
+    DJANGO_DB_HOST DJANGO_DB_PORT DJANGO_DB_NAME DJANGO_DB_USER
+    DJANGO_DB_SSL_DISABLED
     DJANGO_STOREFRONT_HOSTS DJANGO_DEFAULT_STOREFRONT
     DJANGO_WEBAUTHN_RP_ID DJANGO_WEBAUTHN_RP_IDS DJANGO_WEBAUTHN_RP_NAME
     DJANGO_WEBAUTHN_ORIGINS

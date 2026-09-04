@@ -44,9 +44,18 @@ connection.ensure_connection()
         sleep 2
     done
 
+    # The firewall is named first because it is the likeliest cause and the
+    # least visible: these servers are reached with no certificate check, so
+    # the rules admitting Azure services and the named IPs are what stands
+    # between the database and everyone -- and a container app that moved
+    # subscription, region or outbound address stops matching them without
+    # anything else changing.
     echo "entrypoint: the database was not reachable after 60 seconds." >&2
-    echo "entrypoint: check DJANGO_DB_HOST, the MySQL firewall rules, and" >&2
-    echo "entrypoint: whether DJANGO_DB_SSL_CA points at a bundle in the image." >&2
+    echo "entrypoint: check the MySQL firewall rules first -- this app reaches" >&2
+    echo "entrypoint: the server by network restriction and password, so it" >&2
+    echo "entrypoint: must be admitted by 'Allow Azure services' or a named IP." >&2
+    echo "entrypoint: then check DJANGO_DB_HOST, and that exactly one of" >&2
+    echo "entrypoint: DJANGO_DB_SSL_DISABLED or DJANGO_DB_SSL_CA is set." >&2
     return 1
 }
 

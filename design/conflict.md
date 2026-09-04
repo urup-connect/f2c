@@ -2361,7 +2361,10 @@ with no opinion on whether the edge overwrites the header. One place in this app
   `require_secure_transport=ON` and mysqlclient defaults to `ssl_mode=PREFERRED`, so a connection
   with no TLS configuration comes up encrypted, unverified and indistinguishable in any log from one
   that checked the certificate. A deployed connection that names neither a CA bundle nor an explicit
-  opt-out is now refused rather than defaulted.
+  opt-out is now refused rather than defaulted. **Which of the two permitted answers the deployed
+  environments give is superseded by C37**: they set `DJANGO_DB_SSL_DISABLED=true` and rely on the
+  firewall. The refusal described here is unchanged and is what makes that a recorded decision
+  rather than a default.
 
 #### POPIA
 
@@ -2605,3 +2608,67 @@ real Redis: django-ninja checks throttles synchronously from an async operation,
 reaches the database through `connection.cursor()`, which Django decorates `@async_unsafe`. Socket
 I/O is permitted where ORM I/O is not. **That finding is untouched** — this entry changes where the
 socket goes, not why there is one.
+
+
+### C37 — MySQL is reached without certificate verification
+
+**Status: Decided. Supersedes the `DJANGO_DB_SSL_CA` bullet in C31, which is otherwise unchanged.**
+
+C31 closed a real trap and closed it correctly: a deployed MySQL connection naming neither a CA
+bundle nor an explicit opt-out is refused rather than defaulted, because mysqlclient's default is an
+encrypted, unverified connection that no log distinguishes from a verified one. **That refusal
+stands and nothing in this entry weakens it.** What changes is which of the two permitted answers QA
+and production give.
+
+| | Decision |
+| --- | --- |
+| QA, UAT, production | **`DJANGO_DB_SSL_DISABLED=true`.** Encrypted under `ssl_mode=PREFERRED`, not certificate-verified |
+| Development | Unchanged — SQLite, where `tls_options` is never reached |
+| CI | Unchanged — already `DJANGO_DB_SSL_DISABLED=true` against the MySQL container |
+| `f2c/database.py`, `f2c/tests/test_database.py` | **Unchanged.** No code was written for this, and no test changed |
+
+#### The variable's name overstates what it does
+
+This is the part most likely to be misread later, so it is worth stating flatly. `tls_options`
+returns `{}` for the disabled case — it does not set `ssl_mode=DISABLED`. mysqlclient then applies
+its own default, `PREFERRED`, and Flexible Server runs `require_secure_transport=ON`, so **the
+connection comes up over TLS and would be rejected by the server if it did not**. Nothing travels in
+clear. What is given up is narrower and should be named precisely: the client does not check the
+certificate chain, and does not check that the hostname on the certificate is the server it dialled.
+
+#### What carries the trust instead
+
+The Flexible Server firewall admits Azure services and a named list of office IPs and nothing else,
+and the application user authenticates with a password held as a container app secret and, from the
+key vault pass, as a Key Vault reference. There is no route from the open internet to the server for
+a man in the middle to occupy, and the party that could occupy the private one — Azure — is already
+running the database, the container apps and the network between them.
+
+This is the same shape of argument C36 makes for `redis://` on internal ingress, and it inherits the
+same honest limit: **it does not claim the hop crosses no network.** It crosses one whose ends are
+both restricted by rules that are themselves configuration, and configuration drifts.
+
+#### Why it is set rather than left blank
+
+The two states produce an identical connection. Only one of them is a decision. Leaving the variable
+blank would give the same unverified TLS with nobody having chosen it and nothing in the repository
+recording that anyone had thought about it — which is precisely the failure C31 legislated against.
+Setting it puts the downgrade in the values file, in the provisioning script's required list, and in
+this entry. A values file that omits it now fails in `provision-container-apps.sh` before any app is
+created, rather than at container start.
+
+#### What was given up, and what it would cost to get back
+
+- **Certificate and hostname verification**, and with it any defence against something that can
+  answer on the server's address from inside the permitted set. The firewall is the only control
+  left; a rule loosened to `0.0.0.0` — which the Portal offers as a convenience — removes it
+  entirely and nothing in the application would notice.
+- **Nothing else.** No confidentiality on the wire, no throughput, no operational simplicity. The
+  restoration is one line: clear `DJANGO_DB_SSL_DISABLED` and set
+  `DJANGO_DB_SSL_CA=/etc/ssl/certs/ca-certificates.crt`. That path is already in the runtime image
+  — the `Dockerfile` installs `ca-certificates` for exactly this — and already carries the DigiCert
+  roots Flexible Server chains to. No rebuild, no mount, no certificate to rotate.
+
+**That asymmetry is the reason to revisit this.** C36 gave up `rediss://` for something that cost a
+certificate in three environments to keep. This gives up verification for something that costs a
+revision restart, and the file it would point at is already in the image.

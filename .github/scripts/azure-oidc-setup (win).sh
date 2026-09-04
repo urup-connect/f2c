@@ -7,7 +7,13 @@
 #
 #     ENVIRONMENT=qa         ACR_NAME=... RESOURCE_GROUP=rg-f2c-qa-weu  ./azure-oidc-setup.sh
 #     ENVIRONMENT=uat        ACR_NAME=... RESOURCE_GROUP=rg-f2c-uat-weu ./azure-oidc-setup.sh
-#     ENVIRONMENT=production ACR_NAME=... RESOURCE_GROUP=rg-f2c-prod-weu ./azure-oidc-setup.sh
+#     ENVIRONMENT=prod       ACR_NAME=... RESOURCE_GROUP=rg-f2c-prod-weu ./azure-oidc-setup.sh
+#
+# **`prod`, not `production`.** ENVIRONMENT is written straight into the
+# federated credential's subject below -- `:environment:${ENVIRONMENT}` -- so it
+# has to be the GitHub environment's name exactly. A credential minted for
+# `production` is one no job can ever use, because `promote.yml` declares
+# `environment: prod` and GitHub presents the subject it declares.
 #
 # **No passwords anywhere, and that is the point.** The workflows authenticate
 # with a federated credential: GitHub mints a short-lived OIDC token, Entra ID
@@ -41,9 +47,26 @@ set -euo pipefail
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
-: "${ENVIRONMENT:?ENVIRONMENT is required -- qa, uat or production}"
+: "${ENVIRONMENT:?ENVIRONMENT is required -- qa, uat or prod}"
 : "${ACR_NAME:?ACR_NAME is required -- the shared container registry}"
 : "${RESOURCE_GROUP:?RESOURCE_GROUP is required -- the resource group for this environment}"
+
+# **Restricted to the three names, because a typo here is silent.** ENVIRONMENT
+# becomes the federated credential's subject, and a credential whose subject no
+# workflow declares is not an error anywhere: this script succeeds, the app
+# registration and the role assignments are correct, and the first promotion
+# fails at `azure/login` with an assertion nobody can match to a cause. That is
+# how `production` -- which is not what the environment is called -- survived in
+# `promote.yml` until it was found by hand.
+case "$ENVIRONMENT" in
+    qa|uat|prod) ;;
+    *)
+        echo "ENVIRONMENT must be qa, uat or prod. Got: ${ENVIRONMENT}" >&2
+        echo "It is written into the credential's subject and has to match the" >&2
+        echo "GitHub environment name that promote.yml and release.yml declare." >&2
+        exit 1
+        ;;
+esac
 
 # Checked together and up front. Both are needed well before anything is
 # created, and `gh` in particular is not installed by default on Windows -- a

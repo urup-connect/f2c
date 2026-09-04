@@ -31,7 +31,7 @@ Elsewhere, and only the `f2c` database and its application user are yours to cre
 
 | Resource | Where |
 | --- | --- |
-| MySQL Flexible Server 8.4 | `qa-urupconnect` in resource group `qa-urupconnect`. Database `f2c`, `require_secure_transport` ON. **Production is 8.0.21** — above the 8.0.16 floor `common/checks.py` enforces, below the 8.4 CI tests against |
+| MySQL Flexible Server 8.4 | `qa-urupconnect` in resource group `qa-urupconnect`. Database `f2c`, `require_secure_transport` ON — encrypted, but not certificate-verified: the firewall admits only Azure services and named IPs, and the user authenticates with a password. **Production is 8.0.21** — above the 8.0.16 floor `common/checks.py` enforces, below the 8.4 CI tests against |
 
 **No Redis, no Log Analytics workspace and no Key Vault here.** Redis is a container app — conflict.md
 **C36** — created in step 5. The workspace is created by whichever of steps 3 and 5 runs first, under
@@ -120,8 +120,11 @@ subject has gone stale — which is what a repository transfer leaves behind.
 
 Then, by hand:
 
-- Create GitHub environments `qa`, `uat` and `production`, with **required reviewers on `uat` and
-  `production`**.
+- Create GitHub environments `qa`, `uat` and `prod`, with **required reviewers on `uat` and
+  `prod`**. The names are exact: `promote.yml`'s `to_env` choices, the federated credential subject
+  `ENVIRONMENT` above writes, and the moving registry tags are all the same three strings, and a
+  workflow naming an environment that does not exist gets an empty one with no reviewers rather than
+  an error.
 - Set the variables in Table F.
 
 ### 5. Create the environment and the seven container apps
@@ -250,9 +253,26 @@ Production hostnames drop the prefix: `f2c-cannabis.co.za`, `api.f2c-cannabis.co
 | --- | --- |
 | Deploy to QA | Merge to `master`. `release.yml` builds only the images the commit changed |
 | Promote to UAT | `promote.yml` dispatch: `sha`, `to_env: uat` |
-| Promote to production | `promote.yml` dispatch: `sha`, `to_env: production`. Refuses a digest `f2c/api:uat` does not point at, unless `skip_ladder_check` is ticked |
+| Promote to production | `promote.yml` dispatch: `sha`, `to_env: prod`. Refuses a digest `f2c/api:uat` does not point at, unless `skip_ladder_check` is ticked |
 | Roll back the API | Dispatch the previous SHA, or pin the previous Container Apps revision |
 | Roll back a frontend | Dispatch the previous SHA, or pin the previous Container Apps revision |
+
+**From the command line instead of the Actions tab.** `deploy/promote.ps1` dispatches `promote.yml`
+and `deploy/whereis.ps1` reads the environment tags. They add pre-flight, not capability: the
+approval gates, the OIDC credential, the `promote-<env>` lock and the audit trail stay in the
+workflow, which is why neither script holds an Azure credential.
+
+```
+.\deploy\whereis.ps1                              # what is in qa, uat, prod
+.\deploy\promote.ps1 -To uat                       # HEAD, api + club
+.\deploy\promote.ps1 -To uat -Sha 6bff916 -Artefacts api
+.\deploy\promote.ps1 -To prod -Artefacts api,club
+```
+
+The check worth having is the artefact one. `release.yml` builds only what a commit changed, so a
+SHA does not necessarily name all three images — promoting `api,club` at an API-only commit rolls
+the API and *then* fails on the club. `promote.ps1` refuses before dispatch and names the last
+commit that did build the missing artefact.
 
 All three artefacts are promoted by moving a digest. Nothing is rebuilt: `SITE_URL`, `APP_ENV`,
 `CDN_BASE_URL` and `SUPPORT_EMAIL` are container app settings (Tables D and E), not build
@@ -339,7 +359,7 @@ All four apps take this block identically. A trimmed environment fails `check --
 | `DJANGO_DB_PORT` | `3306` |
 | `DJANGO_DB_NAME` | `f2c` |
 | `DJANGO_DB_USER` | Application user |
-| `DJANGO_DB_SSL_CA` | `/etc/ssl/certs/ca-certificates.crt` |
+| `DJANGO_DB_SSL_DISABLED` | `true` — and it must be set, not omitted. It turns off certificate *verification*, not encryption: `tls_options` returns nothing, mysqlclient applies `ssl_mode=PREFERRED`, and the connection is still TLS. Naming it makes the downgrade a decision on the record; leaving it blank gives the same connection with nobody having chosen it, and the container refuses to start. To verify instead, clear it and set `DJANGO_DB_SSL_CA=/etc/ssl/certs/ca-certificates.crt` — already in the image. conflict.md **C37** |
 | `DJANGO_STOREFRONT_HOSTS` | `qa-api.f2c-cannabis.co.za=club,qa-api.f2c.co.za=market` — **API** hostnames |
 | `DJANGO_DEFAULT_STOREFRONT` | `club` |
 | `DJANGO_WEBAUTHN_RP_ID` | `qa.f2c-cannabis.co.za` — **frontend** hostnames from here down |
@@ -375,9 +395,10 @@ All four apps take this block identically. A trimmed environment fails `check --
 | `DJANGO_MEMBERSHIP_SUBSCRIPTION_ITEM_NAME` | `Club membership` |
 | `DJANGO_MEMBERSHIP_SUBSCRIPTION_DESCRIPTION` | `Cultivators Collective membership subscription` |
 
-Leave unset: `DJANGO_DB_SSL_DISABLED`, `DJANGO_CACHE_ALLOW_PLAINTEXT`, `EMAIL_CC_USE_SSL`,
+Leave unset: `DJANGO_DB_SSL_CA`, `DJANGO_CACHE_ALLOW_PLAINTEXT`, `EMAIL_CC_USE_SSL`,
 `EMAIL_F2C_USE_SSL`, and every storage account key, SAS token and connection string. Each one
-downgrades or overrides something that is correct as it stands.
+downgrades, overrides or contradicts something that is correct as it stands — `DJANGO_DB_SSL_CA`
+alongside `DJANGO_DB_SSL_DISABLED` is refused outright rather than resolved.
 
 ### Table D — Club frontend container app
 
@@ -454,9 +475,9 @@ and can be deleted from the GitHub environments. Section 3, R-D4.
 ## Registry contents
 
 ```
-f2c/api      :<sha>   plus the moving tags :qa :uat :production
-f2c/club     :<sha>   plus the moving tags :qa :uat :production
-f2c/market   :<sha>   plus the moving tags :qa :uat :production
+f2c/api      :<sha>   plus the moving tags :qa :uat :prod
+f2c/club     :<sha>   plus the moving tags :qa :uat :prod
+f2c/market   :<sha>   plus the moving tags :qa :uat :prod
 ```
 
 One image per artefact per commit, promoted unchanged. Every deployment pins a digest —

@@ -47,7 +47,21 @@ on:
         description: 'Target environment'
         type: choice
         required: true
-        options: [uat, production]
+        # **`prod`, not `production`, and the name is load-bearing three times
+        # over.** `environment: ${{ inputs.to_env }}` below resolves this value
+        # against the repository's GitHub environments, the federated credential
+        # subject `azure-oidc-setup` writes ends `:environment:<name>`, and the
+        # moving registry tag this workflow's last step pushes is named from it.
+        # Those three have to agree, and `prod` is what the environment is
+        # called -- matching `rg-f2c-prod-weu`.
+        #
+        # It used to read `production`, which failed *open* rather than closed:
+        # GitHub creates an environment named by a workflow that does not exist
+        # rather than refusing, so the run got an empty `production` environment
+        # carrying no variables and -- the part that mattered -- no required
+        # reviewers. The approval gate on production silently did not apply, and
+        # the run then died further on at `require_vars.py`.
+        options: [uat, prod]
       api:
         description: 'Promote the API (api, worker, mail-worker, beat)'
         type: boolean
@@ -119,7 +133,7 @@ jobs:
         # Before `azure/login`, which reports three unset variables as a fault
         # in its own `auth-type`. A promotion is the first time this
         # environment's variables are read at all, so this is where a `uat` or
-        # `production` environment nobody finished setting up shows up.
+        # `prod` environment nobody finished setting up shows up.
         env:
           VARS: ${{ toJSON(vars) }}
           ENVIRONMENT: ${{ inputs.to_env }}
@@ -166,7 +180,7 @@ jobs:
             # **Production takes what UAT is running, and nothing else.** The
             # `:uat` tag is moved by this workflow as the last step of a UAT
             # promotion, so it is a faithful record of what was signed off.
-            if [ "$TO_ENV" = 'production' ] && [ "$SKIP_LADDER" != 'true' ]; then
+            if [ "$TO_ENV" = 'prod' ] && [ "$SKIP_LADDER" != 'true' ]; then
               uat_digest=$(bash .github/scripts/acr-digest.sh \
                              "$ACR_NAME" "${API_REPOSITORY}:uat" || echo '')
 
@@ -370,7 +384,7 @@ jobs:
 
           # Production takes what UAT is running. The `:uat` tag is moved by
           # this job as its last step, so it records what was signed off.
-          if [ "$TO_ENV" = 'production' ] && [ "$SKIP_LADDER" != 'true' ]; then
+          if [ "$TO_ENV" = 'prod' ] && [ "$SKIP_LADDER" != 'true' ]; then
             uat_digest=$(bash .github/scripts/acr-digest.sh \
                            "$ACR_NAME" "f2c/${APP}:uat" || echo '')
 
