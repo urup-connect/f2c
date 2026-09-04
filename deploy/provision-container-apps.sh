@@ -78,10 +78,20 @@
 # risks timing out an inbound Payfast notification, and a dropped notification
 # is a member who paid and was not switched on -- C31.
 #
-# **Each app pulls with its own system-assigned identity**, granted `AcrPull` on
-# the shared registry, so the registry's admin user can stay off. An admin user
-# left enabled is a username and password that works from anywhere, for every
-# repository in the registry, and outlives whoever last used it.
+# **Every app carries the one user-assigned identity `provision-key-vault.sh`
+# created**, and that identity holds all three grants: `AcrPull` on the shared
+# registry, so the registry's admin user can stay off; `Key Vault Secrets User`
+# on the vault, for the two encryption keys; and `Storage Blob Data Contributor`
+# on both storage accounts. An admin user left enabled is a username and
+# password that works from anywhere, for every repository in the registry, and
+# outlives whoever last used it.
+#
+# **It used to be a system-assigned identity per app, and the change is not
+# cosmetic.** A system-assigned identity does not exist until its app does, so
+# it cannot be granted anything beforehand -- which makes a Key Vault reference
+# set at creation time fail, and leaves every app briefly existing without the
+# rights it needs. One identity created first is one grant each, no ordering
+# gap, and thirty-six role assignments across three environments become four.
 #
 # Usage:
 #
@@ -89,6 +99,7 @@
 #     RESOURCE_GROUP=rg-f2c-qa-weu \
 #     CONTAINERAPP_ENV=managedEnvironment-rgf2cqaweu-ad52 \
 #     ACR_NAME=crf2cweu \
+#     USER_IDENTITY=id-f2c-qa \
 #     IMAGE_TAG=<the commit SHA release.yml pushed> \
 #     VALUES_FILE=deploy/qa.values.env \
 #         ./deploy/provision-container-apps.sh
@@ -99,6 +110,9 @@
 #                  the entrypoint gate refuses before it serves anything
 #   SKIP_MARKET=1  five apps instead of six, for an environment where
 #                  DEPLOY_MARKET is not 'true'
+#
+#   VAULT_NAME     the Key Vault the two encryption keys are referenced from.
+#                  Defaults to kv-f2c-<env>-weu, matching provision-key-vault.sh
 #
 #   MYSQL_RESOURCE_GROUP    where the data tier actually lives, when it is not
 #   STORAGE_RESOURCE_GROUP  this environment's own resource group. Each defaults
@@ -128,6 +142,7 @@ set -euo pipefail
 : "${ACR_NAME:?ACR_NAME is required -- e.g. crf2cweu}"
 : "${IMAGE_TAG:?IMAGE_TAG is required -- the commit SHA release.yml pushed}"
 : "${VALUES_FILE:?VALUES_FILE is required -- see deploy/values.env.template}"
+: "${USER_IDENTITY:?USER_IDENTITY is required -- run deploy/provision-key-vault.sh first}"
 
 case "$ENVIRONMENT" in
     qa|uat|prod) ;;
@@ -198,6 +213,47 @@ run() {
     fi
 }
 
+# ----------------------------------------------------------- identity and vault
+
+# **Resolved before anything is created, because everything below depends on
+# both and neither is this script's to make.** `provision-key-vault.sh` creates
+# the identity, the vault, and the three role assignments the identity carries;
+# failing here with that pointer is better than creating six apps that cannot
+# pull an image or read a key.
+VAULT_NAME="${VAULT_NAME:-kv-f2c-${ENVIRONMENT}-weu}"
+
+if [ -n "${DRY_RUN:-}" ]; then
+    identity_id="<identity-resource-id>"
+    identity_client_id="<identity-client-id>"
+    vault_uri="https://${VAULT_NAME}.vault.azure.net/"
+else
+    identity_id=$(az identity show --name "$USER_IDENTITY" \
+        --resource-group "$RESOURCE_GROUP" --query id -o tsv 2>/dev/null || true)
+    identity_client_id=$(az identity show --name "$USER_IDENTITY" \
+        --resource-group "$RESOURCE_GROUP" --query clientId -o tsv 2>/dev/null || true)
+
+    if [ -z "$identity_id" ] || [ -z "$identity_client_id" ]; then
+        echo "No user-assigned identity '$USER_IDENTITY' in $RESOURCE_GROUP." >&2
+        echo >&2
+        echo "It carries AcrPull, Key Vault Secrets User and Storage Blob Data" >&2
+        echo "Contributor, and all six apps present it. Create it first:" >&2
+        echo "  deploy/provision-key-vault.sh" >&2
+        exit 1
+    fi
+
+    vault_uri=$(az keyvault show --name "$VAULT_NAME" \
+        --query properties.vaultUri -o tsv 2>/dev/null || true)
+
+    if [ -z "$vault_uri" ]; then
+        echo "No Key Vault '$VAULT_NAME' is readable." >&2
+        echo >&2
+        echo "DJANGO_FIELD_ENCRYPTION_KEY and DJANGO_BLIND_INDEX_PEPPER are" >&2
+        echo "referenced from it -- design/deploy.md 8 D4. Create it first:" >&2
+        echo "  deploy/provision-key-vault.sh" >&2
+        exit 1
+    fi
+fi
+
 # ------------------------------------------------------------------- the values
 
 # shellcheck disable=SC1090
@@ -233,11 +289,6 @@ API_PLAIN_VARS=(
 # Held as container app secrets rather than plain environment variables, and
 # referenced with `secretref:`. Table B.
 #
-# design/deploy.md 4 names Key Vault as where the two encryption keys belong --
-# it gives versioning, soft delete and purge protection, which is most of what
-# Block 0 P4 asks for. Container app secrets are the interim; moving them is a
-# `--secret-volume` or a Key Vault reference on the same identity that already
-# reaches blob storage, and it changes nothing else here.
 # **`DJANGO_REDIS_URL` is not here, and no longer a secret.** It was, because on
 # Azure Managed Redis the access key travels inside the URL. The Redis this
 # script creates is reached over the managed environment's internal network with
@@ -245,12 +296,28 @@ API_PLAIN_VARS=(
 # the script derives it below rather than asking for it, because it cannot be
 # written down until the environment's domain is known.
 API_SECRET_VARS=(
-    DJANGO_SECRET_KEY DJANGO_FIELD_ENCRYPTION_KEY DJANGO_BLIND_INDEX_PEPPER
+    DJANGO_SECRET_KEY
     DJANGO_DB_PASSWORD
     EMAIL_CC_PASSWORD EMAIL_F2C_PASSWORD
     DJANGO_PAYFAST_MERCHANT_ID DJANGO_PAYFAST_MERCHANT_KEY
     DJANGO_PAYFAST_PASSPHRASE
 )
+
+# The two the vault holds, referenced rather than copied. Table A.
+#
+# **These two and not the rest, and the line between them is recoverability.**
+# Every value in the list above is rotatable without touching stored data: a new
+# database password, a new Payfast key, a new `DJANGO_SECRET_KEY` costs a
+# revision and some sessions. These two are not -- losing
+# `DJANGO_FIELD_ENCRYPTION_KEY` destroys every stored identity number with no
+# recovery path, which is Block 0 P4 and R-D2. What Key Vault adds is exactly
+# what that asks for: versioning, soft delete, purge protection and an audit
+# trail of every read. A second hop for the others would buy none of it.
+#
+# They are read through `USER_IDENTITY`, which holds Key Vault Secrets User on
+# the vault -- `get` and nothing more. The reference is unversioned on purpose:
+# pin a version and a rotation becomes a manual edit on four apps.
+VAULT_SECRET_VARS=(DJANGO_FIELD_ENCRYPTION_KEY DJANGO_BLIND_INDEX_PEPPER)
 
 # `DJANGO_CDN_BASE_URL` is deliberately absent from both lists. Table C says
 # blank unless the documents container is actually fronted, and a variable set
@@ -270,11 +337,20 @@ MARKET_VARS=(DJANGO_API_URL DJANGO_API_PUBLIC_URL SITE_URL APP_ENV PORT)
 # to the names the image reads at creation time.
 MARKET_PREFIXED=(MARKET_DJANGO_API_PUBLIC_URL MARKET_SITE_URL)
 
-# **The two the script sets itself, and they are not read from the values file.**
+# **The three the script sets itself, and they are not read from the values
+# file.**
 #
 # `DJANGO_REDIS_URL` names the Redis app created below, at the managed
 # environment's internal domain -- a value that does not exist until the
 # environment does.
+#
+# `AZURE_CLIENT_ID` is the client id of `USER_IDENTITY`, and it is here because
+# `documents/storage.py` and `accounts/storage.py` call
+# `DefaultAzureCredential()` with no client id of their own. A container app
+# carrying exactly one user-assigned identity and no system-assigned one still
+# has to be told which to present -- the credential does not guess, and the
+# symptom of omitting it is a managed-identity token request that fails at the
+# first document upload rather than at start-up.
 #
 # `DJANGO_CACHE_ALLOW_PLAINTEXT` is the deliberate downgrade `f2c/cache.py`
 # demands, and it is spelled as a permission precisely so that it reads as one
@@ -289,22 +365,53 @@ MARKET_PREFIXED=(MARKET_DJANGO_API_PUBLIC_URL MARKET_SITE_URL)
 #
 # `f2c/queue.py` reads the same switch rather than one of its own, deliberately:
 # a second switch could only fail by disagreeing with the first.
-DERIVED_VARS=(DJANGO_REDIS_URL DJANGO_CACHE_ALLOW_PLAINTEXT)
+DERIVED_VARS=(DJANGO_REDIS_URL DJANGO_CACHE_ALLOW_PLAINTEXT AZURE_CLIENT_ID)
 
 required=("${API_PLAIN_VARS[@]}" "${API_SECRET_VARS[@]}" "${CLUB_VARS[@]}")
 [ -n "${SKIP_MARKET:-}" ] || required+=("${MARKET_PREFIXED[@]}")
 
-# A value in the file for either of these is a value that would be silently
+# A value in the file for any of these is a value that would be silently
 # overridden, which is worse than being told.
 for name in "${DERIVED_VARS[@]}"; do
     if [ -n "${!name:-}" ]; then
         echo "$name is set in $VALUES_FILE, and this script sets it." >&2
-        echo "Remove it: the Redis URL names the app created below at the" >&2
-        echo "managed environment's internal domain, which is not known until" >&2
-        echo "the environment exists." >&2
+        echo "Remove it: none of the three can be written down ahead of time." >&2
+        echo "The Redis URL names an app at the managed environment's internal" >&2
+        echo "domain, and AZURE_CLIENT_ID belongs to USER_IDENTITY -- neither" >&2
+        echo "value exists until the resource does." >&2
         exit 1
     fi
 done
+
+# **The keys have to be in the vault before the apps reference them.** A
+# container app resolves a Key Vault reference when a revision starts, so a
+# missing secret is not a warning -- it is four apps whose first revision never
+# provisions, reported as a revision failure rather than as the missing secret
+# it is. Cheaper to say so here.
+if [ -z "${DRY_RUN:-}" ]; then
+    vault_missing=()
+    for name in "${VAULT_SECRET_VARS[@]}"; do
+        secret_name=$(printf '%s' "$name" | tr '[:upper:]_' '[:lower:]-')
+        az keyvault secret show --vault-name "$VAULT_NAME" \
+            --name "$secret_name" --output none 2>/dev/null \
+            || vault_missing+=("$secret_name")
+    done
+
+    if [ "${#vault_missing[@]}" -gt 0 ]; then
+        echo "Not in Key Vault $VAULT_NAME:" >&2
+        printf '  %s\n' "${vault_missing[@]}" >&2
+        echo >&2
+        echo "A revision resolves its Key Vault references at start-up, so the" >&2
+        echo "apps would be created and never provision a revision. Load them:" >&2
+        echo "  deploy/provision-key-vault.sh" >&2
+        echo >&2
+        echo "If this reports a secret you know is there, the identity running" >&2
+        echo "this script needs Key Vault Secrets User or Secrets Officer on" >&2
+        echo "the vault -- Contributor on the resource group grants no" >&2
+        echo "data-plane access at all, which is the point of RBAC mode." >&2
+        exit 1
+    fi
+fi
 
 missing=()
 for name in "${required[@]}"; do
@@ -329,8 +436,12 @@ echo "Preflight for $ENVIRONMENT in $RESOURCE_GROUP"
 az group show --name "$RESOURCE_GROUP" --output none
 echo "  resource group        ok"
 
-acr_id=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+# Existence only. `AcrPull` is on `USER_IDENTITY` and was granted before any of
+# this ran, so there is nothing to scope a role assignment to here.
+az acr show --name "$ACR_NAME" --output none
 echo "  registry              ok"
+echo "  identity              $USER_IDENTITY"
+echo "  key vault             $VAULT_NAME"
 
 # The managed environment, created if absent along with the workspace it logs
 # to. `az containerapp env create` provisions a workspace on its own when none
@@ -400,6 +511,7 @@ fi
 # managed Redis could not provide.
 DJANGO_REDIS_URL="redis://${APP_REDIS}.internal.${environment_domain}:${REDIS_PORT}/0"
 DJANGO_CACHE_ALLOW_PLAINTEXT=true
+AZURE_CLIENT_ID="$identity_client_id"
 echo "  redis url             $DJANGO_REDIS_URL"
 
 # **The data tier, and this is the check worth having.** The API entrypoint runs
@@ -490,45 +602,44 @@ for name in "${API_SECRET_VARS[@]}"; do
     api_env_arguments+=("${name}=secretref:${secret_name}")
 done
 
+# The two from the vault. A container app secret can hold a reference instead of
+# a value -- `keyvaultref:<secret uri>,identityref:<identity>` -- and the
+# environment variable then points at the secret exactly as the others do, so
+# nothing in the application knows the difference.
+#
+# **No version segment in the URI.** The reference resolves to the current
+# version, which is what makes a rotation a vault operation and a new revision
+# rather than an edit on four apps. It is also why provision-key-vault.sh
+# refuses to write a second version of either key without ROTATE=1: with an
+# unversioned reference, a new version is live the moment the next revision
+# starts.
+for name in "${VAULT_SECRET_VARS[@]}"; do
+    secret_name=$(printf '%s' "$name" | tr '[:upper:]_' '[:lower:]-')
+    api_secret_arguments+=(
+        "${secret_name}=keyvaultref:${vault_uri%/}/secrets/${secret_name},identityref:${identity_id}"
+    )
+    api_env_arguments+=("${name}=secretref:${secret_name}")
+done
+
 exists() {
     az containerapp show --name "$1" --resource-group "$RESOURCE_GROUP" \
         --output none 2>/dev/null
 }
 
-# Grant the app's own system-assigned identity `AcrPull`, then tell the app to
-# use it. Both steps are needed: the grant alone leaves the app attempting an
-# anonymous pull, and the assignment alone leaves it presenting an identity with
-# no rights. Role assignments are eventually consistent, so a first revision can
-# fail its pull and succeed on the platform's retry.
+# Tell the app to pull with `USER_IDENTITY`. **There is no grant here any
+# more**, and that is the whole gain of the user-assigned identity: `AcrPull`
+# was granted once, on that identity, by provision-key-vault.sh, before any app
+# existed. This used to be a role assignment per app made immediately after
+# creating it -- eventually consistent, so a first revision could fail its pull
+# and succeed only on the platform's retry.
 attach_registry() {
-    local container_app="$1" principal
+    local container_app="$1"
 
-    if [ -n "${DRY_RUN:-}" ]; then
-        echo "  [dry-run] grant AcrPull to $container_app and set registry identity"
-        return 0
-    fi
-
-    principal=$(az containerapp show --name "$container_app" \
-        --resource-group "$RESOURCE_GROUP" \
-        --query identity.principalId -o tsv)
-
-    if [ -z "$principal" ] || [ "$principal" = 'None' ]; then
-        echo "    no system-assigned identity on $container_app" >&2
-        return 1
-    fi
-
-    az role assignment create \
-        --assignee-object-id "$principal" \
-        --assignee-principal-type ServicePrincipal \
-        --role AcrPull \
-        --scope "$acr_id" \
-        --output none
-
-    az containerapp registry set \
+    run az containerapp registry set \
         --name "$container_app" \
         --resource-group "$RESOURCE_GROUP" \
         --server "$REGISTRY" \
-        --identity system \
+        --identity "$identity_id" \
         --output none
 }
 
@@ -562,7 +673,7 @@ create_api_family_app() {
         --resource-group "$RESOURCE_GROUP" \
         --environment "$CONTAINERAPP_ENV" \
         --image "${REGISTRY}/f2c/api@${api_digest}" \
-        --system-assigned \
+        --user-assigned "$identity_id" \
         --min-replicas "$min" \
         --max-replicas "$max" \
         --cpu "$cpu" \
@@ -600,7 +711,7 @@ create_frontend_app() {
         --resource-group "$RESOURCE_GROUP" \
         --environment "$CONTAINERAPP_ENV" \
         --image "${REGISTRY}/f2c/${repository}@${digest}" \
-        --system-assigned \
+        --user-assigned "$identity_id" \
         --ingress external \
         --target-port 3000 \
         --transport auto \
@@ -718,10 +829,11 @@ Next, and none of it is optional:
     own images, and Redis is a pinned public one. It is created once here and
     updated only when somebody chooses to move the version.
 
-  * Grant the API family's identities Storage Blob Data Contributor on the
-    storage account -- design/deploy.md 4 uses managed identity for blob
-    access, not account keys, and `DJANGO_DOCUMENT_STORAGE_ACCOUNT` names an
-    account with no secret beside it for that reason.
+  * **Delete the two encryption keys from the values file**, if
+    provision-key-vault.sh has not already told you to. The apps above carry a
+    keyvaultref rather than a copy, so that file is the last plaintext -- and
+    Storage Blob Data Contributor is already on the identity, which is why it
+    is no longer on this list.
 
   * Add the custom domains and their certificates, then check that
     DJANGO_ALLOWED_HOSTS, DJANGO_STOREFRONT_HOSTS and the Payfast notify URL

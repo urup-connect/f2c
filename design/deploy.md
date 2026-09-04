@@ -130,12 +130,34 @@ production must not.
 
 `azure-identity` is already a dependency, and both `documents/storage.py` and `accounts/storage.py`
 fall back to `DefaultAzureCredential` when a container and an account are named and no secret is.
-Give the API container app a system-assigned managed identity and grant it **Storage Blob Data
-Contributor** on the storage account.
+Grant **Storage Blob Data Contributor** on the storage account to the identity the container apps
+carry.
 
 That is the path the code prefers and the reason is in its own docstring: an account key in
 application settings is a key that has to be rotated, copied between environments, and kept out of
 screenshots. It also removes four entries from section 4.
+
+**One user-assigned identity for all six apps, not a system-assigned identity each.** This was
+system-assigned until the Key Vault work, and the change is not cosmetic — a system-assigned
+identity does not exist until its app does, so it cannot be granted anything beforehand. Two
+consequences, and the second is the one that forced it:
+
+- Every grant has to be made in the gap between an app existing and working, and role assignments
+  are eventually consistent. A first revision could fail its image pull and succeed only on the
+  platform's retry — which is what `provision-container-apps.sh` used to do six times.
+- **A Key Vault reference set at creation time cannot resolve at all**, because the principal it
+  would resolve as has no rights yet. So the two encryption keys below could not be referenced by
+  the script that creates the apps; they could only be added afterwards, by hand, per app.
+
+One identity created first is one grant each — `AcrPull`, `Key Vault Secrets User`, `Storage Blob
+Data Contributor` — and thirty-six role assignments across three environments become four.
+`deploy/provision-key-vault.sh` creates it and makes all four.
+
+**The cost is one environment variable.** Both storage modules call `DefaultAzureCredential()` with
+no client id, and a container carrying a user-assigned identity has to be told which to present, so
+`AZURE_CLIENT_ID` is set on the API family from the identity's client id. The provisioning script
+derives it and refuses a value for it in the values file. No code change, and it is in 4.1 as a
+variable nobody sets by hand.
 
 ---
 
@@ -146,7 +168,7 @@ remains the documentation and needs no change for this.
 
 | Store | Holds | Why there |
 | --- | --- | --- |
-| **Azure Key Vault** | `DJANGO_FIELD_ENCRYPTION_KEY`, `DJANGO_BLIND_INDEX_PEPPER` | These two are Block 0 P4. Key Vault gives versioning, soft delete and purge protection, which is most of the backup and rotation procedure P4 asks for. Referenced from the container app through the same managed identity that reaches blob storage |
+| **Azure Key Vault** | `DJANGO_FIELD_ENCRYPTION_KEY`, `DJANGO_BLIND_INDEX_PEPPER` | These two are Block 0 P4. Key Vault gives versioning, soft delete, purge protection and an audit record of every read, which is most of the backup and rotation procedure P4 asks for. Referenced from the container app secret as `keyvaultref:`, resolved through the same user-assigned identity that reaches blob storage and the registry. **Azure RBAC authorisation, public endpoint, `AuditEvent` to the environment's Log Analytics workspace** — 3.1 |
 | **Container App secrets** | Every other secret: database password, Redis URL, mail passwords, Payfast key and passphrase, `DJANGO_SECRET_KEY` | Referenced from environment variables as `secretref:`. A second Key Vault hop for these buys little — they are all rotatable without touching stored data, which is exactly what the two above are not |
 | **Container App environment variables** | Everything else: hosts, origins, flags, amounts, addresses | Non-secret, and visible in the portal is the right property for them. A wrong `DJANGO_ALLOWED_HOSTS` should be readable by whoever is debugging it |
 | **GitHub Actions environments `qa`, `uat` and `production`** | The container app names, the resource group, and the three Azure identifiers the federated credential is minted against | Everything here names something a *workflow* has to address; nothing here is read by a running container. It used to hold the frontend build arguments as well — see below. Section 6.6 is the list, and there are no registry credentials among them — 6.5 |
@@ -180,6 +202,68 @@ indexing, so a production container carrying `qa` serves `noindex` and a QA cont
 exposure as a wrong `DJANGO_ALLOWED_HOSTS`, and it is handled the same way: by checking after a
 promotion rather than by refusing to deploy. `deploy-quickstart.md` step 12 carries the two `curl`
 lines.
+
+### 3.1 The vault's access and networking
+
+`deploy/provision-key-vault.sh` creates the vault, the identity, and every grant either needs. The
+settings below are the whole of what it configures, and each is a decision rather than a default.
+
+**Access configuration: Azure RBAC, not vault access policies. The reason is the pipeline.** 6.5
+gives each environment's GitHub application registration `Contributor` on that environment's
+resource group. Under RBAC, `Contributor` carries no data-plane rights at all — it cannot read a
+secret. Under access policies it can add itself to the policy list and then read everything, so the
+QA build job would hold the field encryption key. Access policies would therefore defeat D4 and
+R-D2 while appearing to satisfy them, which makes the authorisation model the first thing to get
+right rather than a preference.
+
+Three assignments, all at vault scope, nothing at subscription or resource-group scope:
+
+| Principal | Role | Why |
+| --- | --- | --- |
+| The container apps' user-assigned identity | **Key Vault Secrets User** | Read a secret value. Not list, not write, not purge — the application does none of those |
+| Whoever provisioned the environment, plus one named second holder | **Key Vault Secrets Officer** | Load the two keys, and read the vault back in an incident. **This is the break-glass access R-D2 says has to be written down**, and one holder is not enough. The script grants the first and cannot know the second |
+| Each environment's GitHub application registration | **nothing, deliberately** | The workflows only ever call `containerapp update`. A deployment never needs the key's value, and a credential is worth what it can reach rather than what it is usually used for |
+
+Soft-delete retention **90 days**, the maximum, and **purge protection on**. R-D2 is that losing the
+field key destroys every stored identity number with no recovery path, so there is no argument for
+the 7-day floor. Two things follow from purge protection that are worth knowing before it is on:
+it cannot be turned off, and a vault deleted by mistake holds its name unusable by anything else for
+the full retention window. So the name is worth getting right first — 3–24 characters, globally
+unique across Azure, `kv-f2c-<env>-weu`.
+
+**Networking: public endpoint, enabled from all networks — and that is forced rather than chosen.**
+`provision-container-apps.sh` creates the managed environment with no infrastructure subnet, so it
+is Consumption-only on a Microsoft-managed network. Three consequences:
+
+- There is no subnet of ours for a private endpoint to terminate in, and none for a service
+  endpoint to originate from.
+- The apps' outbound addresses are readable but Azure does not contract to keep them stable, so an
+  IP allow-list is an outage waiting for a platform-side change. The failure is at least loud — a
+  revision resolves its Key Vault references at start-up, so it would fail to provision rather than
+  serve traffic with a broken key — but it is still an outage nobody triggered.
+- **"Allow trusted Microsoft services to bypass this firewall" does not help.** Container Apps is
+  not on that list. It is the checkbox that looks like it solves this.
+
+**What protects the vault instead is that its data plane is Entra-authenticated.** There is no
+anonymous read on a public Key Vault endpoint, and a leaked vault URI is worth nothing without a
+token for a principal holding Secrets User. The compensating control is the record: an `AuditEvent`
+diagnostic setting into the same Log Analytics workspace the managed environment logs to, so every
+read of the field key is a queryable row with a principal attached. That is the other half of what
+P4 asks for, and the script creates it with the vault rather than leaving it to be remembered.
+
+**The private posture is not a vault setting.** It is a VNet-integrated environment with workload
+profiles, a private endpoint, and a `privatelink.vaultcore.azure.net` zone — and an existing managed
+environment cannot be moved onto a VNet, so it is a re-create of the environment and every app in
+it. Recorded in 8 D4 as the deliberate alternative, along with the note that QA public and
+production private is legitimate here: a promotion moves an image, and the environment is not the
+artefact.
+
+**The reference is unversioned**, `https://<vault>/secrets/django-field-encryption-key` with no
+version segment. That is what makes a rotation a vault operation plus a new revision rather than an
+edit on four apps — and it is also why `provision-key-vault.sh` refuses to write a second version of
+either key without `ROTATE=1`. With an unversioned reference, a new version goes live the moment the
+next revision starts, and a new field key going live over rows encrypted under the old one is R-D2
+happening on purpose.
 
 ---
 
@@ -290,6 +374,13 @@ DJANGO_FIELD_ENCRYPTION_KEY=
 DJANGO_BLIND_INDEX_PEPPER=
 ```
 
+**Held in the vault and referenced, not set.** The container app secret carries
+`keyvaultref:<vault>/secrets/django-field-encryption-key,identityref:<identity>` and the environment
+variable is a `secretref:` to it, exactly as the container app secrets in the previous block are, so
+nothing in Django knows the difference. The vault's own access and networking are 3.1;
+`deploy/provision-key-vault.sh` loads both values and `provision-container-apps.sh` builds the
+references.
+
 **Generate fresh values for QA and never copy production's down.** The field key is the only thing
 between a QA database restore and every identity number the club holds. Generate them with
 `design/tools/generate_keys.py`, which emits both plus `DJANGO_SECRET_KEY` in `.env` form and
@@ -318,8 +409,20 @@ DJANGO_AVATAR_STORAGE_ACCOUNT=stf2cqaweu
 DJANGO_CDN_BASE_URL=
 ```
 
+```
+AZURE_CLIENT_ID=<the user-assigned identity's client id>
+```
+
 No account keys, no SAS tokens, no connection strings — naming an account and no secret is what
 selects the managed-identity path.
+
+**`AZURE_CLIENT_ID` is not entered by hand either.** The provisioning script sets it from
+`USER_IDENTITY` and refuses a value for it in the values file, alongside the two cache variables
+above. It is here because `documents/storage.py` and `accounts/storage.py` call
+`DefaultAzureCredential()` with no client id of their own, and a container carrying a user-assigned
+identity has to be told which to present — the credential does not guess. Omitting it fails at the
+first document upload rather than at start-up, which is the one managed-identity misconfiguration
+the entrypoint gate cannot catch.
 
 `DJANGO_CDN_BASE_URL` is left blank in QA unless the documents container is actually fronted. If it
 is set it must be `https` outside local development, and its path must be either empty or exactly
@@ -890,9 +993,11 @@ group and nothing wider. **The second is broader than this pipeline needs**, whi
 `/write` is the obvious hardening step, recorded here rather than done because a custom role
 definition is a fourth thing to keep in step across three environments.
 
-**The container apps pull with their own identities, which is a separate grant from the above.** Each
-of the six gets a system-assigned identity with `AcrPull` on the registry, and
-`az containerapp registry set --identity system`. Then the registry's admin user goes off:
+**The container apps pull with their own identity, which is a separate grant from the above.** All
+six present the one user-assigned identity from section 2, which holds `AcrPull` on the registry —
+`az containerapp registry set --identity <identity resource id>`. One assignment where six
+system-assigned identities needed six, and it is granted before any app exists, so no first revision
+races an eventually-consistent role assignment. Then the registry's admin user goes off:
 
 ```
 az acr update --name <registry> --admin-enabled false
@@ -966,7 +1071,17 @@ rather than something the pipeline can still produce. Section 3.
    which authenticates as of 2 September 2026 — section 1.
 2. ~~Fix the flaky test (5.4)~~ — **done**, along with the static files (5.1). CI can gate a
    deployment without going red at random.
-3. Create the Key Vault, generate the QA encryption keys, load the secrets.
+3. **Create the Key Vault, the identity, and the four grants** —
+   `deploy/provision-key-vault.sh`. Generate the QA encryption keys into the values file first, with
+   `design/tools/generate_keys.py`, and never copy production's down. The script creates the vault
+   with RBAC authorisation and purge protection, the one user-assigned identity all six apps
+   present, the `AuditEvent` diagnostic setting, and the grants in 3.1 — including the
+   `Storage Blob Data Contributor` that used to be a by-hand step after the apps existed.
+
+   **This now has to run before step 5 rather than alongside it**, because the identity carries
+   `AcrPull` and the apps are created presenting it. Delete the two keys from the values file
+   afterwards: the apps reference the vault rather than holding a copy, and that file is the only
+   remaining plaintext.
 4. Run `.github/scripts/azure-oidc-setup (win).sh` for `qa`, create the three GitHub environments
    with reviewers on `uat` and `production`, and set the variables in 6.6. The registry from step 1
    has to exist first; nothing else here does.
@@ -976,11 +1091,17 @@ rather than something the pipeline can still produce. Section 3.
    alone it reads as the empty string and skips every market build with a log line that looks like a
    decision.
 5. **Create the managed environment and the container apps** —
-   `deploy/provision-container-apps.sh`, with `deploy/values.env.template` filled in. It creates
-   Redis first, then the four API apps, then the storefronts, and refuses to start if the MySQL
-   server or storage account it was pointed at cannot be found: the entrypoint gate waits for the
-   database before it serves anything, so creating the apps without one gives four crashlooping
-   containers rather than an error somebody reads.
+   `deploy/provision-container-apps.sh`, with `deploy/values.env.template` filled in and
+   `USER_IDENTITY` naming the identity step 3 created. It creates Redis first, then the four API
+   apps, then the storefronts, and refuses to start if the MySQL server or storage account it was
+   pointed at cannot be found: the entrypoint gate waits for the database before it serves anything,
+   so creating the apps without one gives four crashlooping containers rather than an error somebody
+   reads.
+
+   It also refuses if the identity is absent, or if either key is missing from the vault. **A
+   revision resolves its Key Vault references at start-up**, so apps created against an empty vault
+   would never provision a first revision, and the failure would report itself as a revision error
+   rather than as the missing secret it is.
 
    The apps are created against the digests of images already in the registry, so **step 6 needs
    `release.yml` to have run at least once** — a build with no deploy is enough, and is what
@@ -1023,7 +1144,7 @@ with everything else rather than provisioning a managed service and waiting for 
 | D1 | The QA hostnames | `qa.` and `qa-api.` inside the two production registrable domains, as section 2 sets out. Anything that puts the API outside the frontend's registrable domain breaks the session cookie and reproduces nothing — C30 |
 | D2 | Whether QA carries the market storefront at all | **Skip it while the store is on the back burner.** It saves a container app, two DNS records and a certificate. It saves **none** of the `EMAIL_F2C_*` entries — the API needs those to boot either way, which is section 1 |
 | D3 | Payfast sandbox or live in QA | **Sandbox.** Live in QA moves real money on a test environment. The cost is that the production credentials are first exercised in production, which is an argument for one deliberate live transaction at cutover rather than for a live QA |
-| D4 | Key Vault, or container app secrets alone | **Key Vault for the two encryption keys**, container app secrets for everything else. It is one resource and a role assignment, and it discharges most of P4 |
+| D4 | Key Vault, or container app secrets alone | **Settled, in 3.1: Key Vault for the two encryption keys**, container app secrets for everything else. The line between them is recoverability — every other secret is rotatable without touching stored data, and these two are not. Azure RBAC authorisation, purge protection on, 90-day retention, public endpoint with `AuditEvent` logging, referenced unversioned through the apps' user-assigned identity. The alternative was a VNet-integrated environment and a private endpoint, which is a re-create of the environment rather than a vault setting; it stays available for production alone if the audit record proves insufficient |
 | D5 | Whether the frontends' `APP_ENV` and Django's `DJANGO_ENV` should share a vocabulary | Leave them. Correcting `prod` to `production` touches the CI workflow, `compose.yaml` and both frontends for no behavioural gain. Documented in 4.1 instead, and in 6.6 for what it means when the GitHub environment is called `production` and `APP_ENV` is not |
 | D6 | Whether a promotion is a branch merge, a git tag or a dispatch | **Settled, in section 6: trunk-based, with a dispatch.** A merge to `master` deploys QA on its own; UAT and production are dispatches of a named commit behind environment reviewers. Branch-per-environment was the alternative and it drifts — what reaches production is then a merge commit nothing tested as one |
 
@@ -1036,9 +1157,18 @@ with everything else rather than provisioning a managed service and waiting for 
   on the environment. QA with synthetic data does not need it; the promotion to production does —
   C31. **Open.**
 - **R-D2. Losing `DJANGO_FIELD_ENCRYPTION_KEY` destroys every stored identity number with no
-  recovery path** — Block 0 P4. Key Vault with purge protection covers storage and versioning. What
-  it does not cover, and what still has to be written down, is who holds break-glass access, how a
-  rotation re-encrypts existing rows, and what the recovery drill is. **Open.**
+  recovery path** — Block 0 P4. Key Vault with purge protection covers storage and versioning, and
+  3.1 now settles the access model: RBAC, Secrets User for the apps, Secrets Officer for named
+  humans, and an `AuditEvent` record of every read. **Narrowed, still open.** Two things remain, and
+  neither is a setting:
+
+  - **Break-glass is one person.** `provision-key-vault.sh` grants Secrets Officer to whoever ran
+    it. A second holder has to be added by hand and named somewhere that is not a role assignment.
+  - **There is no rotation or recovery drill.** Re-encrypting existing rows under a new field key is
+    the part that does not exist — no management command, no procedure, and nothing that has been
+    rehearsed. This is why the provisioning script refuses to write a second version of either key
+    without `ROTATE=1`: the reference is unversioned, so a new version is live at the next revision,
+    and there is no written path back.
 - **R-D3. Migrations run in the API container's entrypoint, and Container Apps starts a new
   revision before retiring the old one.** So a schema change has to be readable by the revision
   still serving traffic. This is a real constraint on what may go in a migration and it is taken

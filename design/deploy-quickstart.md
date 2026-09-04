@@ -33,8 +33,10 @@ Elsewhere, and only the `f2c` database and its application user are yours to cre
 | --- | --- |
 | MySQL Flexible Server 8.4 | `qa-urupconnect` in resource group `qa-urupconnect`. Database `f2c`, `require_secure_transport` ON. **Production is 8.0.21** — above the 8.0.16 floor `common/checks.py` enforces, below the 8.4 CI tests against |
 
-**No Redis and no Log Analytics workspace here.** Redis is a container app — conflict.md **C36** — and the
-workspace is created with the Container Apps environment. Both happen in step 5.
+**No Redis, no Log Analytics workspace and no Key Vault here.** Redis is a container app — conflict.md
+**C36** — created in step 5. The workspace is created by whichever of steps 3 and 5 runs first, under
+the same name in the same resource group, and reused by the other. The vault and the identity are
+step 3.
 
 No container apps yet.
 
@@ -48,18 +50,46 @@ turns it back on and writes a username and password into GitHub secrets; if that
 a random hex reference that spelled one of the status codes the test scanned for. Fixed; nothing to
 do here before CI gates a deployment. (deploy.md 5.4, conflict.md C25)
 
-### 3. Key Vault and secrets
+### 3. Key Vault, the identity, and the grants
 
-Create the Key Vault with soft delete and purge protection. Generate **fresh** QA encryption keys —
-never copy production's down:
+Generate **fresh** QA encryption keys — never copy production's down — into the values file:
 
 ```
 python design/tools/generate_keys.py
 ```
 
-Load `DJANGO_FIELD_ENCRYPTION_KEY` and `DJANGO_BLIND_INDEX_PEPPER` into Key Vault. Everything else
-secret goes into Container App secrets in step 5, which the provisioning script sets from the values
-file. (Tables A and B)
+Then one script, and it has to run **before** step 5:
+
+```powershell
+Copy-Item deploy/values.env.template deploy/qa.values.env   # then fill it in
+$env:ENVIRONMENT="qa"; $env:RESOURCE_GROUP="rg-f2c-qa-weu"
+$env:ACR_NAME="crf2cweu"; $env:VALUES_FILE="deploy/qa.values.env"
+$env:DRY_RUN="1"
+& "C:\Program Files\Git\bin\bash.exe" deploy/provision-key-vault.sh
+```
+
+It creates the vault, the one user-assigned identity all six container apps present, the Log
+Analytics workspace, an `AuditEvent` diagnostic setting, and five role assignments — then loads the
+two keys. `DRY_RUN=1` prints every command and changes nothing; read it once, then drop it.
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Permission model | **Azure RBAC** | Under RBAC the pipeline's `Contributor` on the resource group grants no data-plane access. Under access policies it could add itself to the policy list and read the field key |
+| Purge protection | **On**, 90-day retention | R-D2. Irreversible once on, and it reserves the vault name for the full window, so get the name right first |
+| Public network access | **Enabled from all networks** | The managed environment has no infrastructure subnet, so there is nowhere for a private endpoint to terminate. Container Apps is not a "trusted Microsoft service", so that bypass does not help either |
+| Audit | `AuditEvent` → `log-rg-f2c-qa-weu` | The compensating control. Every read of the field key, with the principal that made it |
+
+Roles, all at vault scope: **Key Vault Secrets User** for the identity, **Key Vault Secrets Officer**
+for you. The GitHub application registrations get nothing — a deployment never reads the key.
+deploy.md 3.1 has the reasoning; deploy.md 8 D4 has the alternative.
+
+**Two things the script cannot do.** Add a second Secrets Officer so break-glass is not one person,
+and **delete the two keys from `deploy/qa.values.env`** once they are in the vault — the container
+apps reference the vault rather than holding a copy, so that file is the last plaintext. Both are
+R-D2.
+
+Everything else secret goes into Container App secrets in step 5, which the provisioning script sets
+from the values file. (Tables A and B)
 
 ### 4. GitHub and Azure OIDC
 
@@ -97,18 +127,24 @@ Then, by hand:
 ### 5. Create the environment and the seven container apps
 
 One script. It creates the Container Apps environment and its Log Analytics workspace if they are
-absent, then Redis, the four API-image apps, and the storefronts — each with a system-assigned
-identity, `AcrPull` on the registry, and the settings from Tables B to E.
+absent, then Redis, the four API-image apps, and the storefronts — each presenting the user-assigned
+identity from step 3, which already holds `AcrPull`, and each carrying the settings from Tables B
+to E.
 
 ```powershell
-Copy-Item deploy/values.env.template deploy/qa.values.env   # then fill it in
 $env:ENVIRONMENT="qa"; $env:RESOURCE_GROUP="rg-f2c-qa-weu"
 $env:CONTAINERAPP_ENV="cae-f2c-qa-weu"; $env:ACR_NAME="crf2cweu"
+$env:USER_IDENTITY="id-f2c-qa"
 $env:IMAGE_TAG="<a commit release.yml has built>"
 $env:MYSQL_RESOURCE_GROUP="qa-urupconnect"; $env:STORAGE_RESOURCE_GROUP="rg-f2c-qa-weu"
 $env:VALUES_FILE="deploy/qa.values.env"; $env:DRY_RUN="1"
 & "C:\Program Files\Git\bin\bash.exe" deploy/provision-container-apps.sh
 ```
+
+**`USER_IDENTITY` is required, and step 3 has to have run.** The script refuses if the identity is
+absent, and refuses if either encryption key is missing from the vault: a revision resolves its Key
+Vault references at start-up, so apps created against an empty vault never provision a first
+revision and report it as a revision failure rather than as the missing secret it is.
 
 `DRY_RUN=1` prints every command and changes nothing — read it once, then drop it. Re-running is
 safe: an app that exists is reported and left alone.
@@ -118,23 +154,27 @@ digests, so dispatch a build with `deploy` unticked to get images into the regis
 attempting a deployment that has nowhere to land.
 
 **`deploy/qa.values.env` is gitignored and must stay that way.** It holds the MySQL password, both
-Payfast credentials, two mailbox passwords, and the two encryption keys whose loss is unrecoverable.
-Delete it once the apps exist; from then on Azure is where those values are read back from. Quote
-any value containing a space or a bracket — the file is sourced.
+Payfast credentials, two mailbox passwords, and — until step 3 has loaded them into the vault — the
+two encryption keys whose loss is unrecoverable. Delete it once the apps exist; from then on Azure
+is where those values are read back from.
 
-The script sets `DJANGO_REDIS_URL` and `DJANGO_CACHE_ALLOW_PLAINTEXT` itself and **refuses a value
-for either in the file** rather than overriding it: the URL names the Redis app at the environment's
-internal domain, which does not exist until the environment does.
+**Quote any value containing a space or a bracket.** The file is sourced by `bash`, so an unquoted
+`(` or `{` is a syntax error and an unquoted `#` starts a comment — both fail the whole file at the
+line they are on, before any check in the script runs.
+
+The script sets `DJANGO_REDIS_URL`, `DJANGO_CACHE_ALLOW_PLAINTEXT` and `AZURE_CLIENT_ID` itself and
+**refuses a value for any of the three in the file** rather than overriding it: the Redis URL names
+an app at the environment's internal domain and `AZURE_CLIENT_ID` belongs to the identity, so
+neither value exists until the resource does.
 
 It refuses to run at all if the MySQL server or storage account cannot be found. That is deliberate
 — the API entrypoint waits for the database before it serves anything, so creating the apps without
 one gives four crashlooping containers rather than an error anybody reads. `FORCE=1` overrides;
 `SKIP_MARKET=1` creates six apps instead of seven.
 
-Still by hand afterwards, because the script does not grant it:
-
-- **Storage Blob Data Contributor** on the storage account, for the four API-image identities
-- Key Vault references for the two keys in Table A, if they are not to stay container app secrets
+**Nothing is left by hand after this step any more.** `Storage Blob Data Contributor` and the Key
+Vault references both used to be, and both moved: the grant is on the one identity step 3 creates,
+and the references are built by this script from the vault and that identity.
 
 ### 6. Deploy the API alone
 
@@ -230,7 +270,8 @@ curl -s  https://<host>/robots.txt                  # production: Allow. QA and 
 Both come from `APP_ENV` alone, so one wrong value shows in both. If they disagree with the
 environment, fix `APP_ENV` on the container app and deploy a new revision — no rebuild.
 
-Once every container app pulls with its own identity, close the registry's admin account:
+Once every container app pulls with the user-assigned identity, close the registry's admin
+account:
 
 ```
 az acr update --name <registry> --admin-enabled false
@@ -244,12 +285,18 @@ Four stores. QA values shown; substitute per environment. Nothing below goes in 
 
 ### Table A — Azure Key Vault
 
-Referenced from the API container apps through their managed identities.
+`kv-f2c-<env>-weu`. RBAC authorisation, purge protection on, 90-day retention, public endpoint,
+`AuditEvent` to the environment's Log Analytics workspace — deploy.md 3.1.
 
-| Entry | Value |
-| --- | --- |
-| `DJANGO_FIELD_ENCRYPTION_KEY` | From `generate_keys.py`. Fresh per environment |
-| `DJANGO_BLIND_INDEX_PEPPER` | From `generate_keys.py`. Fresh per environment |
+Both are loaded by `provision-key-vault.sh` and referenced from the four API-image apps as
+`keyvaultref:<vault>/secrets/<name>,identityref:<identity>`, resolved through the user-assigned
+identity's **Key Vault Secrets User** grant. The reference carries no version: a rotation is a vault
+operation plus a new revision, not an edit on four apps.
+
+| Entry | Secret name in the vault | Value |
+| --- | --- | --- |
+| `DJANGO_FIELD_ENCRYPTION_KEY` | `django-field-encryption-key` | From `generate_keys.py`. Fresh per environment |
+| `DJANGO_BLIND_INDEX_PEPPER` | `django-blind-index-pepper` | From `generate_keys.py`. Fresh per environment |
 
 ### Table B — Container App secrets
 
